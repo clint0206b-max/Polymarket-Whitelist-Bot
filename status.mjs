@@ -3,6 +3,7 @@ import path from "node:path";
 import { loadConfig } from "./src/core/config.js";
 import { is_near_signal_margin } from "./src/strategy/stage1.mjs";
 import { is_depth_sufficient } from "./src/strategy/stage2.mjs";
+import { loadDailyEvents, getSummary } from "./src/metrics/daily_events.mjs";
 
 function fmtNum(x, digits = 3) {
   if (x == null || !Number.isFinite(Number(x))) return "n/a";
@@ -875,6 +876,28 @@ printOpportunity("Esports", state?.runtime?.esports_opportunity);
     const lastCheckTs = h.paper_resolution_last_check_ts || null;
     const lastAge = lastCheckTs ? Math.round((now - lastCheckTs) / 1000) : null;
     console.log(`  resolution_tracker: ${pollCycles} polls | last_check: ${lastAge != null ? lastAge + "s ago" : "never"}`);
+  }
+}
+
+// --- Daily Event Utilization ---
+{
+  const deState = loadDailyEvents();
+  const todayKey = new Date().toISOString().slice(0, 10);
+  console.log(`\n=== Daily Event Utilization (${todayKey}) ===`);
+
+  for (const lg of ["cbb", "nba", "esports"]) {
+    const s = getSummary(deState, todayKey, lg);
+    if (!s.total) continue;
+
+    const utilPct = s.total > 0 ? ((s.with_signal / s.total) * 100).toFixed(0) : "0";
+    console.log(`  ${lg.toUpperCase()}: ${s.total} events | quote:${s.with_quote} | 2-sided:${s.with_two_sided} | tradeable:${s.with_tradeable} | signals:${s.with_signal} (${utilPct}%)`);
+    if (s.with_context_entry) {
+      console.log(`    ctx_gate: evaluated:${s.with_context_entry} allowed:${s.with_context_allowed}`);
+    }
+    if (s.missed > 0 && s.top_miss_reasons.length) {
+      const reasons = s.top_miss_reasons.map(r => `${r.reason}:${r.count}`).join(", ");
+      console.log(`    missed:${s.missed} → ${reasons}`);
+    }
   }
 }
 

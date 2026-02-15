@@ -6,6 +6,7 @@ import { createHttpQueue } from "./http_queue.mjs";
 import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWindow3, mergeScoreboardEventsByWindow } from "../context/espn_cbb_scoreboard.mjs";
 import { fetchEspnNbaScoreboardForDate, deriveNbaContextForMarket } from "../context/espn_nba_scoreboard.mjs";
 import { estimateWinProb, checkContextEntryGate } from "../strategy/win_prob_table.mjs";
+import { loadDailyEvents, saveDailyEvents, recordMarketTick } from "../metrics/daily_events.mjs";
 
 function ensure(obj, k, v) { if (obj[k] === undefined) obj[k] = v; }
 
@@ -1653,6 +1654,66 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       top_missing_ask: topMissingAsk.slice(0, 3),
       top_wide_spread: topWideSpread.slice(0, 3)
     };
+  }
+
+  // --- Daily event utilization tracking ---
+  {
+    const deState = loadDailyEvents();
+    const todayKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+    const wl = state?.watchlist || {};
+
+    for (const m of Object.values(wl)) {
+      const league = m?.league;
+      const eventId = m?.event_id || m?.event_slug;
+      if (!league || !eventId) continue;
+      if (!["cbb", "nba", "esports"].includes(league)) continue;
+
+      // Determine what this market achieved in its current state
+      const lp = m.last_price || {};
+      const hasQuote = (lp.yes_best_ask != null && lp.yes_best_bid != null);
+      const hasTwoSided = hasQuote && lp.spread != null;
+      const isSignaled = (m.status === "signaled");
+
+      // Determine reject reason (most recent)
+      let rejectReason = null;
+      if (!hasQuote) {
+        rejectReason = "no_quote";
+      } else if (lp.yes_best_ask == null) {
+        rejectReason = "missing_ask";
+      } else if (lp.yes_best_bid == null) {
+        rejectReason = "missing_bid";
+      } else {
+        // Has quote — check pipeline reject
+        const lr = m.last_reject;
+        if (lr?.reason && lr.reason !== "pending_entered") {
+          rejectReason = lr.reason;
+        }
+      }
+
+      // Was it tradeable? (passed base + spread + depth at some point)
+      // We use a heuristic: if status is pending_signal or signaled, it was tradeable
+      const wasTradeable = (m.status === "pending_signal" || m.status === "signaled");
+
+      // Context entry gate
+      const ce = m.context_entry;
+      const ctxEvaluated = !!(ce && ce.win_prob != null);
+      const ctxAllowed = !!(ce && ce.entry_allowed);
+
+      recordMarketTick(deState, todayKey, {
+        league,
+        event_id: String(eventId),
+        slug: m.slug,
+        had_quote: hasQuote,
+        had_two_sided: hasTwoSided,
+        had_tradeable: wasTradeable,
+        had_signal: isSignaled,
+        reject_reason: rejectReason,
+        context_entry_evaluated: ctxEvaluated,
+        context_entry_allowed: ctxAllowed,
+      });
+    }
+
+    saveDailyEvents(deState);
   }
 
   return { changed };
