@@ -825,3 +825,89 @@ printOpportunity("Esports", state?.runtime?.esports_opportunity);
   }
 }
 
+// --- Paper Positions Summary ---
+{
+  const idxPath = path.resolve(process.cwd(), "state", "journal", "open_index.json");
+  if (fs.existsSync(idxPath)) {
+    const idx = JSON.parse(fs.readFileSync(idxPath, "utf8"));
+    const openEntries = Object.values(idx.open || {});
+    const closedEntries = Object.values(idx.closed || {});
+    const now = Date.now();
+    const h24 = 24 * 60 * 60 * 1000;
+
+    const closedLast24h = closedEntries.filter(r => {
+      const ts = Number(r.ts_close || 0);
+      return ts && (now - ts) <= h24;
+    });
+
+    // PnL from closed
+    let totalPnl = 0;
+    let wins = 0;
+    let losses = 0;
+    let unknown = 0;
+    for (const r of closedEntries) {
+      const pnl = Number(r.pnl_usd || 0);
+      totalPnl += pnl;
+      if (r.win === true) wins++;
+      else if (r.win === false) losses++;
+      else unknown++;
+    }
+
+    // Open by league
+    const openByLeague = {};
+    for (const r of openEntries) {
+      const lg = String(r.league || "unknown");
+      openByLeague[lg] = (openByLeague[lg] || 0) + 1;
+    }
+
+    console.log(`\n=== Paper Positions ===`);
+    console.log(`  open: ${openEntries.length} (${Object.entries(openByLeague).map(([k,v]) => `${k}:${v}`).join(", ") || "none"})`);
+    console.log(`  closed_total: ${closedEntries.length} | closed_last_24h: ${closedLast24h.length}`);
+    if (closedEntries.length) {
+      const wr = (wins + losses) > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : "n/a";
+      console.log(`  wins: ${wins} | losses: ${losses} | unknown: ${unknown} | WR: ${wr}%`);
+      console.log(`  total_pnl: $${totalPnl.toFixed(2)}`);
+    }
+
+    // Resolution tracker health
+    const h = state?.runtime?.health || {};
+    const pollCycles = h.paper_resolution_poll_cycles || 0;
+    const lastCheckTs = h.paper_resolution_last_check_ts || null;
+    const lastAge = lastCheckTs ? Math.round((now - lastCheckTs) / 1000) : null;
+    console.log(`  resolution_tracker: ${pollCycles} polls | last_check: ${lastAge != null ? lastAge + "s ago" : "never"}`);
+  }
+}
+
+// --- Funnel Snapshot by League (rolling 5min buckets) ---
+{
+  console.log(`\n=== Funnel by League (rolling 5min) ===`);
+  for (const lg of ["cbb", "nba", "esports"]) {
+    const evaluated = Number(health5[`stage1_evaluated:${lg}`] || 0);
+    const quoteComplete = Number(health5[`quote_complete:${lg}`] || 0);
+    const basePass = Number(health5[`base_range_pass:${lg}`] || 0);
+    const spreadPass = Number(health5[`spread_pass:${lg}`] || 0);
+    const depthPass = Number(health5[`depth_pass:${lg}`] || 0);
+    const pending = Number(health5[`pending_enter:${lg}`] || health5[`pending_enter_${lg}`] || 0);
+    const signaled = Number(health5[`signaled:${lg}`] || health5[`signaled_${lg}`] || 0);
+
+    // Reject reasons for this league
+    const rejectPrefix = `reject_by_league:${lg}:`;
+    const rejects = Object.entries(reject5)
+      .filter(([k]) => k.startsWith(rejectPrefix))
+      .map(([k, v]) => [k.slice(rejectPrefix.length), Number(v)])
+      .filter(([, v]) => v > 0)
+      .sort((a, b) => b[1] - a[1]);
+
+    const topRejects = rejects.slice(0, 3).map(([r, c]) => `${r}:${c}`).join(", ") || "none";
+
+    // Context entry gate
+    const ctxEval = Number(health5[`context_entry_evaluated:${lg}`] || 0);
+    const ctxAllowed = Number(health5[`context_entry_allowed:${lg}`] || 0);
+    const ctxBlocked = Number(health5[`context_entry_blocked:${lg}`] || 0);
+
+    console.log(`  ${lg.toUpperCase()}: eval=${evaluated} quote=${quoteComplete} base=${basePass} spread=${spreadPass} depth=${depthPass} pending=${pending} signaled=${signaled}`);
+    if (ctxEval) console.log(`    ctx_gate: eval=${ctxEval} allowed=${ctxAllowed} blocked=${ctxBlocked}`);
+    if (rejects.length) console.log(`    top_rejects: ${topRejects}`);
+  }
+}
+
