@@ -1416,6 +1416,11 @@ export async function loopEvalHttpOnly(state, cfg, now) {
             win_prob: m.context_entry.win_prob ?? null,
             entry_allowed: m.context_entry.entry_allowed ?? null,
             entry_blocked_reason: m.context_entry.entry_blocked_reason ?? null,
+            // EV edge: win_prob - ask. Positive = our model says worth more than price.
+            // Used for post-hoc analysis, not for gating in v1.
+            ev_edge: (m.context_entry.win_prob != null && Number.isFinite(Number(quote?.probAsk)))
+              ? Number((m.context_entry.win_prob - Number(quote.probAsk)).toFixed(4))
+              : null,
           } : null,
         };
       }

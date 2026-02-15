@@ -219,7 +219,15 @@ try {
               would_gate_block: (s.would_gate_block === true),
               would_gate_reason: String(s.would_gate_reason || "not_applicable"),
               tp_math_allowed: (s.tp_math_allowed === true),
-              tp_math_reason: String(s.tp_math_reason || "no_data")
+              tp_math_reason: String(s.tp_math_reason || "no_data"),
+              // Context entry gate snapshot (for resolution analysis)
+              context_entry: s.ctx?.entry_gate ? {
+                win_prob: s.ctx.entry_gate.win_prob ?? null,
+                margin_for_yes: s.ctx.entry_gate.margin_for_yes ?? null,
+                entry_allowed: s.ctx.entry_gate.entry_allowed ?? null,
+                entry_blocked_reason: s.ctx.entry_gate.entry_blocked_reason ?? null,
+                ev_edge: s.ctx.entry_gate.ev_edge ?? null,
+              } : null
             });
           }
           saveOpenIndex(idx);
