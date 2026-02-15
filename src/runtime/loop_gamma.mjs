@@ -49,6 +49,9 @@ export async function loopGamma(state, cfg, now) {
   health.gamma_token_parse_fail_count = health.gamma_token_parse_fail_count || 0;
   health.gamma_token_count_unexpected_count = health.gamma_token_count_unexpected_count || 0;
 
+  // Duration is unknown until we have at least one sample.
+  if (health.gamma_fetch_duration_ms_last === undefined) health.gamma_fetch_duration_ms_last = null;
+
   // Backfill optional: normalize existing state token fields that are still strings
   for (const m of Object.values(state.watchlist || {})) {
     // Backfill deterministic esports market_kind (infra/observability)

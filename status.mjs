@@ -227,7 +227,8 @@ if (verbose) {
   console.log(`- gamma_fetch_count: ${Number(health.gamma_fetch_count || 0)}`);
   console.log(`- gamma_fetch_fail_count: ${Number(health.gamma_fetch_fail_count || 0)}`);
   console.log(`- gamma_fetch_timeout_count: ${Number(health.gamma_fetch_timeout_count || 0)}`);
-  console.log(`- gamma_fetch_duration_ms_last: ${Number(health.gamma_fetch_duration_ms_last || 0)}`);
+  const dur = health.gamma_fetch_duration_ms_last;
+  console.log(`- gamma_fetch_duration_ms_last: ${dur == null ? "n/a" : Number(dur)}`);
 
   console.log("\nGlobal funnel (rolling last_5min, engine-level, no freshness):");
   console.log(`- eval_ticks: ${Number(health5.eval_tick || 0)}`);
