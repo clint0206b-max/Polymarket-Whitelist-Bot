@@ -11,6 +11,8 @@ export async function fetchLiveEvents(cfg) {
     : {};
   const timeoutMs = Number(cfg?.gamma?.gamma_timeout_ms || 2500);
 
+  const started = Date.now();
+
   const onlyLiveDefault = cfg?.gamma?.only_live_default;
   const onlyLiveByLeague = (cfg?.gamma?.only_live_by_league && typeof cfg.gamma.only_live_by_league === "object") ? cfg.gamma.only_live_by_league : {};
 
@@ -48,10 +50,10 @@ export async function fetchLiveEvents(cfg) {
       // micro-yield to be polite
       await sleep(0);
     }
-    return { ok: true, data: results, error: null };
+    return { ok: true, data: results, error: null, duration_ms: Math.max(0, Date.now() - started) };
   } catch (e) {
     const msg = e?.name === "AbortError" ? `Gamma timeout after ${timeoutMs}ms` : (e?.message || String(e));
-    return { ok: false, error: msg, data: null };
+    return { ok: false, error: msg, data: null, duration_ms: Math.max(0, Date.now() - started) };
   } finally {
     clearTimeout(to);
   }

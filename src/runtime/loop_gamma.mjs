@@ -75,10 +75,14 @@ export async function loopGamma(state, cfg, now) {
   const r = await fetchLiveEvents(cfg);
   state.runtime.last_gamma_fetch_ts = now;
   state.runtime.health.gamma_fetch_count = (state.runtime.health.gamma_fetch_count || 0) + 1;
+  if (r && typeof r.duration_ms === "number") state.runtime.health.gamma_fetch_duration_ms_last = Math.max(0, Number(r.duration_ms));
 
   if (!r.ok) {
     state.runtime.health.gamma_fetch_fail_count = (state.runtime.health.gamma_fetch_fail_count || 0) + 1;
     state.runtime.health.gamma_last_error = r.error;
+    if (String(r.error || "").toLowerCase().includes("timeout")) {
+      state.runtime.health.gamma_fetch_timeout_count = (state.runtime.health.gamma_fetch_timeout_count || 0) + 1;
+    }
     return { changed: false, stats: { ok: false, error: r.error } };
   }
 

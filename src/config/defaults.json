@@ -18,7 +18,7 @@
   },
   "gamma": {
     "gamma_base_url": "https://gamma-api.polymarket.com",
-    "gamma_timeout_ms": 2500,
+    "gamma_timeout_ms": 8000,
     "gamma_tags": ["esports", "nba", "ncaa-basketball"],
 
     "only_live_default": true,

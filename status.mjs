@@ -223,6 +223,12 @@ if (verbose) {
   console.log(`- one_sided_ratio_last_5min: ${oneSidedRatio == null ? "n/a" : fmtNum(oneSidedRatio, 3)}`);
 
   // Global funnel (rolling last_5min buckets, no freshness gate)
+  console.log(`\nGamma fetch health (runtime):`);
+  console.log(`- gamma_fetch_count: ${Number(health.gamma_fetch_count || 0)}`);
+  console.log(`- gamma_fetch_fail_count: ${Number(health.gamma_fetch_fail_count || 0)}`);
+  console.log(`- gamma_fetch_timeout_count: ${Number(health.gamma_fetch_timeout_count || 0)}`);
+  console.log(`- gamma_fetch_duration_ms_last: ${Number(health.gamma_fetch_duration_ms_last || 0)}`);
+
   console.log("\nGlobal funnel (rolling last_5min, engine-level, no freshness):");
   console.log(`- eval_ticks: ${Number(health5.eval_tick || 0)}`);
   console.log(`- state_writes: ${Number(health5.state_write || 0)}`);
