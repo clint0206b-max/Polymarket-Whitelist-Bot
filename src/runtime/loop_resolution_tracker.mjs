@@ -48,7 +48,7 @@ async function fetchGammaMarketBySlug(slug, timeoutMs = 5000) {
   }
 }
 
-function detectResolved(market) {
+export function detectResolved(market) {
   const closed = market?.closed === true;
   const active = market?.active === true;
 
@@ -79,7 +79,7 @@ function detectResolved(market) {
   return { resolved: false };
 }
 
-function computePnl(entryPrice, notionalUsd, won) {
+export function computePnl(entryPrice, notionalUsd, won) {
   const p = Number(entryPrice);
   const n = Number(notionalUsd);
   if (!(p > 0 && p < 1) || !(n > 0)) return { pnl_usd: null, roi: null, shares: null };
