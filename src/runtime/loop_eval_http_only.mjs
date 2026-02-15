@@ -1386,5 +1386,101 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     }
   }
 
+  // --- Esports opportunity classification (tag-only, every eval tick) ---
+  // Scans ALL esports in watchlist regardless of eval universe.
+  // Produces rolling buckets + persisted snapshot for status display.
+  {
+    const tNow = Date.now();
+    const esAll = Object.values(state.watchlist || {}).filter(m =>
+      m && m.league === "esports" && (m.status === "watching" || m.status === "pending_signal" || m.status === "signaled")
+    );
+
+    let total = 0;
+    let twoSided = 0;
+    let oneSidedMissingAsk = 0;
+    let oneSidedMissingBid = 0;
+    let spreadAboveMax = 0;
+    let priceOutOfRange = 0;
+    let noQuote = 0;
+    let tradeable = 0;
+
+    const maxSpreadCfg = Number(cfg?.filters?.max_spread ?? 0.02);
+    const minProbCfg = Number(cfg?.filters?.min_prob ?? 0.94);
+    const maxEntryCfg = Number(cfg?.filters?.max_entry_price ?? 0.97);
+    const EPS = Number(cfg?.filters?.EPS || 1e-6);
+
+    const topMissingAsk = [];   // top 3 with highest bid where ask is null
+    const topWideSpread = [];   // top 3 with largest spread
+
+    for (const m of esAll) {
+      total++;
+      const lp = m.last_price;
+      const ask = lp?.yes_best_ask;
+      const bid = lp?.yes_best_bid;
+
+      if (ask == null && bid == null) {
+        noQuote++;
+        continue;
+      }
+
+      if (ask == null) {
+        oneSidedMissingAsk++;
+        topMissingAsk.push({ slug: String(m.slug || ""), bid: Number(bid), kind: String(m.market_kind || "-") });
+        continue;
+      }
+
+      if (bid == null) {
+        oneSidedMissingBid++;
+        continue;
+      }
+
+      // Two-sided from here
+      twoSided++;
+      const spread = Number(ask) - Number(bid);
+
+      if (spread - EPS > maxSpreadCfg) {
+        spreadAboveMax++;
+        topWideSpread.push({ slug: String(m.slug || ""), ask: Number(ask), bid: Number(bid), spread, kind: String(m.market_kind || "-") });
+        continue;
+      }
+
+      if ((Number(ask) + EPS) < minProbCfg || (Number(ask) - EPS) > maxEntryCfg) {
+        priceOutOfRange++;
+        continue;
+      }
+
+      tradeable++;
+    }
+
+    // Sort top offenders
+    topMissingAsk.sort((a, b) => b.bid - a.bid);
+    topWideSpread.sort((a, b) => b.spread - a.spread);
+
+    // Rolling buckets
+    bumpBucket("health", "esports_opp_total", total);
+    bumpBucket("health", "esports_opp_two_sided", twoSided);
+    bumpBucket("health", "esports_opp_one_sided_missing_ask", oneSidedMissingAsk);
+    bumpBucket("health", "esports_opp_one_sided_missing_bid", oneSidedMissingBid);
+    bumpBucket("health", "esports_opp_spread_above_max", spreadAboveMax);
+    bumpBucket("health", "esports_opp_price_out_of_range", priceOutOfRange);
+    bumpBucket("health", "esports_opp_no_quote", noQuote);
+    bumpBucket("health", "esports_opp_tradeable", tradeable);
+
+    // Persisted snapshot (latest tick, not rolling — for status.mjs instant read)
+    state.runtime.esports_opportunity = {
+      ts: tNow,
+      total,
+      two_sided: twoSided,
+      one_sided_missing_ask: oneSidedMissingAsk,
+      one_sided_missing_bid: oneSidedMissingBid,
+      spread_above_max: spreadAboveMax,
+      price_out_of_range: priceOutOfRange,
+      no_quote: noQuote,
+      tradeable,
+      top_missing_ask: topMissingAsk.slice(0, 3),
+      top_wide_spread: topWideSpread.slice(0, 3)
+    };
+  }
+
   return { changed };
 }

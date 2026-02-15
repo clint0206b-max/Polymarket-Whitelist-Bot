@@ -718,3 +718,47 @@ if (verbose) {
   if (!oneStepRows.length) console.log("(none)");
 }
 
+// --- Esports Opportunity (always shown, not gated by verbose) ---
+{
+  const opp = state?.runtime?.esports_opportunity;
+  if (opp && opp.ts) {
+    const ageMs = Date.now() - Number(opp.ts);
+    const staleTag = ageMs > 30000 ? ` (stale ${Math.round(ageMs / 1000)}s ago)` : "";
+
+    console.log(`\n=== Esports Opportunity${staleTag} ===`);
+    console.log(`  live_markets_total:           ${opp.total}`);
+    console.log(`  tradeable_two_sided:          ${opp.tradeable}`);
+    console.log(`  two_sided_total:              ${opp.two_sided}`);
+    console.log(`  one_sided_missing_ask:        ${opp.one_sided_missing_ask}`);
+    console.log(`  one_sided_missing_bid:        ${opp.one_sided_missing_bid}`);
+    console.log(`  spread_above_max:             ${opp.spread_above_max}`);
+    console.log(`  price_out_of_range:           ${opp.price_out_of_range}`);
+    console.log(`  no_quote:                     ${opp.no_quote}`);
+
+    const topMA = Array.isArray(opp.top_missing_ask) ? opp.top_missing_ask : [];
+    if (topMA.length) {
+      console.log(`  top missing_ask (highest bid):`);
+      for (const r of topMA) {
+        console.log(`    - ${r.slug} | bid=${fmtNum(r.bid, 3)} | kind=${r.kind}`);
+      }
+    }
+
+    const topWS = Array.isArray(opp.top_wide_spread) ? opp.top_wide_spread : [];
+    if (topWS.length) {
+      console.log(`  top wide_spread:`);
+      for (const r of topWS) {
+        console.log(`    - ${r.slug} | ask=${fmtNum(r.ask, 3)} bid=${fmtNum(r.bid, 3)} spr=${fmtNum(r.spread, 3)} | kind=${r.kind}`);
+      }
+    }
+
+    if (opp.tradeable === 0 && opp.total > 0) {
+      console.log(`  → Day is DEAD for esports under current rules.`);
+    } else if (opp.tradeable > 0) {
+      console.log(`  → ${opp.tradeable} esports market(s) potentially tradeable!`);
+    }
+  } else {
+    console.log("\n=== Esports Opportunity ===");
+    console.log("  (no data — run the bot first)");
+  }
+}
+
