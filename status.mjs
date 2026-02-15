@@ -165,6 +165,7 @@ const health = state?.runtime?.health || {};
 
 const reject5 = sumBuckets(health?.buckets?.reject);
 const health5 = sumBuckets(health?.buckets?.health);
+const token5 = sumBuckets(health?.buckets?.token);
 
 const oneSided = Number(reject5.quote_incomplete_one_sided_book || 0);
 const stage1Eval = Number(health5.stage1_evaluated || 0);
@@ -221,6 +222,36 @@ if (verbose) {
   console.log(`- quote_incomplete_one_sided_book: ${oneSided}`);
   console.log(`- stage1_evaluated: ${stage1Eval}`);
   console.log(`- one_sided_ratio_last_5min: ${oneSidedRatio == null ? "n/a" : fmtNum(oneSidedRatio, 3)}`);
+
+  console.log("\nStage1 + quotes by league (rolling last_5min):");
+  for (const lg of ["esports", "cbb", "nba"]) {
+    console.log(`- stage1_evaluated:${lg}: ${Number(health5[`stage1_evaluated:${lg}`] || 0)}`);
+    console.log(`- quote_complete:${lg}: ${Number(health5[`quote_complete:${lg}`] || 0)}`);
+    console.log(`- reject_by_league:${lg}:quote_incomplete_one_sided_book: ${Number(reject5[`reject_by_league:${lg}:quote_incomplete_one_sided_book`] || 0)}`);
+  }
+
+  // Top rejects for esports
+  {
+    const pref = "reject_by_league:esports:";
+    const rows = Object.entries(reject5)
+      .filter(([k, v]) => k.startsWith(pref) && Number(v) > 0)
+      .map(([k, v]) => [k.slice(pref.length), Number(v)])
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8);
+    if (rows.length) {
+      console.log("\nTop esports rejects (rolling last_5min):");
+      for (const [k, v] of rows) console.log(`- ${k}: ${v}`);
+    }
+  }
+
+  console.log("\nToken resolver (rolling last_5min):");
+  console.log(`- token_attempt: ${Number(token5.attempt || 0)}`);
+  console.log(`- token_success: ${Number(token5.success || 0)}`);
+  console.log(`- token_fail: ${Number(token5.fail || 0)}`);
+  for (const lg of ["esports", "cbb", "nba"]) {
+    console.log(`- token_attempt:${lg}: ${Number(token5[`attempt:${lg}`] || 0)}`);
+    console.log(`- token_success:${lg}: ${Number(token5[`success:${lg}`] || 0)}`);
+  }
 
   // Global funnel (rolling last_5min buckets, no freshness gate)
   console.log(`\nGamma fetch health (runtime):`);

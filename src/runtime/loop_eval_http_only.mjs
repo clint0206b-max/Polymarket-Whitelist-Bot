@@ -548,6 +548,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     if (!pair) continue;
 
     resolveAttemptsThisCycle++;
+    bumpBucket("token", `attempt:${m.league}`, 1);
 
     const [a, b] = pair;
     const ra = await queue.enqueue(() => getBook(a, cfg), { reason: "token_resolve" });
@@ -559,6 +560,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       health.token_resolve_fail_by_reason_last_cycle = health.token_resolve_fail_by_reason_last_cycle || {};
       health.token_resolve_fail_by_reason_last_cycle[reason] = (health.token_resolve_fail_by_reason_last_cycle[reason] || 0) + 1;
       bumpBucket("token", `fail_reason:${reason}`, 1);
+      bumpBucket("token", `fail_reason:${reason}:${m.league}`, 1);
     };
 
     if (!ra.ok || !rb.ok) {
@@ -607,6 +609,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     if (!ok) health.token_complement_sanity_fail_count = (health.token_complement_sanity_fail_count || 0) + 1;
 
     resolveSuccessThisCycle++;
+    bumpBucket("token", `success:${m.league}`, 1);
   }
 
   // Per-cycle + cumulative counters (calibration)
@@ -643,6 +646,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   bumpBucket("token", "attempt", resolveAttemptsThisCycle);
   bumpBucket("token", "success", resolveSuccessThisCycle);
   bumpBucket("token", "fail", resolveFailThisCycle);
+
+  // NOTE: attempts/success by league are recorded inline during resolver loop.
 
   // eval tick counter (rolling)
   bumpBucket("health", "eval_tick", 1);
@@ -878,6 +883,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     if (yesToken == null) {
       health.reject_counts_last_cycle.gamma_metadata_missing = (health.reject_counts_last_cycle.gamma_metadata_missing || 0) + 1;
       bumpBucket("reject", "gamma_metadata_missing", 1);
+      bumpBucket("reject", `reject_by_league:${m.league}:gamma_metadata_missing`, 1);
       m.last_reject = { reason: "gamma_metadata_missing", ts: tNow };
       // integrity: pending should never be missing tokens; don't classify as confirm fail reason
       if (startedPending) health.pending_confirm_integrity_missing_yes_token_count = (health.pending_confirm_integrity_missing_yes_token_count || 0) + 1;
@@ -895,11 +901,13 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       health.http_fallback_fail_count = (health.http_fallback_fail_count || 0) + 1;
       health.reject_counts_last_cycle.http_fallback_failed = (health.reject_counts_last_cycle.http_fallback_failed || 0) + 1;
       bumpBucket("reject", "http_fallback_failed", 1);
+      bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed`, 1);
 
       // breakdown (observability)
       const r = "http_fail";
       health.http_fallback_fail_by_reason_last_cycle[r] = (health.http_fallback_fail_by_reason_last_cycle[r] || 0) + 1;
       bumpBucket("reject", `http_fallback_failed:${r}`, 1);
+      bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed:${r}`, 1);
 
       m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
       recordPendingConfirmFail("fail_http_fallback_failed");
@@ -913,11 +921,13 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       health.http_fallback_fail_count = (health.http_fallback_fail_count || 0) + 1;
       health.reject_counts_last_cycle.http_fallback_failed = (health.reject_counts_last_cycle.http_fallback_failed || 0) + 1;
       bumpBucket("reject", "http_fallback_failed", 1);
+      bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed`, 1);
 
       // breakdown (observability)
       const r = String(parsed.reason || "book_not_usable");
       health.http_fallback_fail_by_reason_last_cycle[r] = (health.http_fallback_fail_by_reason_last_cycle[r] || 0) + 1;
       bumpBucket("reject", `http_fallback_failed:${r}`, 1);
+      bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed:${r}`, 1);
 
       m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
       recordPendingConfirmFail("fail_http_fallback_failed");
@@ -931,21 +941,25 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       // primary reject
       health.reject_counts_last_cycle.quote_incomplete_one_sided_book = (health.reject_counts_last_cycle.quote_incomplete_one_sided_book || 0) + 1;
       bumpBucket("reject", "quote_incomplete_one_sided_book", 1);
+      bumpBucket("reject", `reject_by_league:${m.league}:quote_incomplete_one_sided_book`, 1);
 
       // subreason (health)
       if (bestAsk == null) {
         health.quote_incomplete_missing_best_ask_count = (health.quote_incomplete_missing_best_ask_count || 0) + 1;
         health.quote_incomplete_missing_best_ask_last_cycle = (health.quote_incomplete_missing_best_ask_last_cycle || 0) + 1;
         bumpBucket("health", "quote_incomplete_missing_best_ask", 1);
+        bumpBucket("reject", `reject_by_league:${m.league}:quote_incomplete_missing_best_ask`, 1);
       }
       if (bestBid == null) {
         health.quote_incomplete_missing_best_bid_count = (health.quote_incomplete_missing_best_bid_count || 0) + 1;
         health.quote_incomplete_missing_best_bid_last_cycle = (health.quote_incomplete_missing_best_bid_last_cycle || 0) + 1;
         bumpBucket("health", "quote_incomplete_missing_best_bid", 1);
+        bumpBucket("reject", `reject_by_league:${m.league}:quote_incomplete_missing_best_bid`, 1);
       }
       if (bestAsk == null && bestBid == null) {
         health.quote_incomplete_integrity_both_missing_count = (health.quote_incomplete_integrity_both_missing_count || 0) + 1;
         bumpBucket("health", "quote_incomplete_integrity_both_missing", 1);
+        bumpBucket("reject", `reject_by_league:${m.league}:quote_incomplete_integrity_both_missing`, 1);
       }
 
       m.last_reject = {
@@ -972,6 +986,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     // Health: quote is complete (bid+ask) at parse level
     bumpBucket("health", "quote_complete", 1);
+    bumpBucket("health", `quote_complete:${m.league}`, 1);
 
     const quote = { probAsk: bestAsk, probBid: bestBid, spread: bestAsk - bestBid };
 
@@ -992,6 +1007,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     health.stage1_evaluated_count = (health.stage1_evaluated_count || 0) + 1;
     health.stage1_evaluated_last_cycle = (health.stage1_evaluated_last_cycle || 0) + 1;
     bumpBucket("health", "stage1_evaluated", 1);
+    bumpBucket("health", `stage1_evaluated:${m.league}`, 1);
 
     // Funnel counters (health-only): computed locally, independent from reject reasons
     const EPS = Number(cfg?.filters?.EPS || 1e-6);
@@ -1031,6 +1047,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     if (!base.pass) {
       health.reject_counts_last_cycle[base.reason] = (health.reject_counts_last_cycle[base.reason] || 0) + 1;
       bumpBucket("reject", base.reason, 1);
+      bumpBucket("reject", `reject_by_league:${m.league}:${base.reason}`, 1);
       m.last_reject = { reason: base.reason, ts: tNow };
       if (base.reason === "price_out_of_range") recordPendingConfirmFail("fail_base_price_out_of_range");
       else if (base.reason === "spread_above_max") recordPendingConfirmFail("fail_spread_above_max");
@@ -1074,6 +1091,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     if (!depth.pass) {
       health.reject_counts_last_cycle[depth.reason] = (health.reject_counts_last_cycle[depth.reason] || 0) + 1;
       bumpBucket("reject", depth.reason, 1);
+      bumpBucket("reject", `reject_by_league:${m.league}:${depth.reason}`, 1);
       m.last_reject = { reason: depth.reason, ts: tNow };
       if (depth.reason === "depth_bid_below_min") recordPendingConfirmFail("fail_depth_bid_below_min");
       else if (depth.reason === "depth_ask_below_min") recordPendingConfirmFail("fail_depth_ask_below_min");
@@ -1094,6 +1112,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         health.cooldown_active_count = (health.cooldown_active_count || 0) + 1;
         health.reject_counts_last_cycle.cooldown_active = (health.reject_counts_last_cycle.cooldown_active || 0) + 1;
         bumpBucket("reject", "cooldown_active", 1);
+        bumpBucket("reject", `reject_by_league:${m.league}:cooldown_active`, 1);
         m.last_reject = { reason: "cooldown_active", ts: tNow };
         continue;
       }
