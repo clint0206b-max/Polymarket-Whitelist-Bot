@@ -894,9 +894,9 @@ printOpportunity("Esports", state?.runtime?.esports_opportunity);
     if (s.with_context_entry) {
       console.log(`    ctx_gate: evaluated:${s.with_context_entry} allowed:${s.with_context_allowed}`);
     }
-    if (s.missed > 0 && s.top_miss_reasons.length) {
-      const reasons = s.top_miss_reasons.map(r => `${r.reason}:${r.count}`).join(", ");
-      console.log(`    missed:${s.missed} → ${reasons}`);
+    if (s.missed > 0 && s.top_event_miss_reasons?.length) {
+      const evReasons = s.top_event_miss_reasons.map(r => `${r.reason}:${r.events}ev`).join(", ");
+      console.log(`    missed:${s.missed} events → ${evReasons}`);
     }
   }
 }

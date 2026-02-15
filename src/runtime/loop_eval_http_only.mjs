@@ -1674,18 +1674,35 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       const hasTwoSided = hasQuote && lp.spread != null;
       const isSignaled = (m.status === "signaled");
 
-      // Determine reject reason (most recent)
+      // Determine reject reason (granular)
       let rejectReason = null;
       if (!hasQuote) {
-        rejectReason = "no_quote";
-      } else if (lp.yes_best_ask == null) {
-        rejectReason = "missing_ask";
-      } else if (lp.yes_best_bid == null) {
-        rejectReason = "missing_bid";
+        // Split "no_quote" into specific causes
+        const tokens = m.tokens || m.clobTokenIds;
+        const hasTokens = Array.isArray(tokens) && tokens.length > 0;
+        const lr = m.last_reject?.reason;
+
+        if (!hasTokens) {
+          rejectReason = "no_token_resolved";
+        } else if (lr === "http_fallback_failed") {
+          rejectReason = "book_fetch_failed";
+        } else if (lr === "gamma_metadata_missing") {
+          rejectReason = "gamma_metadata_missing";
+        } else if (lp.yes_best_ask == null && lp.yes_best_bid != null) {
+          rejectReason = "one_sided_missing_ask";
+        } else if (lp.yes_best_bid == null && lp.yes_best_ask != null) {
+          rejectReason = "one_sided_missing_bid";
+        } else if (lp.updated_ts) {
+          // Had a price update but both sides are null → book was empty
+          rejectReason = "book_empty";
+        } else {
+          // Never got a price at all — likely never evaluated (stale or not polled)
+          rejectReason = "stale_no_eval";
+        }
       } else {
-        // Has quote — check pipeline reject
+        // Has two-sided quote — check pipeline reject
         const lr = m.last_reject;
-        if (lr?.reason && lr.reason !== "pending_entered") {
+        if (lr?.reason && lr.reason !== "pending_entered" && lr.reason !== "signaled") {
           rejectReason = lr.reason;
         }
       }

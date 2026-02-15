@@ -132,7 +132,7 @@ export function getSummary(state, dateKey, league) {
   // Missed = had some evaluation but no signal
   const missed = total - with_signal;
 
-  // Aggregate reject reasons across missed events
+  // Aggregate reject reasons across missed events (by tick count)
   const reasonCounts = {};
   for (const ev of entries) {
     if (ev.had_signal) continue; // not missed
@@ -145,9 +145,25 @@ export function getSummary(state, dateKey, league) {
     .slice(0, 5)
     .map(([reason, count]) => ({ reason, count }));
 
+  // Top reason PER EVENT (1 vote per missed event = its dominant reason)
+  const eventReasonCounts = {};
+  for (const ev of entries) {
+    if (ev.had_signal) continue;
+    const reasons = Object.entries(ev.reject_reasons || {});
+    if (!reasons.length) continue;
+    // Dominant = highest count within this event
+    reasons.sort((a, b) => b[1] - a[1]);
+    const dominant = reasons[0][0];
+    eventReasonCounts[dominant] = (eventReasonCounts[dominant] || 0) + 1;
+  }
+  const top_event_miss_reasons = Object.entries(eventReasonCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([reason, events]) => ({ reason, events }));
+
   return {
     total, with_quote, with_two_sided, with_tradeable, with_signal,
     with_context_entry, with_context_allowed,
-    missed, top_miss_reasons
+    missed, top_miss_reasons, top_event_miss_reasons
   };
 }
