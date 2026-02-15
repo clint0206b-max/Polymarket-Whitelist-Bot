@@ -82,6 +82,12 @@
   },
   "context": {
     "enabled": false,
+    "entry_rules": {
+      "min_win_prob": 0.90,
+      "max_minutes_left": 5,
+      "min_margin": 1,
+      "gate_mode": "tag_only"
+    },
     "cbb": {
       "provider": "espn",
       "fetch_seconds": 15,

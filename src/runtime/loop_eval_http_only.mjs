@@ -5,6 +5,7 @@ import { compute_depth_metrics, is_depth_sufficient } from "../strategy/stage2.m
 import { createHttpQueue } from "./http_queue.mjs";
 import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWindow3, mergeScoreboardEventsByWindow } from "../context/espn_cbb_scoreboard.mjs";
 import { fetchEspnNbaScoreboardForDate, deriveNbaContextForMarket } from "../context/espn_nba_scoreboard.mjs";
+import { estimateWinProb, checkContextEntryGate } from "../strategy/win_prob_table.mjs";
 
 function ensure(obj, k, v) { if (obj[k] === undefined) obj[k] = v; }
 
@@ -833,6 +834,85 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         }
       }
     }
+
+    // --- Win probability + context entry gate (tag-only dry run) ---
+    for (const m of wl) {
+      if (m.league !== "cbb" && m.league !== "nba") continue;
+      if (!(m.status === "watching" || m.status === "pending_signal")) continue;
+      if (!m.context || m.context.provider !== "espn") continue;
+      if (m.context.state !== "in") continue;
+
+      const sport = String(m.context.sport);
+      bumpBucket("health", `context_winprob_computed:${sport}`, 1);
+
+      // Derive yes_outcome_name from watchlist outcomes + clobTokenIds
+      let yesOutcomeName = null;
+      const outcomes = Array.isArray(m.outcomes) ? m.outcomes : null;
+      const clobIds = Array.isArray(m.tokens?.clobTokenIds) ? m.tokens.clobTokenIds : null;
+      const yesId = m.tokens?.yes_token_id;
+      if (outcomes && clobIds && yesId && outcomes.length === 2 && clobIds.length === 2) {
+        const yesIdx = clobIds.findIndex(x => String(x) === String(yesId));
+        if (yesIdx >= 0) yesOutcomeName = String(outcomes[yesIdx]);
+      }
+
+      // Match yes_outcome to ESPN team (a or b)
+      const teamA = m.context.teams?.a;
+      const teamB = m.context.teams?.b;
+      let marginForYes = null;
+
+      if (yesOutcomeName && teamA?.name && teamB?.name &&
+          teamA.score != null && teamB.score != null) {
+        const yesNorm = normTeam(yesOutcomeName);
+        const aNorm = normTeam(teamA.name);
+        const bNorm = normTeam(teamB.name);
+
+        // Match: check if yes_outcome contains or is contained in either team name
+        let yesIsA = false;
+        let yesIsB = false;
+        if (yesNorm && aNorm && bNorm) {
+          yesIsA = (yesNorm === aNorm || yesNorm.includes(aNorm) || aNorm.includes(yesNorm));
+          yesIsB = (yesNorm === bNorm || yesNorm.includes(bNorm) || bNorm.includes(yesNorm));
+        }
+
+        if (yesIsA && !yesIsB) {
+          marginForYes = teamA.score - teamB.score;
+        } else if (yesIsB && !yesIsA) {
+          marginForYes = teamB.score - teamA.score;
+        } else {
+          // Ambiguous or no match — can't determine direction
+          bumpBucket("health", `context_entry_team_match_fail:${sport}`, 1);
+        }
+      }
+
+      // Check entry gate
+      const gate = checkContextEntryGate({
+        sport,
+        period: m.context.period,
+        minutesLeft: m.context.minutes_left,
+        marginForYes,
+        minWinProb: Number(cfg?.context?.entry_rules?.min_win_prob ?? 0.90),
+        maxMinutesLeft: Number(cfg?.context?.entry_rules?.max_minutes_left ?? 5),
+        minMargin: Number(cfg?.context?.entry_rules?.min_margin ?? 1),
+      });
+
+      // Persist on market for signal snapshot
+      m.context_entry = {
+        yes_outcome_name: yesOutcomeName,
+        margin_for_yes: marginForYes,
+        win_prob: gate.win_prob,
+        entry_allowed: gate.allowed,
+        entry_blocked_reason: gate.allowed ? null : gate.reason,
+      };
+
+      // Observability buckets
+      bumpBucket("health", `context_entry_evaluated:${sport}`, 1);
+      if (gate.allowed) {
+        bumpBucket("health", `context_entry_allowed:${sport}`, 1);
+      } else {
+        bumpBucket("health", `context_entry_blocked:${sport}`, 1);
+        bumpBucket("health", `context_entry_blocked_reason:${sport}:${gate.reason}`, 1);
+      }
+    }
   }
 
   // --- evaluation loop ---
@@ -1328,7 +1408,15 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           decided_pass: fresh ? !!m.context.decided_pass : null,
           margin: fresh ? (m.context.margin ?? null) : null,
           minutes_left: fresh ? (m.context.minutes_left ?? null) : null,
-          match_kind: m.context.match?.kind || null
+          match_kind: m.context.match?.kind || null,
+          // Win probability entry gate (from context_entry computed earlier)
+          entry_gate: m.context_entry ? {
+            yes_outcome_name: m.context_entry.yes_outcome_name ?? null,
+            margin_for_yes: m.context_entry.margin_for_yes ?? null,
+            win_prob: m.context_entry.win_prob ?? null,
+            entry_allowed: m.context_entry.entry_allowed ?? null,
+            entry_blocked_reason: m.context_entry.entry_blocked_reason ?? null,
+          } : null,
         };
       }
 

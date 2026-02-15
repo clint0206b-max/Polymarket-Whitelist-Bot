@@ -769,3 +769,59 @@ printOpportunity("CBB", state?.runtime?.cbb_opportunity);
 printOpportunity("NBA", state?.runtime?.nba_opportunity);
 printOpportunity("Esports", state?.runtime?.esports_opportunity);
 
+// --- Context Entry Gate (win probability dry-run) ---
+{
+  const wl = state?.watchlist || {};
+  const entryRows = [];
+  for (const m of Object.values(wl)) {
+    if (!m?.context_entry) continue;
+    const ce = m.context_entry;
+    entryRows.push({
+      slug: String(m.slug || ""),
+      league: String(m.league || ""),
+      yes_outcome: ce.yes_outcome_name ?? "?",
+      margin_for_yes: ce.margin_for_yes,
+      win_prob: ce.win_prob,
+      entry_allowed: ce.entry_allowed,
+      blocked_reason: ce.entry_blocked_reason,
+      period: m.context?.period ?? null,
+      minutes_left: m.context?.minutes_left ?? null,
+      state: m.context?.state ?? null,
+    });
+  }
+
+  if (entryRows.length) {
+    // Sort: allowed first, then by win_prob desc
+    entryRows.sort((a, b) => {
+      if (a.entry_allowed !== b.entry_allowed) return a.entry_allowed ? -1 : 1;
+      return (b.win_prob ?? 0) - (a.win_prob ?? 0);
+    });
+
+    const allowed = entryRows.filter(r => r.entry_allowed);
+    const blocked = entryRows.filter(r => !r.entry_allowed);
+
+    console.log(`\n=== Context Entry Gate (tag-only) ===`);
+    console.log(`  evaluated: ${entryRows.length} | allowed: ${allowed.length} | blocked: ${blocked.length}`);
+
+    if (allowed.length) {
+      console.log("  ✅ ALLOWED:");
+      for (const r of allowed.slice(0, 5)) {
+        console.log(`    - ${r.slug} | ${r.league} | yes=${r.yes_outcome} | margin=${r.margin_for_yes ?? "?"} | wp=${r.win_prob != null ? (r.win_prob * 100).toFixed(1) + "%" : "?"} | P${r.period} ${fmtNum(r.minutes_left, 1)}min`);
+      }
+    }
+
+    if (blocked.length) {
+      // Group blocked by reason
+      const byReason = {};
+      for (const r of blocked) {
+        const reason = r.blocked_reason || "unknown";
+        byReason[reason] = (byReason[reason] || 0) + 1;
+      }
+      console.log("  ❌ BLOCKED:");
+      for (const [reason, count] of Object.entries(byReason).sort((a, b) => b[1] - a[1])) {
+        console.log(`    - ${reason}: ${count}`);
+      }
+    }
+  }
+}
+
