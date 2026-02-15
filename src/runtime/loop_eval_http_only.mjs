@@ -1678,8 +1678,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       let rejectReason = null;
       if (!hasQuote) {
         // Split "no_quote" into specific causes
-        const tokens = m.tokens || m.clobTokenIds;
-        const hasTokens = Array.isArray(tokens) && tokens.length > 0;
+        const tokenIds = m?.tokens?.clobTokenIds;
+        const hasTokens = Array.isArray(tokenIds) && tokenIds.length === 2;
         const lr = m.last_reject?.reason;
 
         if (!hasTokens) {
