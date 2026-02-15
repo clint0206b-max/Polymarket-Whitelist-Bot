@@ -1,0 +1,13 @@
+{
+  "name": "polymarket-watchlist-v1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Polymarket watchlist + signals engine (v1) — deterministic spec-driven implementation.",
+  "scripts": {
+    "start": "node run.mjs",
+    "status": "node status.mjs",
+    "status:verbose": "node status.mjs --verbose",
+    "journal:stats": "node src/tools/journal_stats.mjs"
+  }
+}

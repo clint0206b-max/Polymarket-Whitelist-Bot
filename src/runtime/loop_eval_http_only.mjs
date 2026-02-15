@@ -1,0 +1,1287 @@
+import { getBook } from "../clob/book_http_client.mjs";
+import { parseAndNormalizeBook } from "../clob/book_parser.mjs";
+import { is_base_signal_candidate, is_near_signal_margin } from "../strategy/stage1.mjs";
+import { compute_depth_metrics, is_depth_sufficient } from "../strategy/stage2.mjs";
+import { createHttpQueue } from "./http_queue.mjs";
+import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWindow3, mergeScoreboardEventsByWindow } from "../context/espn_cbb_scoreboard.mjs";
+import { fetchEspnNbaScoreboardForDate, deriveNbaContextForMarket } from "../context/espn_nba_scoreboard.mjs";
+
+function ensure(obj, k, v) { if (obj[k] === undefined) obj[k] = v; }
+
+// --- Esports series guard (tag-only) ---
+function normTeam(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseTeamsFromTitle(title) {
+  const raw = String(title || "").trim();
+  if (!raw) return null;
+  const low = ` ${raw.toLowerCase()} `;
+  const seps = [" vs ", " vs. ", " v ", " v. "];
+  for (const sep of seps) {
+    const idx = low.indexOf(sep);
+    if (idx > 0) {
+      const left = raw.slice(0, idx).trim();
+      const right = raw.slice(idx + sep.trim().length).trim();
+      if (!left || !right) continue;
+      return { a: left, b: right };
+    }
+  }
+  return null;
+}
+
+function parseBoFromScoreOrPeriod(scoreRaw, periodRaw) {
+  const s = String(scoreRaw || "");
+  const m = s.match(/\bBo\s*(3|5)\b/i);
+  if (m) return Number(m[1]);
+
+  const p = String(periodRaw || "");
+  const mp = p.match(/^(\d+)\/(\d+)$/);
+  if (mp) {
+    const den = Number(mp[2]);
+    if (den === 3 || den === 5) return den;
+  }
+  return null;
+}
+
+function parseMapsFromScore(scoreRaw) {
+  const s = String(scoreRaw || "");
+  // e.g. "...|0-1|Bo3" or "0-1|Bo3"
+  const m = s.match(/\b(\d+)\s*-\s*(\d+)\b/);
+  if (!m) return null;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return { a, b };
+}
+
+function computeEsportsDerived(m, cfg) {
+  // Returns derived or null (never throws)
+  const ctx = m?.esports_ctx;
+  const ev = ctx?.event;
+  const mk = ctx?.market;
+
+  const out = {
+    v: 1,
+    series_format: "unknown",
+    maps_a: null,
+    maps_b: null,
+    leader_name: null,
+    leader_maps: null,
+    required_wins: null,
+    yes_outcome_name: null,
+    guard_status: "unknown",
+    guard_reason: "unknown"
+  };
+
+  const bo = parseBoFromScoreOrPeriod(ev?.score_raw, ev?.period_raw);
+  if (bo === 3) { out.series_format = "bo3"; out.required_wins = 1; }
+  else if (bo === 5) { out.series_format = "bo5"; out.required_wins = 2; }
+  else { out.series_format = "unknown"; out.required_wins = null; }
+
+  const maps = parseMapsFromScore(ev?.score_raw);
+  if (maps) {
+    out.maps_a = maps.a;
+    out.maps_b = maps.b;
+  }
+
+  const teams = parseTeamsFromTitle(ev?.title);
+  const tA = teams ? normTeam(teams.a) : null;
+  const tB = teams ? normTeam(teams.b) : null;
+
+  // Determine leader name (if score parsed)
+  if (maps && teams) {
+    if (maps.a > maps.b) { out.leader_name = teams.a; out.leader_maps = maps.a; }
+    else if (maps.b > maps.a) { out.leader_name = teams.b; out.leader_maps = maps.b; }
+    else { out.leader_name = null; out.leader_maps = maps.a; }
+  }
+
+  // Determine yes_outcome_name from outcomes + clobTokenIds ordering
+  const yesId = m?.tokens?.yes_token_id;
+  const clobIds = Array.isArray(mk?.clobTokenIds) ? mk.clobTokenIds : null;
+  const outcomes = Array.isArray(mk?.outcomes) ? mk.outcomes : null;
+  if (yesId && clobIds && outcomes && clobIds.length === 2 && outcomes.length === 2) {
+    const idx = clobIds.findIndex(x => String(x) === String(yesId));
+    if (idx >= 0) out.yes_outcome_name = outcomes[idx];
+  }
+
+  // Guard applies only when price entry is high enough AND format known
+  const thr = Number(cfg?.esports?.series_guard_threshold_high ?? 0.94);
+  const ask = Number(m?.last_price?.yes_best_ask);
+  const high = Number.isFinite(ask) && ask >= thr;
+
+  if (!high) {
+    out.guard_status = "unknown";
+    out.guard_reason = "below_threshold";
+    return out;
+  }
+
+  // must have format
+  if (out.series_format !== "bo3" && out.series_format !== "bo5") {
+    out.guard_status = "unknown";
+    out.guard_reason = "no_format";
+    return out;
+  }
+
+  if (!maps) {
+    out.guard_status = "unknown";
+    out.guard_reason = "no_score";
+    return out;
+  }
+
+  if (!outcomes || !clobIds) {
+    out.guard_status = "unknown";
+    out.guard_reason = "no_outcomes";
+    return out;
+  }
+
+  if (!yesId) {
+    out.guard_status = "unknown";
+    out.guard_reason = "no_yes_token";
+    return out;
+  }
+
+  if (!teams || !tA || !tB) {
+    out.guard_status = "unknown";
+    out.guard_reason = "no_teams";
+    return out;
+  }
+
+  if (!out.yes_outcome_name) {
+    out.guard_status = "unknown";
+    out.guard_reason = "no_yes_outcome_name";
+    return out;
+  }
+
+  if (!out.leader_name) {
+    out.guard_status = "unknown";
+    out.guard_reason = "tie";
+    return out;
+  }
+
+  // Compare yes outcome to leader
+  const yesNorm = normTeam(out.yes_outcome_name);
+  const leaderNorm = normTeam(out.leader_name);
+
+  if (yesNorm !== leaderNorm) {
+    out.guard_status = "blocked";
+    out.guard_reason = "not_ahead";
+    return out;
+  }
+
+  if (out.required_wins != null && out.leader_maps != null && out.leader_maps < out.required_wins) {
+    out.guard_status = "blocked";
+    out.guard_reason = "ahead_but_not_enough_maps";
+    return out;
+  }
+
+  out.guard_status = "allowed";
+  out.guard_reason = "allowed";
+  return out;
+}
+
+function nowSecFromMs(ms) { return Math.round(ms / 1000); }
+
+function isValidTokenPair(arr) { return Array.isArray(arr) && arr.length === 2 && arr.every(x => typeof x === "string" && x.length > 0); }
+
+function getTokenPair(m) {
+  const t = m?.tokens;
+  const ids = t?.clobTokenIds;
+  return isValidTokenPair(ids) ? ids : null;
+}
+
+function pickEvalUniverse(state, cfg) {
+  const maxPer = Number(cfg?.polling?.eval_max_markets_per_cycle || 20);
+  const wl = state.watchlist || {};
+  const all = Object.values(wl).filter(Boolean);
+
+  // v1 rule: ALWAYS include pending_signal first (to make 2 hits in-window possible)
+  const pending = all
+    .filter(m => m.status === "pending_signal")
+    .map(m => ({ m, ps: Number(m.pending_since_ts || 0) }));
+
+  // Deterministic order: oldest pending first (closest to expiry)
+  pending.sort((a, b) => (a.ps - b.ps) || String(a.m.slug || "").localeCompare(String(b.m.slug || "")));
+
+  // Scheduling fix: if there is ANY pending, evaluate ONLY pending this tick.
+  if (pending.length > 0) return pending.map(x => x.m);
+
+  const watching = all
+    .filter(m => m.status === "watching")
+    .map(m => ({
+      m,
+      vol: Number(m.gamma_vol24h_usd || 0),
+      lastSeen: Number(m.last_seen_ts || 0)
+    }));
+
+  watching.sort((a, b) => (b.vol - a.vol) || (b.lastSeen - a.lastSeen));
+
+  return watching.slice(0, maxPer).map(x => x.m);
+}
+
+export async function loopEvalHttpOnly(state, cfg, now) {
+  state.runtime = state.runtime || {};
+  state.runtime.health = state.runtime.health || {};
+  const health = state.runtime.health;
+
+  // Eval tick observability
+  health.last_eval_tick_ts = now;
+
+  function upsertTopN(key, row, sortFn, n = 5) {
+    const cur = Array.isArray(state.runtime[key]) ? state.runtime[key] : [];
+    const kept = cur.filter(x => x && x.slug !== row.slug);
+    kept.push(row);
+    kept.sort(sortFn);
+    state.runtime[key] = kept.slice(0, n);
+  }
+
+  function recordHotCandidate(m, quote, metrics) {
+    // Triggered snapshot for diagnosis: store last hot candidates even if pending_enter==0 in window.
+    const entryDepth = Number(metrics?.entry_depth_usd_ask || 0);
+    const exitDepth = Number(metrics?.exit_depth_usd_bid || 0);
+    const row = {
+      ts: now,
+      quote_ts: now,
+      slug: String(m.slug || ""),
+      status: m.status,
+      probAsk: Number(quote?.probAsk),
+      probBid: Number(quote?.probBid),
+      spread: Number(quote?.spread),
+      entry_depth_usd_ask: entryDepth,
+      exit_depth_usd_bid: exitDepth,
+      base_range_pass: null,
+      last_reject: m.last_reject?.reason || "-"
+    };
+
+    upsertTopN(
+      "last_hot_candidates",
+      row,
+      (a, b) =>
+        (Number(b.probAsk) - Number(a.probAsk)) ||
+        (Number(a.spread) - Number(b.spread)) ||
+        (Number(b.exit_depth_usd_bid) - Number(a.exit_depth_usd_bid)) ||
+        (Number(b.ts) - Number(a.ts)) ||
+        String(a.slug).localeCompare(String(b.slug)),
+      5
+    );
+  }
+
+  function recordHotCandidateRelaxed(m, quote, metrics, baseRangePass) {
+    const entryDepth = Number(metrics?.entry_depth_usd_ask || 0);
+    const exitDepth = Number(metrics?.exit_depth_usd_bid || 0);
+    const row = {
+      ts: now,
+      quote_ts: now,
+      slug: String(m.slug || ""),
+      status: m.status,
+      probAsk: Number(quote?.probAsk),
+      probBid: Number(quote?.probBid),
+      spread: Number(quote?.spread),
+      entry_depth_usd_ask: entryDepth,
+      exit_depth_usd_bid: exitDepth,
+      base_range_pass: !!baseRangePass,
+      last_reject: m.last_reject?.reason || "-"
+    };
+
+    upsertTopN(
+      "last_hot_candidates_relaxed",
+      row,
+      (a, b) =>
+        (Number(b.probAsk) - Number(a.probAsk)) ||
+        (Number(a.spread) - Number(b.spread)) ||
+        (Number(b.exit_depth_usd_bid) - Number(a.exit_depth_usd_bid)) ||
+        (Number(b.entry_depth_usd_ask) - Number(a.entry_depth_usd_ask)) ||
+        (Number(a.quote_ts) - Number(b.quote_ts)) ||
+        String(a.slug).localeCompare(String(b.slug)),
+      5
+    );
+  }
+
+  // Resolver-local strict parsing that is "usable" if EITHER side has valid levels
+  function toNumStrict(x) {
+    if (typeof x === "number") return Number.isFinite(x) ? x : null;
+    if (typeof x === "string") {
+      const t = x.trim();
+      if (!t) return null;
+      if (t.includes(",")) return null;
+      const n = Number(t);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+
+  function parseLevels(rawLevels, maxLevels, side) {
+    const levels = Array.isArray(rawLevels) ? rawLevels : [];
+    const parsed = [];
+    for (const lv of levels) {
+      const p = toNumStrict(lv?.price);
+      const s = toNumStrict(lv?.size);
+      if (p == null || s == null) continue;
+      if (!(p > 0 && p <= 1)) continue;
+      if (!(s > 0)) continue;
+      parsed.push({ price: p, size: s });
+    }
+    parsed.sort((a, b) => side === "bids" ? (b.price - a.price) : (a.price - b.price));
+    return parsed.slice(0, maxLevels);
+  }
+
+  function parseBookForScore(rawBook, cfg) {
+    const maxLevels = Number(cfg?.filters?.max_levels_considered || 50);
+    const bids = parseLevels(rawBook?.bids, maxLevels, "bids");
+    const asks = parseLevels(rawBook?.asks, maxLevels, "asks");
+
+    const bestBid = bids.length ? bids[0].price : null;
+    const bestAsk = asks.length ? asks[0].price : null;
+
+    if (bestBid == null && bestAsk == null) {
+      return { ok: false, reason: "book_not_usable", bestBid: null, bestAsk: null };
+    }
+    return { ok: true, reason: null, bestBid, bestAsk };
+  }
+
+  // reset per-cycle counters
+  health.reject_counts_last_cycle = {};
+  health.http_fallback_fail_by_reason_last_cycle = {};
+  health.token_resolve_fail_by_reason_last_cycle = {};
+  health.pending_confirm_fail_by_reason_last_cycle = {};
+  health.stage1_evaluated_last_cycle = 0;
+  health.quote_incomplete_missing_best_ask_last_cycle = 0;
+  health.quote_incomplete_missing_best_bid_last_cycle = 0;
+  ensure(health, "gray_zone_count", 0);
+
+  const queue = createHttpQueue(cfg, health);
+
+  // --- Context feed (CBB D2 v0, tag-only) ---
+  // NOTE: cache is keyed by market dateKey (derived from market.endDateIso in UTC), not by utc-now.
+  const contextEnabled = !!cfg?.context?.enabled;
+
+  // cache accessor for CBB events
+  function dateKeyFromIsoUtc(iso) {
+    if (!iso) return null;
+    const d = new Date(String(iso));
+    if (!Number.isFinite(d.getTime())) return null;
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    return `${yyyy}${mm}${dd}`;
+  }
+
+  function daysDeltaFromNowUtc(dateKey) {
+    const m = String(dateKey || "").match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (!m) return null;
+    const day = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    const nowDay = (() => {
+      const d = new Date(now);
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    })();
+    return Math.round((day - nowDay) / (24 * 60 * 60 * 1000));
+  }
+
+  async function getCbbEventsForDateKey(dateKey) {
+    if (!contextEnabled) return null;
+    if (!dateKey) return null;
+
+    const maxDays = Number(cfg?.context?.cbb?.max_days_delta_fetch ?? 7);
+    const delta = daysDeltaFromNowUtc(dateKey);
+    if (delta != null && Math.abs(delta) > maxDays) {
+      bumpBucket("health", "context_cbb_tag_skipped_date_too_far", 1);
+      return null;
+    }
+
+    state.runtime.context_cache = state.runtime.context_cache || {};
+    const node = state.runtime.context_cache.cbb_by_dateKey || (state.runtime.context_cache.cbb_by_dateKey = {});
+
+    const everyMs = Number(cfg?.context?.cbb?.fetch_seconds || 15) * 1000;
+    const cur = node[dateKey] || { ts: 0, events: null, date_key: dateKey, days_fetched: null, games_total: 0, games_unique: 0 };
+
+    const shouldFetch = (!cur.ts || (now - Number(cur.ts)) >= everyMs || !Array.isArray(cur.events));
+    if (shouldFetch) {
+      bumpBucket("health", "context_cbb_cache_miss", 1);
+      bumpBucket("health", "context_cbb_cache_miss_by_dateKey", 1);
+
+      const days = computeDateWindow3(dateKey);
+      bumpBucket("health", "context_cbb_fetch_days_3", 1);
+
+      const results = await Promise.all(days.map(dk => fetchEspnCbbScoreboardForDate(cfg, dk)));
+
+      for (const r of results) {
+        if (r.ok) {
+          bumpBucket("health", "context_cbb_fetch_ok", 1);
+          if (!Array.isArray(r.events) || r.events.length === 0) bumpBucket("health", "context_cbb_fetch_empty_events", 1);
+        } else {
+          bumpBucket("health", "context_cbb_fetch_fail", 1);
+          if (r.reason === "parse") bumpBucket("health", "context_cbb_fetch_parse_fail", 1);
+        }
+      }
+
+      const merged = mergeScoreboardEventsByWindow(dateKey, results);
+
+      state.runtime.last_context_cbb_fetch = {
+        ts: now,
+        ok: true,
+        provider: "espn",
+        date_key: dateKey,
+        days_fetched: days,
+        games_total: merged.games_total,
+        games_unique: merged.games_unique
+      };
+
+      cur.ts = now;
+      cur.date_key = dateKey;
+      cur.days_fetched = days;
+      cur.events = merged.events;
+      cur.games_total = merged.games_total;
+      cur.games_unique = merged.games_unique;
+
+      bumpBucket("health", "context_cbb_games_total", Number(merged.games_total || 0));
+      bumpBucket("health", "context_cbb_games_unique", Number(merged.games_unique || 0));
+
+      node[dateKey] = cur;
+    } else {
+      bumpBucket("health", "context_cbb_cache_hit", 1);
+      bumpBucket("health", "context_cbb_cache_hit_by_dateKey", 1);
+    }
+
+    return Array.isArray(node[dateKey]?.events) ? node[dateKey].events : null;
+  }
+
+  async function getNbaEventsForDateKey(dateKey) {
+    if (!contextEnabled) return null;
+    if (!dateKey) return null;
+
+    const maxDays = Number(cfg?.context?.nba?.max_days_delta_fetch ?? 7);
+    const delta = daysDeltaFromNowUtc(dateKey);
+    if (delta != null && Math.abs(delta) > maxDays) {
+      bumpBucket("health", "context_nba_tag_skipped_date_too_far", 1);
+      return null;
+    }
+
+    state.runtime.context_cache = state.runtime.context_cache || {};
+    const node = state.runtime.context_cache.nba_by_dateKey || (state.runtime.context_cache.nba_by_dateKey = {});
+
+    const everyMs = Number(cfg?.context?.nba?.fetch_seconds || 15) * 1000;
+    const cur = node[dateKey] || { ts: 0, events: null, date_key: dateKey, days_fetched: null, games_total: 0, games_unique: 0 };
+
+    const shouldFetch = (!cur.ts || (now - Number(cur.ts)) >= everyMs || !Array.isArray(cur.events));
+    if (shouldFetch) {
+      bumpBucket("health", "context_nba_cache_miss", 1);
+      bumpBucket("health", "context_nba_cache_miss_by_dateKey", 1);
+
+      const days = computeDateWindow3(dateKey);
+      bumpBucket("health", "context_nba_fetch_days_3", 1);
+
+      const results = await Promise.all(days.map(dk => fetchEspnNbaScoreboardForDate(cfg, dk)));
+
+      for (const r of results) {
+        if (r.ok) {
+          bumpBucket("health", "context_nba_fetch_ok", 1);
+          if (!Array.isArray(r.events) || r.events.length === 0) bumpBucket("health", "context_nba_fetch_empty_events", 1);
+        } else {
+          bumpBucket("health", "context_nba_fetch_fail", 1);
+          if (r.reason === "parse") bumpBucket("health", "context_nba_fetch_parse_fail", 1);
+        }
+      }
+
+      const merged = mergeScoreboardEventsByWindow(dateKey, results);
+
+      state.runtime.last_context_nba_fetch = {
+        ts: now,
+        ok: true,
+        provider: "espn",
+        date_key: dateKey,
+        days_fetched: days,
+        games_total: merged.games_total,
+        games_unique: merged.games_unique
+      };
+
+      cur.ts = now;
+      cur.date_key = dateKey;
+      cur.days_fetched = days;
+      cur.events = merged.events;
+      cur.games_total = merged.games_total;
+      cur.games_unique = merged.games_unique;
+
+      bumpBucket("health", "context_nba_games_total", Number(merged.games_total || 0));
+      bumpBucket("health", "context_nba_games_unique", Number(merged.games_unique || 0));
+
+      node[dateKey] = cur;
+    } else {
+      bumpBucket("health", "context_nba_cache_hit", 1);
+      bumpBucket("health", "context_nba_cache_hit_by_dateKey", 1);
+    }
+
+    return Array.isArray(node[dateKey]?.events) ? node[dateKey].events : null;
+  }
+
+  const hasPending = Object.values(state.watchlist || {}).some(m => m?.status === "pending_signal");
+  const startedWithPending = hasPending;
+
+  // Scheduling fix: don't spend cycles resolving tokens while there are pending confirmations.
+  const maxResolves = hasPending ? 0 : Number(cfg?.polling?.max_token_resolves_per_cycle || 5);
+  let resolveAttemptsThisCycle = 0;
+  let resolveSuccessThisCycle = 0;
+
+  // --- token resolver ---
+  // Pick unresolved markets deterministically across the whole watchlist (not just eval universe)
+  const wlAll = Object.values(state.watchlist || {}).filter(Boolean);
+  const resolveCandidates = wlAll
+    .filter(m => (m.status === "watching" || m.status === "pending_signal"))
+    .filter(m => getTokenPair(m) && (m?.tokens?.yes_token_id == null))
+    .map(m => ({
+      m,
+      vol: Number(m.gamma_vol24h_usd || 0),
+      lastSeen: Number(m.last_seen_ts || 0)
+    }));
+  resolveCandidates.sort((a, b) => (b.vol - a.vol) || (b.lastSeen - a.lastSeen));
+
+  for (const { m } of resolveCandidates) {
+    if (resolveAttemptsThisCycle >= maxResolves) break;
+    m.tokens = m.tokens || {};
+    if (m.tokens.yes_token_id != null) continue;
+
+    const pair = getTokenPair(m);
+    if (!pair) continue;
+
+    resolveAttemptsThisCycle++;
+
+    const [a, b] = pair;
+    const ra = await queue.enqueue(() => getBook(a, cfg), { reason: "token_resolve" });
+    const rb = await queue.enqueue(() => getBook(b, cfg), { reason: "token_resolve" });
+
+    // token resolve failure breakdown (mutually exclusive primary reason)
+    const bumpResolveFail = (reason) => {
+      health.token_resolve_failed_count = (health.token_resolve_failed_count || 0) + 1;
+      health.token_resolve_fail_by_reason_last_cycle = health.token_resolve_fail_by_reason_last_cycle || {};
+      health.token_resolve_fail_by_reason_last_cycle[reason] = (health.token_resolve_fail_by_reason_last_cycle[reason] || 0) + 1;
+      bumpBucket("token", `fail_reason:${reason}`, 1);
+    };
+
+    if (!ra.ok || !rb.ok) {
+      // optional subreason (health only)
+      const is429 = (x) => (x?.http_status === 429 || x?.error_code === "http_429");
+      if (is429(ra) || is429(rb)) health.resolve_http_429_count = (health.resolve_http_429_count || 0) + 1;
+      bumpResolveFail("resolve_http_fail");
+      continue;
+    }
+
+    const pa = parseBookForScore(ra.rawBook, cfg);
+    const pb = parseBookForScore(rb.rawBook, cfg);
+    if (!pa.ok || !pb.ok) {
+      bumpResolveFail("resolve_book_not_usable");
+      continue;
+    }
+
+    const score = (p) => (p.bestAsk != null ? Number(p.bestAsk) : (p.bestBid != null ? Number(p.bestBid) : null));
+    const scoreA = score(pa);
+    const scoreB = score(pb);
+
+    if (scoreA == null || scoreB == null) {
+      bumpResolveFail("resolve_missing_score");
+      health.token_complement_sanity_skipped_count = (health.token_complement_sanity_skipped_count || 0) + 1;
+      continue;
+    }
+
+    if (scoreA === scoreB) {
+      bumpResolveFail("resolve_tie_score");
+      health.token_complement_sanity_skipped_count = (health.token_complement_sanity_skipped_count || 0) + 1;
+      continue;
+    }
+
+    const yes = (scoreA > scoreB) ? a : b;
+    const no = (yes === a) ? b : a;
+
+    m.tokens.yes_token_id = yes;
+    m.tokens.no_token_id = no;
+    m.tokens.resolved_by = "book_score_compare";
+    m.tokens.resolved_ts = now;
+
+    // Complement sanity (health only): p_hi(token) = bestAsk if exists else bestBid
+    const complementSum = scoreA + scoreB;
+    const ok = (complementSum >= 0.90 && complementSum <= 1.10);
+    m.tokens.token_complement_sanity_ok = ok;
+    if (!ok) health.token_complement_sanity_fail_count = (health.token_complement_sanity_fail_count || 0) + 1;
+
+    resolveSuccessThisCycle++;
+  }
+
+  // Per-cycle + cumulative counters (calibration)
+  const resolveFailThisCycle = Math.max(0, resolveAttemptsThisCycle - resolveSuccessThisCycle);
+  health.token_resolve_attempts_last_cycle = resolveAttemptsThisCycle;
+  health.token_resolve_success_last_cycle = resolveSuccessThisCycle;
+  health.token_resolve_fail_last_cycle = resolveFailThisCycle;
+
+  health.token_resolve_attempt_count = (health.token_resolve_attempt_count || 0) + resolveAttemptsThisCycle;
+  health.token_resolve_success_count = (health.token_resolve_success_count || 0) + resolveSuccessThisCycle;
+  health.token_resolve_fail_count = (health.token_resolve_fail_count || 0) + resolveFailThisCycle;
+
+  // Helper: rolling 5-min buckets (rejects + token resolve)
+  function bumpBucket(kind, key, by = 1) {
+    const nowMs = now;
+    const minuteStart = Math.floor(nowMs / 60000) * 60000;
+    health.buckets = health.buckets || { reject: { idx: 0, buckets: [] }, token: { idx: 0, buckets: [] } };
+    const node = health.buckets[kind] || (health.buckets[kind] = { idx: 0, buckets: [] });
+    if (!Array.isArray(node.buckets) || node.buckets.length !== 5) {
+      node.buckets = Array.from({ length: 5 }, () => ({ start_ts: 0, counts: {} }));
+      node.idx = 0;
+    }
+    // advance to current minute bucket
+    const cur = node.buckets[node.idx];
+    if (cur.start_ts !== minuteStart) {
+      node.idx = (node.idx + 1) % 5;
+      node.buckets[node.idx] = { start_ts: minuteStart, counts: {} };
+    }
+    const b = node.buckets[node.idx];
+    b.counts[key] = (b.counts[key] || 0) + by;
+  }
+
+  // record token resolve deltas into rolling buckets
+  bumpBucket("token", "attempt", resolveAttemptsThisCycle);
+  bumpBucket("token", "success", resolveSuccessThisCycle);
+  bumpBucket("token", "fail", resolveFailThisCycle);
+
+  // eval tick counter (rolling)
+  bumpBucket("health", "eval_tick", 1);
+
+  // --- D2 context tagging (tag-only) ---
+  // IMPORTANT: tag is infra/observability; it must NOT depend on which markets happen to be in the eval universe.
+  // Cache is keyed by market dateKey (UTC derived from market.endDateIso).
+  {
+    const tNow = Date.now();
+    const wl = Object.values(state.watchlist || {}).filter(Boolean);
+
+    // CBB
+    for (const m of wl) {
+      if (m.league !== "cbb") continue;
+      if (!(m.status === "watching" || m.status === "pending_signal")) continue;
+
+      bumpBucket("health", "context_cbb_tag_attempt", 1);
+
+      const iso = m?.endDateIso || m?.startDateIso || null;
+      const dateKey = dateKeyFromIsoUtc(iso);
+      if (!dateKey) {
+        bumpBucket("health", "context_cbb_tag_skipped_missing_market_date", 1);
+        continue;
+      }
+
+      const events = await getCbbEventsForDateKey(dateKey);
+      if (!events) {
+        bumpBucket("health", "context_cbb_tag_skipped_no_cache", 1);
+        continue;
+      }
+
+      const ctx = deriveCbbContextForMarket(m, events, cfg, tNow);
+      if (ctx.ok) {
+        const fetchTs = (() => {
+          const node = state.runtime?.context_cache?.cbb_by_dateKey;
+          const row = node && node[dateKey];
+          return row ? Number(row.ts || 0) : 0;
+        })();
+        ctx.context.fetch_ts = fetchTs || null;
+        m.context = ctx.context;
+
+        const kind = String(ctx.context?.match?.kind || "unknown");
+        if (kind === "teamsKey_exact") bumpBucket("health", "context_cbb_match_teamsKey_exact", 1);
+        else if (kind === "legacy_exact") bumpBucket("health", "context_cbb_match_legacy_exact", 1);
+        else if (kind === "legacy_alias") bumpBucket("health", "context_cbb_match_legacy_alias", 1);
+        else if (kind === "exact") bumpBucket("health", "context_cbb_match_exact", 1);
+        else if (kind === "alias") bumpBucket("health", "context_cbb_match_alias", 1);
+        else bumpBucket("health", `context_cbb_match_${kind}`, 1);
+
+        const maxAge = Number(cfg?.context?.cbb?.max_ctx_age_ms || 120000);
+        const ageMs = fetchTs ? Math.max(0, tNow - fetchTs) : null;
+        if (ageMs != null && ageMs <= maxAge) bumpBucket("health", "context_cbb_tag_with_fresh_ctx", 1);
+        else bumpBucket("health", "context_cbb_tag_with_stale_ctx", 1);
+
+        if (ctx.context.decided_pass) bumpBucket("health", "context_cbb_decided_pass", 1);
+      } else {
+        bumpBucket("health", `context_cbb_match_${ctx.reason}`, 1);
+
+        if (ctx.reason === "no_match" || ctx.reason === "ambiguous") {
+          state.runtime.last_context_cbb_no_match_examples = Array.isArray(state.runtime.last_context_cbb_no_match_examples)
+            ? state.runtime.last_context_cbb_no_match_examples
+            : [];
+
+          state.runtime.last_context_cbb_no_match_examples.push({
+            ts: tNow,
+            slug: String(m.slug || ""),
+            title: String(m.title || m.question || ""),
+            reason: ctx.reason,
+            debug: { ...(ctx.debug || null), dateKey }
+          });
+          if (state.runtime.last_context_cbb_no_match_examples.length > 5) {
+            state.runtime.last_context_cbb_no_match_examples = state.runtime.last_context_cbb_no_match_examples.slice(-5);
+          }
+        }
+      }
+    }
+
+    // NBA
+    for (const m of wl) {
+      if (m.league !== "nba") continue;
+      if (!(m.status === "watching" || m.status === "pending_signal")) continue;
+
+      bumpBucket("health", "context_nba_tag_attempt", 1);
+
+      const iso = m?.endDateIso || m?.startDateIso || null;
+      const dateKey = dateKeyFromIsoUtc(iso);
+      if (!dateKey) {
+        bumpBucket("health", "context_nba_tag_skipped_missing_market_date", 1);
+        continue;
+      }
+
+      const events = await getNbaEventsForDateKey(dateKey);
+      if (!events) {
+        bumpBucket("health", "context_nba_tag_skipped_no_cache", 1);
+        continue;
+      }
+
+      const ctx = deriveNbaContextForMarket(m, events, cfg, tNow);
+      if (ctx.ok) {
+        const fetchTs = (() => {
+          const node = state.runtime?.context_cache?.nba_by_dateKey;
+          const row = node && node[dateKey];
+          return row ? Number(row.ts || 0) : 0;
+        })();
+        ctx.context.fetch_ts = fetchTs || null;
+        m.context = ctx.context;
+
+        const kind = String(ctx.context?.match?.kind || "unknown");
+        if (kind === "teamsKey_exact") bumpBucket("health", "context_nba_match_teamsKey_exact", 1);
+        else if (kind === "legacy_exact") bumpBucket("health", "context_nba_match_legacy_exact", 1);
+        else if (kind === "legacy_alias") bumpBucket("health", "context_nba_match_legacy_alias", 1);
+        else bumpBucket("health", `context_nba_match_${kind}`, 1);
+
+        const maxAge = Number(cfg?.context?.nba?.max_ctx_age_ms || 120000);
+        const ageMs = fetchTs ? Math.max(0, tNow - fetchTs) : null;
+        if (ageMs != null && ageMs <= maxAge) bumpBucket("health", "context_nba_tag_with_fresh_ctx", 1);
+        else bumpBucket("health", "context_nba_tag_with_stale_ctx", 1);
+
+        if (ctx.context.decided_pass) bumpBucket("health", "context_nba_decided_pass", 1);
+      } else {
+        bumpBucket("health", `context_nba_match_${ctx.reason}`, 1);
+
+        if (ctx.reason === "no_match" || ctx.reason === "ambiguous") {
+          state.runtime.last_context_nba_no_match_examples = Array.isArray(state.runtime.last_context_nba_no_match_examples)
+            ? state.runtime.last_context_nba_no_match_examples
+            : [];
+
+          state.runtime.last_context_nba_no_match_examples.push({
+            ts: tNow,
+            slug: String(m.slug || ""),
+            title: String(m.title || m.question || ""),
+            reason: ctx.reason,
+            debug: { ...(ctx.debug || null), dateKey }
+          });
+          if (state.runtime.last_context_nba_no_match_examples.length > 5) {
+            state.runtime.last_context_nba_no_match_examples = state.runtime.last_context_nba_no_match_examples.slice(-5);
+          }
+        }
+      }
+    }
+  }
+
+  // --- evaluation loop ---
+  let changed = false;
+  const pendingWinMs = Number(cfg?.polling?.pending_window_seconds || 6) * 1000;
+  let createdPendingThisTick = false;
+  const enteredPendingThisTick = new Set();
+
+  for (const m of pickEvalUniverse(state, cfg)) {
+    // skip non-eligible states
+    if (!(m.status === "watching" || m.status === "pending_signal")) continue;
+
+    const tNow = Date.now();
+
+    const startedPending = (m.status === "pending_signal");
+    const recordPendingConfirmFail = (reason) => {
+      if (!startedPending) return;
+      health.pending_confirm_fail_by_reason_last_cycle[reason] = (health.pending_confirm_fail_by_reason_last_cycle[reason] || 0) + 1;
+      bumpBucket("health", `pending_confirm_fail:${reason}`, 1);
+      m.pending_confirm_fail_last_reason = reason;
+      m.pending_confirm_fail_last_ts = tNow;
+    };
+
+    m.tokens = m.tokens || {};
+
+    // Esports series guard (tag-only): compute and persist derived context for audit.
+    // NOTE: counters are only for match_series.
+    if (m.league === "esports" && m.esports_ctx && typeof m.esports_ctx === "object") {
+      m.esports_ctx.derived = computeEsportsDerived(m, cfg);
+      if (String(m.market_kind || "") === "match_series") {
+        bumpBucket("health", "esports_series_guard_eval", 1);
+        const st = String(m.esports_ctx.derived?.guard_status || "unknown");
+        const rs = String(m.esports_ctx.derived?.guard_reason || "unknown");
+        bumpBucket("health", `esports_series_guard_status:${st}`, 1);
+        bumpBucket("health", `esports_series_guard_reason:${rs}`, 1);
+      }
+    }
+
+    // Pending timeout MUST be evaluated independently (before Stage 1/2)
+    if (m.status === "pending_signal") {
+      const ps = Number(m.pending_since_ts || 0);
+      const dl = Number(m.pending_deadline_ts || 0);
+
+      if (!ps || !Number.isFinite(ps)) {
+        // conservative auto-fix: invalid pending timestamp
+        health.pending_integrity_fix_count = (health.pending_integrity_fix_count || 0) + 1;
+        bumpBucket("health", "pending_integrity_fix", 1);
+        m.last_reject = { reason: "pending_integrity_fix", ts: tNow };
+        m.status = "watching";
+        delete m.pending_since_ts;
+        delete m.pending_deadline_ts;
+        changed = true;
+        continue;
+      }
+
+      const deadline = (dl && Number.isFinite(dl)) ? dl : (ps + pendingWinMs);
+      if (deadline <= tNow) {
+        // timeout: back to watching
+        health.pending_timeout_count = (health.pending_timeout_count || 0) + 1;
+        bumpBucket("health", "pending_timeout", 1);
+
+        if (enteredPendingThisTick.has(String(m.slug || ""))) {
+          bumpBucket("health", "pending_enter_then_timeout_same_tick", 1);
+        }
+
+        // Persist last_pending_timeout snapshot (runtime)
+        state.runtime.last_pending_timeout = {
+          ts: tNow,
+          slug: String(m.slug || ""),
+          conditionId: String(m.conditionId || ""),
+          pending_since_ts: Number(ps),
+          pending_deadline_ts: Number(deadline),
+          remaining_ms_at_timeout: Math.max(0, Number(deadline) - tNow),
+          last_reason_before_timeout: String(m.last_reject?.reason || "-")
+        };
+
+        m.last_reject = { reason: "pending_timeout", ts: tNow };
+        m.status = "watching";
+        delete m.pending_since_ts;
+        delete m.pending_deadline_ts;
+        changed = true;
+        continue;
+      }
+
+      // pending second-check observability
+      bumpBucket("health", "pending_second_check", 1);
+      const ageMs = Math.max(0, tNow - ps);
+      bumpBucket("health", "pending_age_sum_ms", ageMs);
+      bumpBucket("health", "pending_age_count", 1);
+    }
+
+    const yesToken = m.tokens.yes_token_id;
+    if (yesToken == null) {
+      health.reject_counts_last_cycle.gamma_metadata_missing = (health.reject_counts_last_cycle.gamma_metadata_missing || 0) + 1;
+      bumpBucket("reject", "gamma_metadata_missing", 1);
+      m.last_reject = { reason: "gamma_metadata_missing", ts: tNow };
+      // integrity: pending should never be missing tokens; don't classify as confirm fail reason
+      if (startedPending) health.pending_confirm_integrity_missing_yes_token_count = (health.pending_confirm_integrity_missing_yes_token_count || 0) + 1;
+      continue;
+    }
+
+    // Reason A: need usable price
+    const resp = await queue.enqueue(() => getBook(yesToken, cfg), { reason: "price" });
+    if (!resp.ok) {
+      // health
+      if (resp.http_status === 429 || resp.error_code === "http_429") {
+        health.rate_limited_count = (health.rate_limited_count || 0) + 1;
+        health.last_rate_limited_ts = now;
+      }
+      health.http_fallback_fail_count = (health.http_fallback_fail_count || 0) + 1;
+      health.reject_counts_last_cycle.http_fallback_failed = (health.reject_counts_last_cycle.http_fallback_failed || 0) + 1;
+      bumpBucket("reject", "http_fallback_failed", 1);
+
+      // breakdown (observability)
+      const r = "http_fail";
+      health.http_fallback_fail_by_reason_last_cycle[r] = (health.http_fallback_fail_by_reason_last_cycle[r] || 0) + 1;
+      bumpBucket("reject", `http_fallback_failed:${r}`, 1);
+
+      m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
+      recordPendingConfirmFail("fail_http_fallback_failed");
+      continue;
+    }
+
+    health.http_fallback_success_count = (health.http_fallback_success_count || 0) + 1;
+
+    const parsed = parseAndNormalizeBook(resp.rawBook, cfg, health);
+    if (!parsed.ok) {
+      health.http_fallback_fail_count = (health.http_fallback_fail_count || 0) + 1;
+      health.reject_counts_last_cycle.http_fallback_failed = (health.reject_counts_last_cycle.http_fallback_failed || 0) + 1;
+      bumpBucket("reject", "http_fallback_failed", 1);
+
+      // breakdown (observability)
+      const r = String(parsed.reason || "book_not_usable");
+      health.http_fallback_fail_by_reason_last_cycle[r] = (health.http_fallback_fail_by_reason_last_cycle[r] || 0) + 1;
+      bumpBucket("reject", `http_fallback_failed:${r}`, 1);
+
+      m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
+      recordPendingConfirmFail("fail_http_fallback_failed");
+      continue;
+    }
+
+    const { bestAsk, bestBid } = parsed.book;
+
+    // Quote usability gate (v1 strict): need BOTH bestAsk + bestBid to compute spread and evaluate Stage 1.
+    if (bestAsk == null || bestBid == null) {
+      // primary reject
+      health.reject_counts_last_cycle.quote_incomplete_one_sided_book = (health.reject_counts_last_cycle.quote_incomplete_one_sided_book || 0) + 1;
+      bumpBucket("reject", "quote_incomplete_one_sided_book", 1);
+
+      // subreason (health)
+      if (bestAsk == null) {
+        health.quote_incomplete_missing_best_ask_count = (health.quote_incomplete_missing_best_ask_count || 0) + 1;
+        health.quote_incomplete_missing_best_ask_last_cycle = (health.quote_incomplete_missing_best_ask_last_cycle || 0) + 1;
+        bumpBucket("health", "quote_incomplete_missing_best_ask", 1);
+      }
+      if (bestBid == null) {
+        health.quote_incomplete_missing_best_bid_count = (health.quote_incomplete_missing_best_bid_count || 0) + 1;
+        health.quote_incomplete_missing_best_bid_last_cycle = (health.quote_incomplete_missing_best_bid_last_cycle || 0) + 1;
+        bumpBucket("health", "quote_incomplete_missing_best_bid", 1);
+      }
+      if (bestAsk == null && bestBid == null) {
+        health.quote_incomplete_integrity_both_missing_count = (health.quote_incomplete_integrity_both_missing_count || 0) + 1;
+        bumpBucket("health", "quote_incomplete_integrity_both_missing", 1);
+      }
+
+      m.last_reject = {
+        reason: "quote_incomplete_one_sided_book",
+        detail: (bestAsk == null && bestBid == null) ? "missing_best_ask+missing_best_bid" : (bestAsk == null ? "missing_best_ask" : "missing_best_bid"),
+        ts: tNow
+      };
+      recordPendingConfirmFail("fail_quote_incomplete");
+
+      // still persist partial last_price for observability
+      {
+        const prevTs = Number(m.last_price?.updated_ts || 0);
+        m.last_price = {
+          yes_best_ask: bestAsk ?? null,
+          yes_best_bid: bestBid ?? null,
+          spread: null,
+          updated_ts: tNow,
+          source: "http"
+        };
+        if (!prevTs || prevTs !== now) bumpBucket("health", "quote_update", 1);
+      }
+      continue;
+    }
+
+    // Health: quote is complete (bid+ask) at parse level
+    bumpBucket("health", "quote_complete", 1);
+
+    const quote = { probAsk: bestAsk, probBid: bestBid, spread: bestAsk - bestBid };
+
+    // persist last_price snapshot
+    {
+      const prevTs = Number(m.last_price?.updated_ts || 0);
+      m.last_price = {
+        yes_best_ask: bestAsk,
+        yes_best_bid: bestBid,
+        spread: quote.spread,
+        updated_ts: tNow,
+        source: "http"
+      };
+      if (!prevTs || prevTs !== now) bumpBucket("health", "quote_update", 1);
+    }
+
+    // Stage 1 evaluated counter (only when quote complete and we actually run Stage 1)
+    health.stage1_evaluated_count = (health.stage1_evaluated_count || 0) + 1;
+    health.stage1_evaluated_last_cycle = (health.stage1_evaluated_last_cycle || 0) + 1;
+    bumpBucket("health", "stage1_evaluated", 1);
+
+    // Funnel counters (health-only): computed locally, independent from reject reasons
+    const EPS = Number(cfg?.filters?.EPS || 1e-6);
+    const minProb = Number(cfg?.filters?.min_prob);
+    const maxEntry = Number(cfg?.filters?.max_entry_price);
+    const maxSpread = Number(cfg?.filters?.max_spread);
+
+    const baseRangePass = (quote.probAsk + EPS) >= minProb && (quote.probAsk - EPS) <= maxEntry;
+    const spreadPass = (quote.spread - EPS) <= maxSpread;
+    if (baseRangePass) bumpBucket("health", "base_range_pass", 1);
+    if (spreadPass) bumpBucket("health", "spread_pass", 1);
+
+    // per-market Stage 1 observability
+    m.stage1 = m.stage1 || {};
+    m.stage1.last_eval_ts = tNow;
+
+    // Triggered relaxed hot candidate (observability): ignore base range, require spread+near+depth
+    const nearOkForRelaxed = (await Promise.resolve(is_near_signal_margin(quote, cfg)));
+    if (spreadPass && nearOkForRelaxed) {
+      const metricsRelax = compute_depth_metrics(parsed.book, cfg);
+      const depthRelax = is_depth_sufficient(metricsRelax, cfg);
+      if (depthRelax.pass) {
+        bumpBucket("health", "hot_candidate_relaxed", 1);
+        recordHotCandidateRelaxed(m, quote, metricsRelax, baseRangePass);
+
+        // cooldown influence diagnostic: hot but blocked by cooldown (watching -> pending gate)
+        if (m.status === "watching") {
+          const cooldownUntil = Number(m.cooldown_until_ts || 0);
+          if (cooldownUntil && tNow < cooldownUntil) {
+            bumpBucket("health", "cooldown_active_while_hot", 1);
+          }
+        }
+      }
+    }
+
+    const base = is_base_signal_candidate(quote, cfg);
+    if (!base.pass) {
+      health.reject_counts_last_cycle[base.reason] = (health.reject_counts_last_cycle[base.reason] || 0) + 1;
+      bumpBucket("reject", base.reason, 1);
+      m.last_reject = { reason: base.reason, ts: tNow };
+      if (base.reason === "price_out_of_range") recordPendingConfirmFail("fail_base_price_out_of_range");
+      else if (base.reason === "spread_above_max") recordPendingConfirmFail("fail_spread_above_max");
+      continue;
+    }
+
+    // Determine near_by deterministically (same policy as status.mjs):
+    // near_pass = askOk OR spreadOk
+    const EPS_NEAR = Number(cfg?.filters?.EPS || 1e-6);
+    const nearProbMin = Number(cfg?.filters?.near_prob_min ?? 0.945);
+    const nearSpreadMax = Number(cfg?.filters?.near_spread_max ?? 0.015);
+    const askOkNear = (Number(quote.probAsk) + EPS_NEAR) >= nearProbMin;
+    const spreadOkNear = (Number(quote.spread) - EPS_NEAR) <= nearSpreadMax;
+    const near_by = (askOkNear && spreadOkNear) ? "both" : (askOkNear ? "ask" : (spreadOkNear ? "spread" : "none"));
+    const near = (near_by !== "none");
+
+    if (!near) {
+      // not a reject for watching, but it IS the primary reason pending confirmation fails
+      health.gray_zone_count = (health.gray_zone_count || 0) + 1;
+      health.gray_zone_count_last_cycle = (health.gray_zone_count_last_cycle || 0) + 1;
+      // Action 2: terminal outcome of tick
+      m.last_reject = { reason: "fail_near_margin", ts: tNow };
+      if (startedPending) recordPendingConfirmFail("fail_near_margin");
+      continue;
+    }
+
+    bumpBucket("health", "near_margin_pass", 1);
+
+    // Stage 2 metrics from the same book (no extra HTTP)
+    const metrics = compute_depth_metrics(parsed.book, cfg);
+    m.liquidity = {
+      entry_depth_usd_ask: metrics.entry_depth_usd_ask,
+      exit_depth_usd_bid: metrics.exit_depth_usd_bid,
+      bid_levels_used: metrics.bid_levels_used,
+      ask_levels_used: metrics.ask_levels_used,
+      updated_ts: tNow,
+      source: "http"
+    };
+
+    const depth = is_depth_sufficient(metrics, cfg);
+    if (!depth.pass) {
+      health.reject_counts_last_cycle[depth.reason] = (health.reject_counts_last_cycle[depth.reason] || 0) + 1;
+      bumpBucket("reject", depth.reason, 1);
+      m.last_reject = { reason: depth.reason, ts: tNow };
+      if (depth.reason === "depth_bid_below_min") recordPendingConfirmFail("fail_depth_bid_below_min");
+      else if (depth.reason === "depth_ask_below_min") recordPendingConfirmFail("fail_depth_ask_below_min");
+      continue;
+    }
+
+    bumpBucket("health", "depth_pass", 1);
+
+    // Triggered snapshot: passes near margin + depth in this tick
+    bumpBucket("health", "hot_candidate", 1);
+    recordHotCandidate(m, quote, metrics);
+
+    // Cooldown gate (v1): blocks only watching -> pending_signal, never pending_signal -> signaled
+    // Integrity counter: if we ever block pending via cooldown, something is wrong.
+    if (m.status === "watching") {
+      const cooldownUntil = Number(m.cooldown_until_ts || 0);
+      if (cooldownUntil && tNow < cooldownUntil) {
+        health.cooldown_active_count = (health.cooldown_active_count || 0) + 1;
+        health.reject_counts_last_cycle.cooldown_active = (health.reject_counts_last_cycle.cooldown_active || 0) + 1;
+        bumpBucket("reject", "cooldown_active", 1);
+        m.last_reject = { reason: "cooldown_active", ts: tNow };
+        continue;
+      }
+    } else if (m.status === "pending_signal") {
+      const cooldownUntil = Number(m.cooldown_until_ts || 0);
+      if (cooldownUntil && tNow < cooldownUntil) {
+        // should not matter for control flow; record as integrity signal
+        health.pending_blocked_by_cooldown_count = (health.pending_blocked_by_cooldown_count || 0) + 1;
+      }
+    }
+
+    if (m.status === "watching") {
+      m.status = "pending_signal";
+      // IMPORTANT: set timing at the moment of transition (real time)
+      m.pending_since_ts = tNow;
+      m.pending_deadline_ts = tNow + pendingWinMs;
+
+      // classify pending_enter by near_by (mutually exclusive)
+      const pendingType = (near_by === "spread") ? "microstructure" : ((near_by === "ask" || near_by === "both") ? "highprob" : "unknown");
+      bumpBucket("health", "pending_enter", 1);
+      if (pendingType === "microstructure") bumpBucket("health", "pending_enter_microstructure", 1);
+      if (pendingType === "highprob") bumpBucket("health", "pending_enter_highprob", 1);
+
+      // Observability: pending_enter by market_kind (esports only; others treated as other)
+      {
+        const kind = (m.league === "esports") ? String(m.market_kind || "other") : "other";
+        if (kind === "match_series") bumpBucket("health", "pending_enter_match_series", 1);
+        else if (kind === "map_specific") bumpBucket("health", "pending_enter_map_specific", 1);
+        else bumpBucket("health", "pending_enter_other", 1);
+      }
+
+      if (!m.pending_since_ts) bumpBucket("health", "pending_enter_with_null_since", 1);
+      if (Number(m.pending_deadline_ts) <= tNow) bumpBucket("health", "pending_enter_with_deadline_in_past", 1);
+      enteredPendingThisTick.add(String(m.slug || ""));
+
+      // Persist last_pending_enter snapshot (runtime)
+      state.runtime.last_pending_enter = {
+        ts: tNow,
+        slug: String(m.slug || ""),
+        conditionId: String(m.conditionId || ""),
+        probAsk: Number(quote.probAsk),
+        probBid: Number(quote.probBid),
+        spread: Number(quote.spread),
+        entryDepth: Number(metrics.entry_depth_usd_ask || 0),
+        exitDepth: Number(metrics.exit_depth_usd_bid || 0),
+        pending_deadline_ts: Number(m.pending_deadline_ts)
+      };
+
+      m.last_reject = { reason: "pending_entered", ts: tNow };
+      changed = true;
+      createdPendingThisTick = true;
+
+      // Local console alert (only when it happens)
+      console.log(`[PENDING_ENTER] ts=${tNow} slug=${String(m.slug || "")} deadline_in_ms=${Math.max(0, Number(m.pending_deadline_ts) - tNow)}`);
+
+      // Scheduling bugfix: avoid long ticks that cause immediate pending timeouts.
+      // If this tick started without any pending, stop evaluating more watching markets so the next tick can confirm quickly.
+      if (!startedWithPending) break;
+      continue;
+    }
+
+    if (m.status === "pending_signal") {
+      // at this point we already know pending is still within window (checked at top)
+      m.status = "signaled";
+      delete m.pending_since_ts;
+      m.signals = m.signals || { signal_count: 0, last_signal_ts: null, reason: null };
+      m.signals.signal_count = Number(m.signals.signal_count || 0) + 1;
+      m.signals.last_signal_ts = tNow;
+      m.signals.reason = "candidate_ready_confirmed";
+      m.cooldown_until_ts = now + Number(cfg?.polling?.candidate_cooldown_seconds || 20) * 1000;
+      bumpBucket("health", "signaled", 1);
+      bumpBucket("health", "pending_promoted", 1);
+
+      // Observability: signaled by market_kind (esports only; others treated as other)
+      {
+        const kind = (m.league === "esports") ? String(m.market_kind || "other") : "other";
+        if (kind === "match_series") bumpBucket("health", "signaled_match_series", 1);
+        else if (kind === "map_specific") bumpBucket("health", "signaled_map_specific", 1);
+        else bumpBucket("health", "signaled_other", 1);
+      }
+
+      // signal_type classification (mutually exclusive, deterministic)
+      const signal_type = (near_by === "spread") ? "microstructure" : ((near_by === "ask" || near_by === "both") ? "highprob" : "unknown");
+      m.signal_type = signal_type;
+      m.signal_ts = tNow;
+
+      if (signal_type === "microstructure") bumpBucket("health", "signaled_microstructure", 1);
+      if (signal_type === "highprob") bumpBucket("health", "signaled_highprob", 1);
+
+      // Context cross-metric (tag-only)
+      if (m.context?.decided_pass) {
+        bumpBucket("health", "signaled_and_context_decided", 1);
+        if (m.context?.sport === "cbb") bumpBucket("health", "signaled_and_context_cbb_decided", 1);
+        if (m.context?.sport === "nba") bumpBucket("health", "signaled_and_context_nba_decided", 1);
+      }
+
+      // Esports gate dry-run (tag-only)
+      // Definition matches future hard gate policy.
+      let would_gate_apply = false;
+      let would_gate_block = false;
+      let would_gate_reason = "not_applicable";
+      if (m.league === "esports" && String(m.market_kind || "") === "match_series") {
+        const d = m.esports_ctx?.derived || null;
+        const fmt = String(d?.series_format || "unknown");
+        const thr = Number(cfg?.esports?.series_guard_threshold_high ?? 0.94);
+        const ask = Number(quote.probAsk);
+
+        if ((fmt === "bo3" || fmt === "bo5") && Number.isFinite(ask) && ask >= thr) {
+          would_gate_apply = true;
+          const gs = String(d?.guard_status || "unknown");
+          const gr = String(d?.guard_reason || "no_derived");
+          would_gate_block = (gs !== "allowed");
+          would_gate_reason = would_gate_block ? gr : "allowed";
+
+          bumpBucket("health", "esports_gate_would_apply", 1);
+          if (would_gate_block) bumpBucket("health", "esports_gate_would_block", 1);
+          else bumpBucket("health", "esports_gate_would_allow", 1);
+          bumpBucket("health", `esports_gate_would_reason:${would_gate_reason}`, 1);
+        }
+      }
+
+      // ring buffer of last signals (runtime)
+      state.runtime.last_signals = Array.isArray(state.runtime.last_signals) ? state.runtime.last_signals : [];
+      // context snapshot at signal time (freshness-aware)
+      const maxCtxAge = Number(cfg?.context?.cbb?.max_ctx_age_ms || 120000);
+      let ctxSnapshot = null;
+      if (m.context && m.context.provider === "espn" && (m.context.sport === "cbb" || m.context.sport === "nba")) {
+        const fetchTs = Number(m.context.fetch_ts || 0) || null;
+        const ageMs = fetchTs ? Math.max(0, tNow - fetchTs) : null;
+        const fresh = (ageMs != null && ageMs <= maxCtxAge);
+        ctxSnapshot = {
+          provider: "espn",
+          sport: String(m.context.sport),
+          fetch_ts: fetchTs,
+          ctx_age_ms: ageMs,
+          fresh,
+          decided_pass: fresh ? !!m.context.decided_pass : null,
+          margin: fresh ? (m.context.margin ?? null) : null,
+          minutes_left: fresh ? (m.context.minutes_left ?? null) : null,
+          match_kind: m.context.match?.kind || null
+        };
+      }
+
+      // esports snapshot at signal time (tag-only)
+      let esportsSnapshot = null;
+      if (m.league === "esports" && m.esports_ctx && m.esports_ctx.event) {
+        const d = m.esports_ctx.derived || {};
+        esportsSnapshot = {
+          v: 1,
+          live: (m.esports_ctx.event.live === true || m.esports_ctx.event.live === false) ? !!m.esports_ctx.event.live : null,
+          score_raw: m.esports_ctx.event.score_raw ?? null,
+          period_raw: m.esports_ctx.event.period_raw ?? null,
+          series_format: d.series_format ?? "unknown",
+          maps_a: d.maps_a ?? null,
+          maps_b: d.maps_b ?? null,
+          leader_name: d.leader_name ?? null,
+          required_wins: d.required_wins ?? null,
+          yes_outcome_name: d.yes_outcome_name ?? null,
+          guard_status: d.guard_status ?? "unknown",
+          guard_reason: d.guard_reason ?? "unknown"
+        };
+      }
+
+      state.runtime.last_signals.push({
+        ts: tNow,
+        slug: String(m.slug || ""),
+        conditionId: String(m.conditionId || ""),
+        league: String(m.league || ""),
+        market_kind: (m.league === "esports") ? String(m.market_kind || "other") : null,
+        signal_type,
+        probAsk: Number(quote.probAsk),
+        spread: Number(quote.spread),
+        entryDepth: Number(metrics.entry_depth_usd_ask || 0),
+        exitDepth: Number(metrics.exit_depth_usd_bid || 0),
+        near_by,
+        base_range_pass: (Number(quote.probAsk) + Number(cfg?.filters?.EPS || 1e-6)) >= Number(cfg?.filters?.min_prob) && (Number(quote.probAsk) - Number(cfg?.filters?.EPS || 1e-6)) <= Number(cfg?.filters?.max_entry_price),
+        ctx: ctxSnapshot,
+        esports: esportsSnapshot,
+        would_gate_apply,
+        would_gate_block,
+        would_gate_reason
+      });
+      if (state.runtime.last_signals.length > 20) state.runtime.last_signals = state.runtime.last_signals.slice(-20);
+
+      m.last_reject = { reason: "signaled", ts: tNow };
+      changed = true;
+    }
+  }
+
+  return { changed };
+}

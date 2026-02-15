@@ -1,0 +1,12 @@
+node_modules/
+logs/
+*.log
+state/*.json
+!state/.keep
+state/*.tmp
+state/*.lock
+.env
+.env.*
+
+# Local overrides
+src/config/local.json
