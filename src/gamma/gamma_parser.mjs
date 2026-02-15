@@ -130,7 +130,14 @@ export function parseEventsToMarkets(rawByTag, cfg) {
           endDateIso: (m?.endDateIso || m?.endDate || e?.endDate) ? String(m?.endDateIso || m?.endDate || e?.endDate) : null,
           startDateIso: (m?.startDateIso || m?.startDate || e?.startDate) ? String(m?.startDateIso || m?.startDate || e?.startDate) : null,
           // outcomes order (critical for deterministic "yes_outcome_name")
-          outcomes: Array.isArray(m?.outcomes) ? m.outcomes.map(String) : null,
+          // Gamma may return outcomes as a JSON string or as an array
+          outcomes: (() => {
+            let raw = m?.outcomes;
+            if (typeof raw === "string") {
+              try { raw = JSON.parse(raw); } catch { return null; }
+            }
+            return Array.isArray(raw) ? raw.map(String) : null;
+          })(),
           tokens: {
             clobTokenIds: norm.clobTokenIds,
             yes_token_id: null,

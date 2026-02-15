@@ -93,6 +93,11 @@ export function upsertMarket(state, market, now) {
     merged.esports_ctx.derived.v = 1;
   }
 
+  // Persist outcomes for ALL leagues (needed for resolution tracker win/loss)
+  if (Array.isArray(market.outcomes) && market.outcomes.length === 2) {
+    merged.outcomes = market.outcomes.map(String);
+  }
+
   // Ensure tokens block exists and is normalized
   merged.tokens = isObj(merged.tokens) ? merged.tokens : {};
   if (!Array.isArray(merged.tokens.clobTokenIds)) merged.tokens.clobTokenIds = [];

@@ -140,12 +140,37 @@ try {
         });
 
         if (newOnes.length) {
+          // Build slug→market index for outcome resolution
+          const wlBySlug = new Map();
+          for (const m of Object.values(state.watchlist || {})) {
+            if (m?.slug) wlBySlug.set(String(m.slug), m);
+          }
+
           const idx = loadOpenIndex();
           for (const s of newOnes) {
             const signalId = `${Number(s.ts)}|${String(s.slug)}`;
             const entryPrice = Number(s.probAsk);
             const paperNotional = Number(cfg?.paper?.notional_usd ?? 10);
-            const entryOutcome = (s?.esports?.yes_outcome_name) ? String(s.esports.yes_outcome_name) : null;
+
+            // Derive entry_outcome_name for ALL leagues (not just esports)
+            let entryOutcome = null;
+            // Try esports derived first
+            if (s?.esports?.yes_outcome_name) {
+              entryOutcome = String(s.esports.yes_outcome_name);
+            }
+            // Fallback: derive from watchlist outcomes + clobTokenIds + yes_token_id
+            if (!entryOutcome) {
+              const wm = wlBySlug.get(String(s.slug || ""));
+              if (wm) {
+                const outcomes = Array.isArray(wm.outcomes) ? wm.outcomes : (Array.isArray(wm.esports_ctx?.market?.outcomes) ? wm.esports_ctx.market.outcomes : null);
+                const clobIds = Array.isArray(wm.tokens?.clobTokenIds) ? wm.tokens.clobTokenIds : null;
+                const yesId = wm.tokens?.yes_token_id;
+                if (outcomes && clobIds && yesId && outcomes.length === 2 && clobIds.length === 2) {
+                  const yesIdx = clobIds.findIndex(x => String(x) === String(yesId));
+                  if (yesIdx >= 0) entryOutcome = String(outcomes[yesIdx]);
+                }
+              }
+            }
 
             appendJsonl("state/journal/signals.jsonl", {
               type: "signal_open",
@@ -206,7 +231,7 @@ try {
         const lastRes = Number(state.runtime?.last_resolution_ts || 0);
         const everyResMs = Number(cfg?.paper?.resolution_poll_seconds ?? 60) * 1000;
         if (!lastRes || (now - lastRes) >= everyResMs) {
-          await loopResolutionTracker(cfg);
+          await loopResolutionTracker(cfg, state);
           state.runtime.last_resolution_ts = now;
         }
       } catch {}

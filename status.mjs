@@ -718,14 +718,13 @@ if (verbose) {
   if (!oneStepRows.length) console.log("(none)");
 }
 
-// --- Esports Opportunity (always shown, not gated by verbose) ---
-{
-  const opp = state?.runtime?.esports_opportunity;
+// --- Opportunity Classification (always shown, not gated by verbose) ---
+function printOpportunity(label, opp) {
   if (opp && opp.ts) {
     const ageMs = Date.now() - Number(opp.ts);
     const staleTag = ageMs > 30000 ? ` (stale ${Math.round(ageMs / 1000)}s ago)` : "";
 
-    console.log(`\n=== Esports Opportunity${staleTag} ===`);
+    console.log(`\n=== ${label} Opportunity${staleTag} ===`);
     console.log(`  live_markets_total:           ${opp.total}`);
     console.log(`  tradeable_two_sided:          ${opp.tradeable}`);
     console.log(`  two_sided_total:              ${opp.two_sided}`);
@@ -739,7 +738,8 @@ if (verbose) {
     if (topMA.length) {
       console.log(`  top missing_ask (highest bid):`);
       for (const r of topMA) {
-        console.log(`    - ${r.slug} | bid=${fmtNum(r.bid, 3)} | kind=${r.kind}`);
+        const extra = r.kind ? ` | kind=${r.kind}` : "";
+        console.log(`    - ${r.slug} | bid=${fmtNum(r.bid, 3)}${extra}`);
       }
     }
 
@@ -747,18 +747,25 @@ if (verbose) {
     if (topWS.length) {
       console.log(`  top wide_spread:`);
       for (const r of topWS) {
-        console.log(`    - ${r.slug} | ask=${fmtNum(r.ask, 3)} bid=${fmtNum(r.bid, 3)} spr=${fmtNum(r.spread, 3)} | kind=${r.kind}`);
+        const extra = r.kind ? ` | kind=${r.kind}` : "";
+        console.log(`    - ${r.slug} | ask=${fmtNum(r.ask, 3)} bid=${fmtNum(r.bid, 3)} spr=${fmtNum(r.spread, 3)}${extra}`);
       }
     }
 
     if (opp.tradeable === 0 && opp.total > 0) {
-      console.log(`  → Day is DEAD for esports under current rules.`);
+      console.log(`  → Day is DEAD for ${label} under current rules.`);
     } else if (opp.tradeable > 0) {
-      console.log(`  → ${opp.tradeable} esports market(s) potentially tradeable!`);
+      console.log(`  → ${opp.tradeable} ${label} market(s) potentially tradeable!`);
+    } else if (opp.total === 0) {
+      console.log(`  → No ${label} markets in watchlist.`);
     }
   } else {
-    console.log("\n=== Esports Opportunity ===");
+    console.log(`\n=== ${label} Opportunity ===`);
     console.log("  (no data — run the bot first)");
   }
 }
+
+printOpportunity("CBB", state?.runtime?.cbb_opportunity);
+printOpportunity("NBA", state?.runtime?.nba_opportunity);
+printOpportunity("Esports", state?.runtime?.esports_opportunity);
 

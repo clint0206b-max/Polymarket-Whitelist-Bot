@@ -1482,5 +1482,85 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     };
   }
 
+  // --- CBB + NBA opportunity classification (same pattern as esports) ---
+  for (const league of ["cbb", "nba"]) {
+    const tNow = Date.now();
+    const lgAll = Object.values(state.watchlist || {}).filter(m =>
+      m && m.league === league && (m.status === "watching" || m.status === "pending_signal" || m.status === "signaled")
+    );
+
+    let total = 0;
+    let twoSided = 0;
+    let oneSidedMissingAsk = 0;
+    let oneSidedMissingBid = 0;
+    let spreadAboveMax = 0;
+    let priceOutOfRange = 0;
+    let noQuote = 0;
+    let tradeable = 0;
+
+    const maxSpreadCfg = Number(cfg?.filters?.max_spread ?? 0.02);
+    const minProbCfg = Number(cfg?.filters?.min_prob ?? 0.94);
+    const maxEntryCfg = Number(cfg?.filters?.max_entry_price ?? 0.97);
+    const EPS = Number(cfg?.filters?.EPS || 1e-6);
+
+    const topMissingAsk = [];
+    const topWideSpread = [];
+
+    for (const m of lgAll) {
+      total++;
+      const lp = m.last_price;
+      const ask = lp?.yes_best_ask;
+      const bid = lp?.yes_best_bid;
+
+      if (ask == null && bid == null) { noQuote++; continue; }
+      if (ask == null) {
+        oneSidedMissingAsk++;
+        topMissingAsk.push({ slug: String(m.slug || ""), bid: Number(bid) });
+        continue;
+      }
+      if (bid == null) { oneSidedMissingBid++; continue; }
+
+      twoSided++;
+      const spread = Number(ask) - Number(bid);
+
+      if (spread - EPS > maxSpreadCfg) {
+        spreadAboveMax++;
+        topWideSpread.push({ slug: String(m.slug || ""), ask: Number(ask), bid: Number(bid), spread });
+        continue;
+      }
+      if ((Number(ask) + EPS) < minProbCfg || (Number(ask) - EPS) > maxEntryCfg) {
+        priceOutOfRange++;
+        continue;
+      }
+      tradeable++;
+    }
+
+    topMissingAsk.sort((a, b) => b.bid - a.bid);
+    topWideSpread.sort((a, b) => b.spread - a.spread);
+
+    bumpBucket("health", `${league}_opp_total`, total);
+    bumpBucket("health", `${league}_opp_two_sided`, twoSided);
+    bumpBucket("health", `${league}_opp_one_sided_missing_ask`, oneSidedMissingAsk);
+    bumpBucket("health", `${league}_opp_one_sided_missing_bid`, oneSidedMissingBid);
+    bumpBucket("health", `${league}_opp_spread_above_max`, spreadAboveMax);
+    bumpBucket("health", `${league}_opp_price_out_of_range`, priceOutOfRange);
+    bumpBucket("health", `${league}_opp_no_quote`, noQuote);
+    bumpBucket("health", `${league}_opp_tradeable`, tradeable);
+
+    state.runtime[`${league}_opportunity`] = {
+      ts: tNow,
+      total,
+      two_sided: twoSided,
+      one_sided_missing_ask: oneSidedMissingAsk,
+      one_sided_missing_bid: oneSidedMissingBid,
+      spread_above_max: spreadAboveMax,
+      price_out_of_range: priceOutOfRange,
+      no_quote: noQuote,
+      tradeable,
+      top_missing_ask: topMissingAsk.slice(0, 3),
+      top_wide_spread: topWideSpread.slice(0, 3)
+    };
+  }
+
   return { changed };
 }

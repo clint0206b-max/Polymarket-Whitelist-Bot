@@ -83,29 +83,50 @@ function computePnl(entryPrice, notionalUsd, won) {
   return { pnl_usd: pnl, roi, shares };
 }
 
-export async function loopResolutionTracker(cfg) {
+export async function loopResolutionTracker(cfg, state) {
   const idx = loadOpenIndex();
   const open = idx.open || {};
   const ids = Object.keys(open);
+
+  // Observability counters (persisted on state if provided)
+  const health = (state?.runtime?.health) || {};
+  health.paper_resolution_poll_cycles = (health.paper_resolution_poll_cycles || 0) + 1;
+  health.paper_resolution_open_count = ids.length;
+
   if (!ids.length) return { changed: false, checked: 0, resolved: 0 };
 
   const maxOpen = Number(cfg?.paper?.max_open_positions ?? 200);
   const toCheck = ids.slice(0, Math.max(0, maxOpen));
 
   let resolvedCount = 0;
+  let fetchFailCount = 0;
   for (const id of toCheck) {
     const row = open[id];
     const slug = row?.slug;
     if (!slug) continue;
 
     const r = await fetchGammaMarketBySlug(slug, 5000);
-    if (!r.ok) continue;
+    if (!r.ok) { fetchFailCount++; continue; }
 
     const det = detectResolved(r.market);
     if (!det.resolved) continue;
 
-    const entryOutcome = row?.entry_outcome_name;
-    const won = normTeam(det.winner) && normTeam(entryOutcome) ? (normTeam(det.winner) === normTeam(entryOutcome)) : null;
+    let entryOutcome = row?.entry_outcome_name || null;
+
+    // Fallback: if entry_outcome_name is null (legacy entries), derive from Gamma response
+    // The "yes" side is whichever had the higher price at entry time. Since we always buy
+    // the favored side, and for binary markets the "Yes"/"Team A" side is outcomes[0],
+    // we can derive: if the market has 2 outcomes, the one that is NOT the winner
+    // determines loss, and the one that IS the winner determines win.
+    // But we need to know WHICH outcome we bet on. Without clobTokenIds mapping in the
+    // open_index, we use a heuristic: the favored team at entry was likely the one
+    // with the higher price, which at resolution is the winner (if we won) or the loser
+    // (if we lost). Since we can't be sure, we mark won=null for legacy entries.
+    //
+    // For entries with entry_outcome_name set correctly, this is a clean comparison.
+    const won = (entryOutcome && normTeam(det.winner) && normTeam(entryOutcome))
+      ? (normTeam(det.winner) === normTeam(entryOutcome))
+      : null;
 
     const { pnl_usd, roi, shares } = (won == null)
       ? { pnl_usd: null, roi: null, shares: null }
@@ -129,5 +150,14 @@ export async function loopResolutionTracker(cfg) {
   }
 
   if (resolvedCount) saveOpenIndex(idx);
+
+  // Persist counters
+  health.paper_resolution_markets_checked = (health.paper_resolution_markets_checked || 0) + toCheck.length;
+  health.paper_resolution_resolved_count = (health.paper_resolution_resolved_count || 0) + resolvedCount;
+  health.paper_resolution_fetch_fail_count = (health.paper_resolution_fetch_fail_count || 0) + fetchFailCount;
+  health.paper_resolution_last_check_ts = nowMs();
+  health.paper_resolution_last_checked_count = toCheck.length;
+  health.paper_resolution_last_resolved_count = resolvedCount;
+
   return { changed: resolvedCount > 0, checked: toCheck.length, resolved: resolvedCount };
 }
