@@ -49,10 +49,8 @@ async function fetchGammaMarketBySlug(slug, timeoutMs = 5000) {
 }
 
 function detectResolved(market) {
-  // Conservative: require closed/!active AND outcomePrices near terminal.
   const closed = market?.closed === true;
   const active = market?.active === true;
-  if (!closed && active) return { resolved: false };
 
   const outcomes = parseJsonMaybe(market?.outcomes);
   const prices = parseJsonMaybe(market?.outcomePrices);
@@ -67,10 +65,18 @@ function detectResolved(market) {
   for (let i = 1; i < nums.length; i++) if (nums[i] > nums[maxIdx]) maxIdx = i;
   const max = nums[maxIdx];
 
-  // terminal-ish
-  if (!(max >= 0.99)) return { resolved: false };
+  // Official resolution: market closed by oracle
+  if (closed && !active && max >= 0.99) {
+    return { resolved: true, method: "official", winner: String(outcomes[maxIdx]), maxPrice: max };
+  }
 
-  return { resolved: true, winner: String(outcomes[maxIdx]), maxPrice: max };
+  // Terminal price resolution: prices at ≥0.995 even if Gamma hasn't flipped closed yet.
+  // Safe for paper trading — real PnL is identical since we hold to resolution.
+  if (max >= 0.995) {
+    return { resolved: true, method: "terminal_price", winner: String(outcomes[maxIdx]), maxPrice: max };
+  }
+
+  return { resolved: false };
 }
 
 function computePnl(entryPrice, notionalUsd, won) {
@@ -137,6 +143,7 @@ export async function loopResolutionTracker(cfg, state) {
       signal_id: id,
       ts_close: nowMs(),
       close_reason: "resolved",
+      resolve_method: det.method || "unknown",
       resolved_outcome_name: det.winner,
       resolved_price_max: det.maxPrice,
       win: won,
