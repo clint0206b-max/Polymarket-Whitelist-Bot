@@ -1216,6 +1216,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       }
 
       // TP math dry-run (tag-only)
+      // We compute it at candidate stage for rolling metrics, and also attach to the signal snapshot.
       const tp_bid = Number(cfg?.tp?.bid_target ?? 0.998);
       const tp_minProfit = Number(cfg?.tp?.min_profit_per_share ?? 0.002);
       const tp_fees = Number(cfg?.tp?.fees_roundtrip ?? 0);
@@ -1226,10 +1227,24 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       const tpMathAllowed = (tpMathMargin != null && Number.isFinite(tp_minProfit)) ? (tpMathMargin >= tp_minProfit) : false;
       const tpMathReason = (tpMathMargin == null) ? "no_data" : (tpMathAllowed ? "ok" : "below_min_profit");
 
-      bumpBucket("health", "tp_math_eval", 1);
-      if (tpMathAllowed) bumpBucket("health", "tp_math_allowed", 1);
-      else bumpBucket("health", "tp_math_rejected", 1);
-      bumpBucket("health", `tp_math_rejected_reason:${tpMathReason}`, 1);
+      bumpBucket("health", "tp_math_eval_candidates", 1);
+      if (tpMathAllowed) bumpBucket("health", "tp_math_allowed_candidates", 1);
+      else bumpBucket("health", "tp_math_rejected_candidates", 1);
+      bumpBucket("health", `tp_math_rejected_candidates_reason:${tpMathReason}`, 1);
+
+      // margin bucket (optional but useful)
+      {
+        let b = "no_data";
+        if (tpMathMargin != null) {
+          const x = Number(tpMathMargin);
+          if (x < -0.01) b = "lt_-0.01";
+          else if (x < 0) b = "-0.01_0";
+          else if (x < tp_minProfit) b = `0_${tp_minProfit}`;
+          else if (x < 0.01) b = `${tp_minProfit}_0.01`;
+          else b = "gt_0.01";
+        }
+        bumpBucket("health", `tp_math_margin_bucket:${b}`, 1);
+      }
 
       // ring buffer of last signals (runtime)
       state.runtime.last_signals = Array.isArray(state.runtime.last_signals) ? state.runtime.last_signals : [];
