@@ -243,6 +243,11 @@ if (verbose) {
   console.log(`- signaled_map_specific: ${Number(health5.signaled_map_specific || 0)}`);
   console.log(`- signaled_other: ${Number(health5.signaled_other || 0)}`);
 
+  console.log(`\nTP math (rolling last_5min, dry-run):`);
+  console.log(`- tp_math_eval: ${Number(health5.tp_math_eval || 0)}`);
+  console.log(`- tp_math_allowed: ${Number(health5.tp_math_allowed || 0)}`);
+  console.log(`- tp_math_rejected: ${Number(health5.tp_math_rejected || 0)}`);
+
   console.log(`\n- context_cbb_decided_pass: ${Number(health5.context_cbb_decided_pass || 0)}`);
   console.log(`- context_nba_decided_pass: ${Number(health5.context_nba_decided_pass || 0)}`);
   console.log(`- signaled_and_context_decided: ${Number(health5.signaled_and_context_decided || 0)}`);

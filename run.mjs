@@ -169,6 +169,14 @@ try {
               would_gate_block: (s.would_gate_block === true),
               would_gate_reason: String(s.would_gate_reason || "not_applicable"),
 
+              tp_bid_target: Number(s.tp_bid_target ?? null),
+              tp_min_profit_per_share: Number(s.tp_min_profit_per_share ?? null),
+              tp_fees_roundtrip: Number(s.tp_fees_roundtrip ?? null),
+              tp_max_entry_dynamic: (s.tp_max_entry_dynamic == null ? null : Number(s.tp_max_entry_dynamic)),
+              tp_math_margin: (s.tp_math_margin == null ? null : Number(s.tp_math_margin)),
+              tp_math_allowed: (s.tp_math_allowed === true),
+              tp_math_reason: String(s.tp_math_reason || "no_data"),
+
               ctx: s.ctx || null,
               esports: s.esports || null,
               status: "open"
@@ -184,7 +192,9 @@ try {
               entry_outcome_name: entryOutcome,
               would_gate_apply: (s.would_gate_apply === true),
               would_gate_block: (s.would_gate_block === true),
-              would_gate_reason: String(s.would_gate_reason || "not_applicable")
+              would_gate_reason: String(s.would_gate_reason || "not_applicable"),
+              tp_math_allowed: (s.tp_math_allowed === true),
+              tp_math_reason: String(s.tp_math_reason || "no_data")
             });
           }
           saveOpenIndex(idx);

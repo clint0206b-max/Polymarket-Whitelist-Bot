@@ -69,6 +69,12 @@
     "resolution_poll_seconds": 60,
     "max_open_positions": 200
   },
+  "tp": {
+    "bid_target": 0.998,
+    "min_profit_per_share": 0.002,
+    "fees_roundtrip": 0,
+    "enable_gate": false
+  },
   "context": {
     "enabled": false,
     "cbb": {

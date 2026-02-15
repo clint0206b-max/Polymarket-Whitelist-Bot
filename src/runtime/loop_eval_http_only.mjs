@@ -1215,6 +1215,22 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         }
       }
 
+      // TP math dry-run (tag-only)
+      const tp_bid = Number(cfg?.tp?.bid_target ?? 0.998);
+      const tp_minProfit = Number(cfg?.tp?.min_profit_per_share ?? 0.002);
+      const tp_fees = Number(cfg?.tp?.fees_roundtrip ?? 0);
+      const spreadNow = Number(quote.spread);
+      const entryAsk = Number(quote.probAsk);
+      const maxEntryDynamic = (Number.isFinite(tp_bid) && Number.isFinite(spreadNow)) ? (tp_bid - spreadNow) : null;
+      const tpMathMargin = (maxEntryDynamic != null && Number.isFinite(entryAsk)) ? (maxEntryDynamic - entryAsk - tp_fees) : null;
+      const tpMathAllowed = (tpMathMargin != null && Number.isFinite(tp_minProfit)) ? (tpMathMargin >= tp_minProfit) : false;
+      const tpMathReason = (tpMathMargin == null) ? "no_data" : (tpMathAllowed ? "ok" : "below_min_profit");
+
+      bumpBucket("health", "tp_math_eval", 1);
+      if (tpMathAllowed) bumpBucket("health", "tp_math_allowed", 1);
+      else bumpBucket("health", "tp_math_rejected", 1);
+      bumpBucket("health", `tp_math_rejected_reason:${tpMathReason}`, 1);
+
       // ring buffer of last signals (runtime)
       state.runtime.last_signals = Array.isArray(state.runtime.last_signals) ? state.runtime.last_signals : [];
       // context snapshot at signal time (freshness-aware)
@@ -1274,7 +1290,15 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         esports: esportsSnapshot,
         would_gate_apply,
         would_gate_block,
-        would_gate_reason
+        would_gate_reason,
+
+        tp_bid_target: tp_bid,
+        tp_min_profit_per_share: tp_minProfit,
+        tp_fees_roundtrip: tp_fees,
+        tp_max_entry_dynamic: maxEntryDynamic,
+        tp_math_margin: tpMathMargin,
+        tp_math_allowed: tpMathAllowed,
+        tp_math_reason: tpMathReason
       });
       if (state.runtime.last_signals.length > 20) state.runtime.last_signals = state.runtime.last_signals.slice(-20);
 
