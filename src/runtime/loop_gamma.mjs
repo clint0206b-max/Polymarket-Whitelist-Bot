@@ -52,6 +52,10 @@ export async function loopGamma(state, cfg, now) {
   // Duration is unknown until we have at least one sample.
   if (health.gamma_fetch_duration_ms_last === undefined) health.gamma_fetch_duration_ms_last = null;
 
+  // Tag-only gamma health state (observability). No behavior changes.
+  // Keep a short history of fetch outcomes and compute a simple health label.
+  health.gamma_fetch_history = Array.isArray(health.gamma_fetch_history) ? health.gamma_fetch_history : [];
+
   // Backfill optional: normalize existing state token fields that are still strings
   for (const m of Object.values(state.watchlist || {})) {
     // Backfill deterministic esports market_kind (infra/observability)
@@ -79,6 +83,30 @@ export async function loopGamma(state, cfg, now) {
   state.runtime.last_gamma_fetch_ts = now;
   state.runtime.health.gamma_fetch_count = (state.runtime.health.gamma_fetch_count || 0) + 1;
   if (r && typeof r.duration_ms === "number") state.runtime.health.gamma_fetch_duration_ms_last = Math.max(0, Number(r.duration_ms));
+
+  // Record fetch outcome history (tag-only)
+  try {
+    const err = String(r?.error || "");
+    const timeout = err.toLowerCase().includes("timeout");
+    health.gamma_fetch_history.push({ ts: now, ok: !!r?.ok, timeout, duration_ms: (typeof r?.duration_ms === "number") ? Number(r.duration_ms) : null });
+    if (health.gamma_fetch_history.length > 50) health.gamma_fetch_history = health.gamma_fetch_history.slice(-50);
+
+    // Compute health over last 10 minutes
+    const winMs = 10 * 60 * 1000;
+    const recent = health.gamma_fetch_history.filter(x => (now - Number(x.ts || 0)) <= winMs);
+    const n = recent.length;
+    const fails = recent.filter(x => x.ok === false).length;
+    const timeouts = recent.filter(x => x.timeout === true).length;
+    const failRate = n ? (fails / n) : 0;
+    const timeoutRate = n ? (timeouts / n) : 0;
+
+    let stateLabel = "ok";
+    if (n >= 3 && (timeoutRate >= 0.5 || fails >= 3)) stateLabel = "bad";
+    else if (n >= 3 && (timeoutRate > 0 || failRate > 0.2)) stateLabel = "degraded";
+
+    health.gamma_health_state = stateLabel;
+    health.gamma_health_window = { window_ms: winMs, n, fails, timeouts, failRate, timeoutRate };
+  } catch {}
 
   if (!r.ok) {
     state.runtime.health.gamma_fetch_fail_count = (state.runtime.health.gamma_fetch_fail_count || 0) + 1;

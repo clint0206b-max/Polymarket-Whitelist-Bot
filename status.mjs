@@ -229,6 +229,11 @@ if (verbose) {
   console.log(`- gamma_fetch_timeout_count: ${Number(health.gamma_fetch_timeout_count || 0)}`);
   const dur = health.gamma_fetch_duration_ms_last;
   console.log(`- gamma_fetch_duration_ms_last: ${dur == null ? "n/a" : Number(dur)}`);
+  console.log(`- gamma_health_state: ${String(health.gamma_health_state || "n/a")}`);
+  if (health.gamma_health_window) {
+    const w = health.gamma_health_window;
+    console.log(`- gamma_health_window: n=${Number(w.n||0)} fails=${Number(w.fails||0)} timeouts=${Number(w.timeouts||0)} failRate=${w.failRate==null?"n/a":w.failRate.toFixed(2)} timeoutRate=${w.timeoutRate==null?"n/a":w.timeoutRate.toFixed(2)}`);
+  }
 
   console.log("\nGlobal funnel (rolling last_5min, engine-level, no freshness):");
   console.log(`- eval_ticks: ${Number(health5.eval_tick || 0)}`);
