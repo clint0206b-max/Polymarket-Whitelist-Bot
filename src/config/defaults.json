@@ -14,7 +14,12 @@
     "http_timeout_ms": 2500,
 
     "eval_max_markets_per_cycle": 20,
-    "max_token_resolves_per_cycle": 5
+    "max_token_resolves_per_cycle": 5,
+    "min_resolves_per_cycle_by_league": {
+      "esports": 2,
+      "nba": 1,
+      "cbb": 1
+    }
   },
   "gamma": {
     "gamma_base_url": "https://gamma-api.polymarket.com",

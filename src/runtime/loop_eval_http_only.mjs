@@ -539,7 +539,52 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     }));
   resolveCandidates.sort((a, b) => (b.vol - a.vol) || (b.lastSeen - a.lastSeen));
 
-  for (const { m } of resolveCandidates) {
+  // Per-league quota scheduling (infra): ensure no league starves when vol signals are noisy/zero.
+  const minByLeague = (cfg?.polling?.min_resolves_per_cycle_by_league && typeof cfg.polling.min_resolves_per_cycle_by_league === "object")
+    ? cfg.polling.min_resolves_per_cycle_by_league
+    : { esports: 2, nba: 1, cbb: 1 };
+
+  // Pending counts by league (for status/debug)
+  {
+    const pending = {};
+    for (const row of resolveCandidates) {
+      const lg = String(row?.m?.league || "unknown");
+      pending[lg] = (pending[lg] || 0) + 1;
+    }
+    health.token_resolve_pending_by_league_last_cycle = pending;
+    health.token_resolve_quota_cfg = { ...minByLeague };
+  }
+
+  // Build plan: take per-league quota first, then fill remaining slots by global rank.
+  const plan = [];
+  const used = new Set();
+  const pick = (row) => {
+    const key = String(row?.m?.slug || "");
+    if (!key) return false;
+    if (used.has(key)) return false;
+    used.add(key);
+    plan.push(row);
+    return true;
+  };
+
+  for (const lg of ["esports", "nba", "cbb"]) {
+    const quota = Number(minByLeague?.[lg] ?? 0);
+    if (!(quota > 0)) continue;
+    let taken = 0;
+    for (const row of resolveCandidates) {
+      if (plan.length >= maxResolves) break;
+      if (String(row?.m?.league || "") !== lg) continue;
+      if (pick(row)) taken++;
+      if (taken >= quota) break;
+    }
+  }
+
+  for (const row of resolveCandidates) {
+    if (plan.length >= maxResolves) break;
+    pick(row);
+  }
+
+  for (const { m } of plan) {
     if (resolveAttemptsThisCycle >= maxResolves) break;
     m.tokens = m.tokens || {};
     if (m.tokens.yes_token_id != null) continue;

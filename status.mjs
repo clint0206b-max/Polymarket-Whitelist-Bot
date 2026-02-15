@@ -253,6 +253,16 @@ if (verbose) {
     console.log(`- token_success:${lg}: ${Number(token5[`success:${lg}`] || 0)}`);
   }
 
+  // Latest token resolver scheduling snapshot (non-rolling)
+  if (health.token_resolve_quota_cfg) {
+    const q = health.token_resolve_quota_cfg;
+    console.log(`- token_resolver_quota_cfg: esports=${Number(q.esports||0)} nba=${Number(q.nba||0)} cbb=${Number(q.cbb||0)}`);
+  }
+  if (health.token_resolve_pending_by_league_last_cycle) {
+    const p = health.token_resolve_pending_by_league_last_cycle;
+    console.log(`- token_resolver_pending_by_league_last_cycle: esports=${Number(p.esports||0)} nba=${Number(p.nba||0)} cbb=${Number(p.cbb||0)}`);
+  }
+
   // Global funnel (rolling last_5min buckets, no freshness gate)
   console.log(`\nGamma fetch health (runtime):`);
   console.log(`- gamma_fetch_count: ${Number(health.gamma_fetch_count || 0)}`);
