@@ -6,7 +6,11 @@ import { nowMs, sleepMs } from "./src/core/time.js";
 import { readJson, writeJsonAtomic, resolvePath } from "./src/core/state_store.js";
 import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen } from "./src/core/journal.mjs";
 
+import { execSync } from "node:child_process";
+
 const cfg = loadConfig();
+const BUILD_COMMIT = (() => { try { return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim(); } catch { return "unknown"; } })();
+const SCHEMA_VERSION = 2;
 
 const STATE_PATH = resolvePath("state", "watchlist.json");
 const LOCK_PATH = resolvePath("state", "watchlist.lock");
@@ -174,6 +178,8 @@ try {
 
             appendJsonl("state/journal/signals.jsonl", {
               type: "signal_open",
+              schema_version: SCHEMA_VERSION,
+              build_commit: BUILD_COMMIT,
               signal_id: signalId,
               ts_open: Number(s.ts),
               slug: String(s.slug),
