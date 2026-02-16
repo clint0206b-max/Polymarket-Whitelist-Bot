@@ -708,13 +708,20 @@ export function startHealthServer(state, opts = {}) {
         timeouts_cost: costUs,
         timeouts_pending: timeouts.length - toResolved.length,
       },
-      items: closesToday.map(c => ({
-        slug: c.slug, league: c.league || "",
-        ts_open: c.ts_open || null, ts_close: c.ts_close,
-        entry_price: c.entry_price || null,
-        win: c.win, pnl_usd: c.pnl_usd, roi: c.roi,
-        close_reason: c.close_reason,
-      })),
+      items: closesToday.map(c => {
+        // Enrich from matching signal_open if fields missing
+        const openMatch = c.signal_id
+          ? signals.find(s => s.type === "signal_open" && s.signal_id === c.signal_id)
+          : null;
+        return {
+          slug: c.slug, league: c.league || openMatch?.league || "",
+          ts_open: c.ts_open || openMatch?.ts_open || null,
+          ts_close: c.ts_close,
+          entry_price: c.entry_price || openMatch?.entry_price || null,
+          win: c.win, pnl_usd: c.pnl_usd, roi: c.roi,
+          close_reason: c.close_reason,
+        };
+      }),
     };
   }
 
