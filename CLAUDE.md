@@ -6,11 +6,44 @@
 ## Quick Reference
 
 ```
-node run.mjs                          # Run bot (default 60s, or set STOP_AFTER_MS)
-STOP_AFTER_MS=999999999999 node run.mjs  # Run indefinitely
+# Bot runs 24/7 via launchd (see Process Management below)
+# Manual run for testing:
+STOP_AFTER_MS=15000 node run.mjs      # Test run (15s)
+STOP_AFTER_MS=0 node run.mjs          # Run indefinitely (manual)
 node status.mjs                       # Dashboard (reads state, no side effects)
-node --test tests/*.test.mjs          # Run all tests
+node --test tests/*.test.mjs          # Run all tests (404 tests)
+curl -s http://localhost:3210/health | jq  # Health check
+open http://localhost:3210/            # Visual dashboard (auto-refresh 5s)
 ```
+
+## Process Management (launchd — 24/7)
+
+The bot runs as a macOS launchd service that auto-starts at login and auto-restarts on crash.
+
+**Plist**: `~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist`
+**Logs**: `logs/launchd-stdout.log`, `logs/launchd-stderr.log`
+
+```bash
+# Check status
+launchctl list | grep polymarket
+
+# Stop (for maintenance/deploy)
+launchctl unload ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist
+
+# Start
+launchctl load ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist
+
+# Restart (after code changes)
+launchctl unload ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist && \
+  sleep 2 && rm -f state/watchlist.lock && \
+  launchctl load ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist
+```
+
+**Behavior:**
+- `RunAtLoad: true` — starts at login
+- `KeepAlive.SuccessfulExit: false` — restarts on crash (exit code != 0)
+- `ThrottleInterval: 10` — waits 10s between restarts (anti-spin)
+- `STOP_AFTER_MS=0` — runs indefinitely
 
 ## Directory Structure
 
@@ -32,7 +65,8 @@ polymarket-watchlist-v1/
 │   │   ├── journal.mjs        # appendJsonl / loadOpenIndex / saveOpenIndex / addOpen / removeOpen
 │   │   ├── lockfile.js        # acquireLock / releaseLock (PID-based)
 │   │   ├── invariants.js      # checkAndFixInvariants (state self-healing)
-│   │   └── time.js            # nowMs / sleepMs
+│   │   ├── time.js            # nowMs / sleepMs
+│   │   └── dirty_tracker.mjs # Dirty tracking for intelligent persistence (skip writes when no changes)
 │   │
 │   ├── gamma/                 # Gamma API (market discovery)
 │   │   ├── gamma_client.mjs   # fetchLiveEvents(tag, cfg) → raw JSON
@@ -41,7 +75,8 @@ polymarket-watchlist-v1/
 │   │
 │   ├── clob/                  # CLOB API (order book data)
 │   │   ├── book_http_client.mjs  # getBook(tokenId, cfg) → raw book
-│   │   └── book_parser.mjs       # parseAndNormalizeBook(raw) → { bids[], asks[], bestBid, bestAsk }
+│   │   ├── book_parser.mjs       # parseAndNormalizeBook(raw) → { bids[], asks[], bestBid, bestAsk }
+│   │   └── ws_client.mjs         # WebSocket client (real-time price feed, singleton)
 │   │
 │   ├── context/               # ESPN live game context
 │   │   ├── espn_cbb_scoreboard.mjs  # fetchEspnCbbScoreboardForDate / deriveCbbContextForMarket
@@ -50,10 +85,12 @@ polymarket-watchlist-v1/
 │   │
 │   ├── runtime/               # Main loops
 │   │   ├── loop_gamma.mjs     # Phase 1: Gamma discovery → watchlist upsert/evict/ttl
-│   │   ├── loop_eval_http_only.mjs  # Phase 2: CLOB eval pipeline (THE BIG FILE — 1700 lines)
-│   │   │                            # Token resolve → book fetch → stage1 → near → depth → pending → signal
-│   │   │                            # Also: ESPN context fetch, win_prob, opportunity classification, daily events
+│   │   ├── loop_eval_http_only.mjs  # Phase 2: CLOB eval pipeline (THE BIG FILE — 2200 lines)
+│   │   │                            # WS primary → HTTP fallback → stage1 → near → depth → pending → signal
+│   │   │                            # Also: ESPN context, purge gates, TTL cleanup, opportunity classification
 │   │   ├── loop_resolution_tracker.mjs  # Closes paper signals via Gamma polling
+│   │   ├── health_server.mjs  # HTTP health endpoint + HTML dashboard (port 3210)
+│   │   ├── universe.mjs       # Centralized universe selection (which markets to evaluate)
 │   │   └── http_queue.mjs     # Rate-limited HTTP queue (concurrency + queue size limits)
 │   │
 │   ├── strategy/              # Pure strategy functions
@@ -62,7 +99,8 @@ polymarket-watchlist-v1/
 │   │   ├── win_prob_table.mjs # estimateWinProb (normal CDF) + checkContextEntryGate
 │   │   ├── watchlist_upsert.mjs  # upsertMarket — merges Gamma data into watchlist entry
 │   │   ├── eviction.mjs       # evictIfNeeded — drops lowest-priority when at max_watchlist
-│   │   └── ttl_cleanup.mjs    # markExpired — TTL-based cleanup of stale markets
+│   │   ├── ttl_cleanup.mjs    # markExpired — TTL-based cleanup of stale markets
+│   │   └── purge_gates.mjs   # Intelligent purge rules (stale book, incomplete quote, tradeability)
 │   │
 │   ├── metrics/
 │   │   └── daily_events.mjs   # Daily event utilization tracker (per-league per-day watermarks)
@@ -73,9 +111,17 @@ polymarket-watchlist-v1/
 ├── tools/
 │   └── esports-monitor.mjs    # Standalone esports book monitor
 │
-├── tests/
+├── tests/                            # 404 tests total (node --test tests/*.test.mjs)
+│   ├── ws_client.test.mjs            # 12 tests — WS client, cache, reconnect, shutdown
+│   ├── health_server.test.mjs        # 18 tests — health endpoint, dashboard, metrics
+│   ├── universe_selection.test.mjs   # 20 tests — centralized universe selection
+│   ├── persistence.test.mjs          # 24 tests — crash-safe persistence, dirty tracking
+│   ├── purge_gates.test.mjs          # 25 tests — intelligent purge rules
+│   ├── ttl_purge.test.mjs            # 14 tests — expired market TTL cleanup
+│   ├── signaled_price_update.test.mjs # 12 tests — signaled markets price refresh
 │   ├── win_prob_table.test.mjs       # 31 tests — win prob model + entry gate
-│   └── resolution_tracker.test.mjs   # 26 tests — detectResolved + computePnl
+│   ├── resolution_tracker.test.mjs   # 26 tests — detectResolved + computePnl
+│   └── ... (+ strategy, context, invariants, etc.)
 │
 ├── state/                     # Runtime state (gitignored)
 │   ├── watchlist.json         # Main state: { version, watchlist, runtime, polling, filters, events_index }
@@ -113,8 +159,10 @@ polymarket-watchlist-v1/
 │  │  → getBook(tokenA) + getBook(tokenB)                         │   │
 │  │  → compare to determine yes/no token                         │   │
 │  │                                                              │   │
-│  │  Book Fetch (HTTP /book endpoint)                            │   │
-│  │  → parseAndNormalizeBook → bestAsk, bestBid, spread          │   │
+│  │  Price Fetch (WS primary, HTTP fallback)                     │   │
+│  │  → WS: real-time via wss://ws-subscriptions-clob.polymarket  │   │
+│  │  → HTTP fallback: if WS cache stale (>10s) or missing        │   │
+│  │  → Complementary pricing: min(yes_ask, 1-no_bid)            │   │
 │  │                                                              │   │
 │  │  Stage 1: is_base_signal_candidate                           │   │
 │  │  → ask ∈ [0.93, 0.98]? spread ≤ 0.02?                       │   │
@@ -299,24 +347,103 @@ git push
 
 | Task | How |
 |------|-----|
-| Check bot alive | `kill -0 $(cat state/runner.pid)` |
+| Check bot alive | `launchctl list \| grep polymarket` or `curl -s http://localhost:3210/health \| jq .status` |
+| View dashboard | `open http://localhost:3210/` |
+| View health JSON | `curl -s http://localhost:3210/health \| jq` |
 | View status | `node status.mjs` |
 | View signals | `cat state/journal/signals.jsonl \| jq` |
 | Run tests | `node --test tests/*.test.mjs` |
-| Start bot background | `nohup env STOP_AFTER_MS=999999999999 node run.mjs > state/runner-nohup.log 2>&1 &` |
-| Stop bot | `kill $(cat state/runner.pid)` |
-| Test run (30s) | `STOP_AFTER_MS=30000 node run.mjs` |
+| Start bot (launchd) | `launchctl load ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist` |
+| Stop bot (launchd) | `launchctl unload ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist` |
+| Restart bot | See "Process Management" section above |
+| Test run (15s) | `STOP_AFTER_MS=15000 node run.mjs` |
 | Check Gamma market | `curl -s "https://gamma-api.polymarket.com/markets?slug=SLUG" \| jq '.[0]'` |
+| Check WS ratio | `curl -s http://localhost:3210/health \| jq .websocket.usage` |
+| Check loop perf | `curl -s http://localhost:3210/health \| jq .loop.performance` |
 
 ## Known Issues / Gotchas
 
-- **loop_eval_http_only.mjs is 1700 lines** — the monolith. Most changes happen here.
+- **loop_eval_http_only.mjs is ~2200 lines** — the monolith. Most changes happen here.
 - **Gamma `closed` flag can lag** — markets show terminal prices (0.9995) but `closed: false` for hours. Resolution tracker handles this with `terminal_price` method (≥0.995).
 - **ESPN All-Star game** has no clock/period data → win_prob returns null → entry_gate blocks as `no_context`.
 - **Esports context** is from Gamma only (no ESPN). Win prob does NOT apply to esports.
-- **`state/watchlist.json`** is the single source of truth for runtime state. ~50KB, written every ~4s.
-- **Lock file** (`state/watchlist.lock`) prevents concurrent runs. If bot dies ungracefully, delete manually.
-- **Mac sleep** will kill the nohup process. No watchdog/restart mechanism yet.
+- **`state/watchlist.json`** is the single source of truth for runtime state. Written only when dirty (dirty tracker + 5s throttle).
+- **Lock file** (`state/watchlist.lock`) prevents concurrent runs. If bot dies ungracefully, delete manually (`rm -f state/watchlist.lock`).
+- **Mac sleep** will pause launchd service. Bot resumes when machine wakes.
+- **WS reconnect** uses exponential backoff (1s → 60s). On intentional shutdown, reconnect is suppressed (`_closing` flag).
+- **Health endpoint histogram** is lifetime (not rolling). Counters grow with uptime. Design debt — use `histogram_since_ts` or rolling window for rates.
+
+## WebSocket Integration
+
+**Primary price source** — eliminates most HTTP /book requests.
+
+```
+Endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/market
+Protocol:
+  1. Initial subscribe: { assets_ids: [...], type: "market" }  (once per connection)
+  2. Dynamic subscribe: { assets_ids: [...], operation: "subscribe" }  (for new tokens)
+Messages received:
+  - price_change: { event_type: "price_change", price_changes: [{asset_id, best_bid, best_ask}] }
+  - book: { event_type: "book", asset_id, bids: [...], asks: [...] }
+  - last_trade_price: fallback if no book data yet
+```
+
+**Key design decisions:**
+- `type: "market"` (lowercase, not `"MARKET"`)
+- ONE initial message per connection, then `operation: "subscribe"` for new assets
+- Lazy connect (on first `subscribe()` call, not on import)
+- `_closing` flag prevents reconnect loop during shutdown
+- WS client is singleton on `state.runtime.wsClient` — excluded from JSON persist
+- Stale threshold: `cfg.ws.max_stale_seconds` (default 10)
+- Complementary pricing: `bestAsk = min(yes_ask, 1 - no_bid)` when both tokens fresh
+
+**Health metrics** (in `/health` → `.websocket`):
+- `ws_ratio_percent`: % of price fetches from WS (target: >95%, typical: 99%+)
+- `http_fallback_cache_miss`: WS had no data for token
+- `http_fallback_stale`: WS data existed but too old
+- `http_fallback_mismatch`: true if cache_miss + stale ≠ total (indicates untracked path)
+
+## Health Monitoring
+
+**Endpoint**: `GET http://localhost:3210/health` → JSON
+**Dashboard**: `GET http://localhost:3210/` → auto-refresh HTML
+
+**Key sections in /health response:**
+| Section | What it shows |
+|---------|--------------|
+| `loop.performance` | histogram, slow_loops, very_slow_loops, last_breakdown |
+| `websocket.usage` | ws_ratio, cache_miss, stale counts |
+| `staleness` | % of signaled markets with stale prices |
+| `http` | success rate, rate limited count |
+| `persistence` | last write age, write/skip counts |
+| `watchlist` | total, by_status, by_league |
+| `reject_reasons` | top 5 reject reasons (last cycle) |
+
+**Loop timing breakdown** (logged on slow loops, exposed in health):
+```
+[SLOW_LOOP] 3548ms | gamma=1932ms eval=1616ms journal=0ms resolution=1ms persist=0ms | markets=32 heapUsed=12MB heapTotal=17MB external=4MB
+```
+
+**Thresholds:**
+- `>= 3000ms` → `[SLOW_LOOP]` (counter: `slow_loops`)
+- `>= 5000ms` → `[VERY_SLOW_LOOP]` (counter: `very_slow_loops`)
+
+## Persistence
+
+**Strategy**: Dirty tracking with fsync + atomic write + backup.
+- Only writes when state actually changed (`DirtyTracker`)
+- Throttled to max 1 write per 5s (unless critical: new signals)
+- `writeJsonAtomic`: tmp file → fsync → rename (crash-safe)
+- Size guardrail: warns if state > 1MB
+
+## Purge Gates
+
+**3 rules for removing watching markets** (require double conditions to avoid false purges):
+1. Book stale >15min
+2. Quote incomplete >10min
+3. Tradeability degraded >12min (BOTH spread + depth failing)
+
+**Expired TTL**: Markets with `status=expired` + `resolved_ts` older than 5h are auto-deleted each cycle.
 
 ---
 ## Soccer Integration
@@ -363,4 +490,4 @@ Captures win_prob + ask/bid for in-game markets at ALL price levels for model ca
   "ev_edge": 0.08, "margin_for_yes": 12, "minutes_left": 3.5, "period": 2 }
 ```
 
-*Last updated: 2026-02-15 (commit 855bf26)*
+*Last updated: 2026-02-16 (commit 3659b6b — WS integration, health monitoring, launchd, loop metrics, audit fixes)*
