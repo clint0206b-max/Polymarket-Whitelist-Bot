@@ -1820,17 +1820,30 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     }
 
     // Lazy HTTP fetch for depth if WS was used (WS only provides best bid/ask, not full book)
+    // Uses TTL cache to avoid refetching every cycle
     if (priceSource !== "http_fallback" && parsedYes.book.bids.length === 0 && parsedYes.book.asks.length === 0) {
-      // WS was used, but we need full book for depth check → HTTP fetch now
-      const respYesDepth = await queue.enqueue(() => getBook(yesToken, cfg), { reason: "depth" });
-      if (respYesDepth.ok) {
-        const parsedDepth = parseAndNormalizeBook(respYesDepth.rawBook, cfg, health);
-        if (parsedDepth.ok) {
-          parsedYes.book = parsedDepth.book;
-          bumpBucket("health", "depth_http_fetch_after_ws", 1);
-        }
+      const depthCacheTtl = Number(cfg?.polling?.depth_cache_ttl_seconds || 15) * 1000;
+      if (!state.runtime._depthCache) state.runtime._depthCache = {};
+      const cached = state.runtime._depthCache[yesToken];
+      const cacheAge = cached ? (tNow - cached.ts) : Infinity;
+
+      if (cached && cacheAge < depthCacheTtl) {
+        // Use cached depth
+        parsedYes.book = cached.book;
+        bumpBucket("health", "depth_cache_hit", 1);
       } else {
-        bumpBucket("health", "depth_http_fetch_failed", 1);
+        // WS was used, but we need full book for depth check → HTTP fetch now
+        const respYesDepth = await queue.enqueue(() => getBook(yesToken, cfg), { reason: "depth" });
+        if (respYesDepth.ok) {
+          const parsedDepth = parseAndNormalizeBook(respYesDepth.rawBook, cfg, health);
+          if (parsedDepth.ok) {
+            parsedYes.book = parsedDepth.book;
+            state.runtime._depthCache[yesToken] = { book: parsedDepth.book, ts: tNow };
+            bumpBucket("health", "depth_http_fetch_after_ws", 1);
+          }
+        } else {
+          bumpBucket("health", "depth_http_fetch_failed", 1);
+        }
       }
     }
 
