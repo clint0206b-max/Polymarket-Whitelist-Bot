@@ -1153,6 +1153,66 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     state.runtime.health.expired_purged_ttl_last_cycle = expiredPurgedCount;
   }
 
+  // === PURGE BY TERMINAL PRICE ===
+  // If WS shows price ≥0.995 on one side, market is decided → purge
+  // Anti-flicker: require terminal price for ≥30 seconds before purging
+  // Safety: NEVER purge if there's an open paper position (let resolution tracker handle it)
+  const TERMINAL_THRESHOLD = 0.995;
+  const TERMINAL_CONFIRM_MS = 30000; // 30s anti-flicker window
+  let terminalPurgedCount = 0;
+
+  // Load open paper positions to check exclusion
+  let openPaperSlugs;
+  try {
+    const { loadOpenIndex } = await import("../core/journal.mjs");
+    const idx = loadOpenIndex();
+    openPaperSlugs = new Set(Object.values(idx.open || {}).map(p => p.slug));
+  } catch {
+    openPaperSlugs = new Set();
+  }
+
+  for (const [key, m] of Object.entries(state.watchlist || {})) {
+    // Skip non-expired/non-watching (signaled markets need resolution tracker first)
+    if (m.status !== "expired" && m.status !== "watching") continue;
+
+    // STRICT EXCLUSION: never purge if paper position is open
+    if (openPaperSlugs.has(m.slug)) continue;
+
+    // Check WS cache for terminal price
+    const yesToken = m.tokens?.yes_token_id;
+    if (!yesToken) continue;
+
+    const wsPrice = wsClient.getPrice(yesToken);
+    if (!wsPrice) continue;
+
+    const isTerminal = (wsPrice.bestBid >= TERMINAL_THRESHOLD) || (wsPrice.bestAsk <= (1 - TERMINAL_THRESHOLD));
+    if (!isTerminal) {
+      // Reset confirmation timer if price drops back
+      if (m._terminal_first_seen_ts) delete m._terminal_first_seen_ts;
+      continue;
+    }
+
+    // Anti-flicker: track first time we saw terminal price
+    if (!m._terminal_first_seen_ts) {
+      m._terminal_first_seen_ts = now;
+      continue; // First sighting — wait for confirmation
+    }
+
+    const terminalAge = now - m._terminal_first_seen_ts;
+    if (terminalAge < TERMINAL_CONFIRM_MS) continue; // Not confirmed yet
+
+    // Confirmed terminal for ≥30s → purge
+    delete state.watchlist[key];
+    terminalPurgedCount++;
+    bumpBucket("health", "purged_terminal_price", 1);
+    bumpBucket("health", `purged_terminal_price:${m.league}`, 1);
+    console.log(`[PURGE_TERMINAL] ${m.slug} | bid=${wsPrice.bestBid.toFixed(4)} ask=${wsPrice.bestAsk.toFixed(4)} | confirmed=${Math.round(terminalAge/1000)}s | status=${m.status}`);
+  }
+
+  if (terminalPurgedCount > 0) {
+    state.runtime.health.terminal_purged_count = (state.runtime.health.terminal_purged_count || 0) + terminalPurgedCount;
+  }
+
   // Universe B: signal pipeline (only watching, pending_signal)
   const priceUpdateUniverse = selectPriceUpdateUniverse(state, cfg);
   const pipelineUniverse = new Set(selectPipelineUniverse(state, cfg).map(m => m.conditionId || m.slug));
