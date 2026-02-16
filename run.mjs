@@ -97,7 +97,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 const started = nowMs();
-const stopAfterMs = Number(process.env.STOP_AFTER_MS || 60000); // Phase 0: run 60s
+const stopAfterMs = Number(process.env.STOP_AFTER_MS || 60000); // Default: 60s test/debug, 0 = run indefinitely
 
 // --- Reconcile open_index from signals.jsonl (crash recovery) ---
 {
@@ -349,7 +349,7 @@ try {
       state.runtime.health.state_write_skipped_count = (state.runtime.health.state_write_skipped_count || 0) + 1;
     }
 
-    if (now - started >= stopAfterMs) {
+    if (stopAfterMs > 0 && now - started >= stopAfterMs) {
       console.log(`[DONE] run complete (${Math.round(stopAfterMs/1000)}s)`);
       break;
     }
