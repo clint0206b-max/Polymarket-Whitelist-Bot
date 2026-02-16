@@ -18,6 +18,7 @@ const SOCCER_PREFIXES = [
   "ucl-", "uel-",                            // UEFA
   "mex-", "arg-", "ere-", "por-",            // other leagues
   "bra-", "tur-", "sco-", "bel-", "aut-",   // extended
+  "elc-", "rus-", "jpn-", "kor-", "aus-",  // other known
 ];
 
 export function isSoccerSlug(slug) {
@@ -57,12 +58,15 @@ function pickMarketsForEvent(tag, e, cfg) {
 
   // Soccer: only team-win markets (ban draw, total, spread, btts, over, under)
   if (tag === "soccer") {
-    const teamWins = active.filter(m => isSoccerSlug(m.slug) && !isSoccerBannedSlug(m.slug));
-    // Also include non-soccer-prefix markets that aren't banned (fallback)
-    const nonPrefixed = active.filter(m => !isSoccerSlug(m.slug) && !isSpreadOrTotalSlug(m.slug));
-    const all = [...teamWins, ...nonPrefixed];
+    // Generic ban check for any soccer-tagged market (regardless of prefix)
+    const isBannedGeneric = (slug) => {
+      const v = s(slug).toLowerCase();
+      return v.includes("-draw") || v.includes("-total-") || v.includes("-spread-") ||
+             v.includes("-btts") || v.includes("-over-") || v.includes("-under-");
+    };
+    const teamWins = active.filter(m => !isBannedGeneric(m.slug) && !isSpreadOrTotalSlug(m.slug));
     const maxMkts = Number(cfg?.gamma?.events_max_markets_per_event || 6);
-    return all.slice(0, maxMkts);
+    return teamWins.slice(0, maxMkts);
   }
 
   // Esports: prefer game/map markets; include main if present

@@ -5,7 +5,9 @@ import { compute_depth_metrics, is_depth_sufficient } from "../strategy/stage2.m
 import { createHttpQueue } from "./http_queue.mjs";
 import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWindow3, mergeScoreboardEventsByWindow } from "../context/espn_cbb_scoreboard.mjs";
 import { fetchEspnNbaScoreboardForDate, deriveNbaContextForMarket } from "../context/espn_nba_scoreboard.mjs";
-import { estimateWinProb, checkContextEntryGate } from "../strategy/win_prob_table.mjs";
+import { estimateWinProb, checkContextEntryGate, checkSoccerEntryGate, soccerWinProb } from "../strategy/win_prob_table.mjs";
+import { fetchSoccerScoreboard, matchMarketToGame, deriveSoccerContext, ESPN_LEAGUE_IDS, SLUG_PREFIX_TO_LEAGUE, resetScoreHistory } from "../context/espn_soccer_scoreboard.mjs";
+import { isSoccerSlug } from "../gamma/gamma_parser.mjs";
 import { loadDailyEvents, saveDailyEvents, recordMarketTick } from "../metrics/daily_events.mjs";
 import { appendJsonl } from "../core/journal.mjs";
 
@@ -915,6 +917,115 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         bumpBucket("health", `context_entry_blocked_reason:${sport}:${gate.reason}`, 1);
       }
     }
+
+    // --- Soccer context (ESPN multi-league, cached per league, fail-closed) ---
+    {
+      const soccerMarkets = wl.filter(m => m.league === "soccer" && (m.status === "watching" || m.status === "pending_signal"));
+
+      if (soccerMarkets.length > 0) {
+        bumpBucket("health", "soccer_context_attempt", 1);
+
+        // Determine which ESPN leagues we need from slug prefixes
+        const neededLeagues = new Set();
+        for (const m of soccerMarkets) {
+          const slug = String(m.slug || "").toLowerCase();
+          for (const [prefix, leagueId] of Object.entries(SLUG_PREFIX_TO_LEAGUE)) {
+            if (slug.startsWith(prefix + "-")) {
+              neededLeagues.add(leagueId);
+              break;
+            }
+          }
+        }
+
+        // Cache: fetch each league at most every 15s
+        if (!state.runtime.soccer_cache) state.runtime.soccer_cache = {};
+        const soccerFetchInterval = Number(cfg?.context?.soccer?.fetch_seconds ?? 15) * 1000;
+        const soccerTimeout = Number(cfg?.context?.soccer?.timeout_ms ?? 2500);
+
+        let allGames = [];
+        for (const leagueId of neededLeagues) {
+          const cached = state.runtime.soccer_cache[leagueId];
+          const cacheAge = cached ? (tNow - (cached.ts || 0)) : Infinity;
+
+          if (cacheAge < soccerFetchInterval && Array.isArray(cached.games)) {
+            allGames.push(...cached.games);
+            bumpBucket("health", `soccer_cache_hit:${leagueId}`, 1);
+          } else {
+            try {
+              const games = await fetchSoccerScoreboard(leagueId, { timeout_ms: soccerTimeout });
+              state.runtime.soccer_cache[leagueId] = { ts: tNow, games };
+              allGames.push(...games);
+              bumpBucket("health", `soccer_fetch_ok:${leagueId}`, 1);
+            } catch (err) {
+              // Fail closed: no data = no trades
+              bumpBucket("health", `soccer_fetch_fail:${leagueId}`, 1);
+            }
+          }
+        }
+
+        // Match and derive context for each soccer market
+        for (const m of soccerMarkets) {
+          bumpBucket("health", "soccer_match_attempt", 1);
+
+          const match = matchMarketToGame(m, allGames);
+
+          if (!match.matched) {
+            bumpBucket("health", `soccer_match_fail:${match.reasons?.[0] || "unknown"}`, 1);
+            m.soccer_context = { state: "unknown", confidence: "low", match_reasons: match.reasons };
+            continue;
+          }
+
+          // Derive yes_outcome_name for context
+          let yesOutcomeName = null;
+          const outcomes = Array.isArray(m.outcomes) ? m.outcomes : null;
+          const clobIds = Array.isArray(m.tokens?.clobTokenIds) ? m.tokens.clobTokenIds : null;
+          const yesId = m.tokens?.yes_token_id;
+          if (outcomes && clobIds && yesId && outcomes.length === 2 && clobIds.length === 2) {
+            const yesIdx = clobIds.findIndex(x => String(x) === String(yesId));
+            if (yesIdx >= 0) yesOutcomeName = String(outcomes[yesIdx]);
+          }
+
+          const ctx = deriveSoccerContext(
+            { ...m, entry_outcome_name: yesOutcomeName },
+            match,
+            tNow,
+          );
+
+          m.soccer_context = ctx;
+
+          // Run the bloqueante gate
+          const soccerCfg = cfg?.soccer || {};
+          const gate = checkSoccerEntryGate({
+            period: ctx.period,
+            minutesLeft: ctx.minutes_left,
+            marginForYes: ctx.margin_for_yes,
+            confidence: ctx.confidence,
+            lastScoreChangeAgoSec: ctx.lastScoreChangeAgoSec,
+            minWinProbMargin2: Number(soccerCfg.win_prob_margin2 ?? 0.97),
+            minWinProbMargin3: Number(soccerCfg.win_prob_margin3 ?? 0.95),
+            maxMinutesMargin2: Number(soccerCfg.max_minutes_left ?? 15),
+            maxMinutesMargin3: Number(soccerCfg.max_minutes_left_3goals ?? 20),
+            scoreChangeCooldownSec: Number(soccerCfg.cooldown_seconds ?? 90),
+          });
+
+          m.context_entry = {
+            yes_outcome_name: yesOutcomeName,
+            margin_for_yes: ctx.margin_for_yes,
+            win_prob: gate.win_prob,
+            entry_allowed: gate.allowed,
+            entry_blocked_reason: gate.allowed ? null : gate.reason,
+          };
+
+          bumpBucket("health", "context_entry_evaluated:soccer", 1);
+          if (gate.allowed) {
+            bumpBucket("health", "context_entry_allowed:soccer", 1);
+          } else {
+            bumpBucket("health", "context_entry_blocked:soccer", 1);
+            bumpBucket("health", `context_entry_blocked_reason:soccer:${gate.reason}`, 1);
+          }
+        }
+      }
+    }
   }
 
   // --- evaluation loop ---
@@ -1135,13 +1246,17 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     // for post-hoc model calibration and mispricing analysis.
     {
       const ce = m.context_entry;
-      const ctx = m.context;
+      // Soccer uses m.soccer_context, CBB/NBA use m.context
+      const ctx = m.league === "soccer" ? m.soccer_context : m.context;
       const ctxState = ctx?.state;
       const minutesLeft = ctx?.minutes_left;
       const wp = ce?.win_prob;
 
-      // Conditions: in-game, has win_prob, minutes_left <= 8, ask in [0.80, 0.98]
-      if (ctxState === "in" && wp != null && minutesLeft != null && minutesLeft <= 8 &&
+      // Soccer: wider window (minutes_left <= 15 for margin=2, <= 20 for margin>=3)
+      const snapshotMaxMin = m.league === "soccer" ? 20 : 8;
+
+      // Conditions: in-game, has win_prob, minutes_left <= threshold, ask in [0.80, 0.98]
+      if (ctxState === "in" && wp != null && minutesLeft != null && minutesLeft <= snapshotMaxMin &&
           bestAsk >= 0.80 && bestAsk <= 0.98) {
         // Throttle: max 1 snapshot per market per 30s
         const lastSnap = Number(m._last_ctx_snapshot_ts || 0);
@@ -1162,12 +1277,30 @@ export async function loopEvalHttpOnly(state, cfg, now) {
             margin_for_yes: ce.margin_for_yes ?? null,
             minutes_left: minutesLeft,
             period: ctx.period ?? null,
+            win_prob_model: m.league === "soccer" ? "poisson" : "normal",
+            confidence: m.league === "soccer" ? (ctx?.confidence ?? null) : null,
             schema_version: 2,
           });
           bumpBucket("health", "context_snapshot_written", 1);
           bumpBucket("health", `context_snapshot_written:${m.league}`, 1);
         }
       }
+    }
+
+    // --- Soccer BLOQUEANTE gate ---
+    // For soccer markets, the context entry gate is MANDATORY (not tag-only).
+    // If the gate hasn't explicitly allowed entry, skip the entire eval pipeline.
+    if (m.league === "soccer") {
+      const soccerAllowed = m.context_entry?.entry_allowed === true;
+      if (!soccerAllowed) {
+        const reason = m.context_entry?.entry_blocked_reason || "no_soccer_context";
+        bumpBucket("reject", `soccer_gate_blocked:${reason}`, 1);
+        bumpBucket("reject", `reject_by_league:soccer:soccer_gate_blocked`, 1);
+        m.last_reject = { reason: `soccer_gate:${reason}`, ts: tNow };
+        if (startedPending) recordPendingConfirmFail(`soccer_gate:${reason}`);
+        continue;
+      }
+      bumpBucket("health", "soccer_gate_passed", 1);
     }
 
     // Stage 1 evaluated counter (only when quote complete and we actually run Stage 1)

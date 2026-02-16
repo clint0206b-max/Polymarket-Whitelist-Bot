@@ -24,7 +24,7 @@
   "gamma": {
     "gamma_base_url": "https://gamma-api.polymarket.com",
     "gamma_timeout_ms": 8000,
-    "gamma_tags": ["esports", "nba", "ncaa-basketball"],
+    "gamma_tags": ["esports", "nba", "ncaa-basketball", "soccer"],
 
     "only_live_default": true,
     "only_live_by_league": {
@@ -69,6 +69,20 @@
   "esports": {
     "series_guard_threshold_high": 0.94
   },
+  "soccer": {
+    "min_margin": 2,
+    "max_minutes_left": 15,
+    "max_minutes_left_3goals": 20,
+    "ban_draw_market": true,
+    "ban_extra_time": true,
+    "ban_halftime": true,
+    "win_prob_model": "poisson",
+    "goal_rate": 0.015,
+    "injury_time_multiplier": 1.5,
+    "win_prob_margin2": 0.97,
+    "win_prob_margin3": 0.95,
+    "cooldown_seconds": 90
+  },
   "paper": {
     "notional_usd": 10,
     "resolution_poll_seconds": 60,
@@ -101,6 +115,11 @@
       "timeout_ms": 2500,
       "max_ctx_age_ms": 120000,
       "max_days_delta_fetch": 7
+    },
+    "soccer": {
+      "provider": "espn",
+      "fetch_seconds": 15,
+      "timeout_ms": 2500
     }
   }
 }
