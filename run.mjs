@@ -510,6 +510,17 @@ try {
       break;
     }
 
+    // Daily snapshot (every 5 minutes)
+    if (!state.runtime._lastSnapshotTs || (now - state.runtime._lastSnapshotTs) >= 300_000) {
+      try {
+        const { buildDailySnapshot } = await import("./src/metrics/daily_snapshot.mjs");
+        buildDailySnapshot(state, cfg);
+        state.runtime._lastSnapshotTs = now;
+      } catch (e) {
+        console.warn(`[SNAPSHOT] Error: ${e?.message || e}`);
+      }
+    }
+
     await sleepMs(Number(cfg.polling?.clob_eval_seconds || 2) * 1000);
   }
 } finally {

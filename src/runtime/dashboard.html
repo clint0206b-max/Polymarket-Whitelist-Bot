@@ -61,6 +61,9 @@
   </header>
 
   <main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+
+    <!-- Alert Banner -->
+    <div id="alert-banner" class="hidden rounded-lg border px-4 py-3 text-sm font-medium"></div>
     
     <!-- KPI Row -->
     <div class="grid grid-cols-2 md:grid-cols-5 gap-3" id="kpi-row">
@@ -278,8 +281,37 @@
     function truncSlug(s, max=40) { return s && s.length > max ? s.slice(0, max) + '…' : s || '—'; }
 
     // Render functions
+    function renderAlerts(h) {
+      if (!h) return;
+      const alerts = [];
+      const loopAge = h.loop?.last_cycle_age_seconds;
+      if (loopAge != null && loopAge > 30) alerts.push(`🔴 Loop stale: last cycle ${loopAge}s ago`);
+      else if (loopAge != null && loopAge > 10) alerts.push(`🟡 Loop slow: last cycle ${loopAge}s ago`);
+
+      const wsRatio = h.ws?.ws_ratio_pct;
+      if (wsRatio != null && wsRatio < 50) alerts.push(`🔴 WS degraded: ${wsRatio.toFixed(0)}% ratio`);
+      if (h.ws?.connected === false) alerts.push(`🔴 WebSocket disconnected`);
+
+      const gammaAge = h.staleness?.gamma_stale_seconds;
+      if (gammaAge != null && gammaAge > 300) alerts.push(`🟡 Gamma stale: ${Math.round(gammaAge/60)}min since last poll`);
+
+      const slowLoops = h.loop?.slow_loops;
+      if (slowLoops != null && slowLoops > 20) alerts.push(`🟡 ${slowLoops} slow loops since boot`);
+
+      const banner = $('alert-banner');
+      if (alerts.length === 0) {
+        banner.classList.add('hidden');
+      } else {
+        banner.classList.remove('hidden');
+        const isRed = alerts.some(a => a.startsWith('🔴'));
+        banner.className = `rounded-lg border px-4 py-3 text-sm font-medium ${isRed ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'}`;
+        banner.innerHTML = alerts.join(' &nbsp;·&nbsp; ');
+      }
+    }
+
     function renderHealth(h) {
       if (!h) return;
+      renderAlerts(h);
       const rId = h.runner_id || 'prod';
       $('runner-badge').textContent = rId;
       if (h.is_shadow) {
