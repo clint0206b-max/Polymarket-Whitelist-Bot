@@ -24,6 +24,76 @@ describe("buildHealthResponse", () => {
     assert.ok(response.staleness);
     assert.ok(response.persistence);
     assert.ok(response.watchlist);
+    assert.ok(response.reject_reasons);
+    assert.ok(response.time_in_status);
+  });
+
+  it("includes league breakdown in watchlist", () => {
+    const state = {
+      watchlist: {
+        id1: { status: "watching", league: "nba" },
+        id2: { status: "watching", league: "nba" },
+        id3: { status: "pending_signal", league: "cbb" },
+        id4: { status: "signaled", league: "esports" },
+        id5: { status: "expired", league: "nba" } // should be excluded
+      },
+      runtime: { health: {} }
+    };
+    const response = buildHealthResponse(state, Date.now(), "test");
+
+    assert.ok(response.watchlist.by_league);
+    assert.equal(response.watchlist.by_league.nba, 2); // only watching/pending/signaled
+    assert.equal(response.watchlist.by_league.cbb, 1);
+    assert.equal(response.watchlist.by_league.esports, 1);
+  });
+
+  it("includes reject reasons top5 + other", () => {
+    const state = {
+      watchlist: {},
+      runtime: {
+        health: {
+          reject_counts_last_cycle: {
+            reason1: 100,
+            reason2: 80,
+            reason3: 50,
+            reason4: 30,
+            reason5: 20,
+            reason6: 10,
+            reason7: 5
+          }
+        }
+      }
+    };
+    const response = buildHealthResponse(state, Date.now(), "test");
+
+    assert.ok(response.reject_reasons.top5);
+    assert.equal(response.reject_reasons.top5.length, 5);
+    assert.equal(response.reject_reasons.top5[0].reason, "reason1");
+    assert.equal(response.reject_reasons.top5[0].count, 100);
+    assert.equal(response.reject_reasons.other_count, 15); // reason6 + reason7
+  });
+
+  it("includes time in status for signaled and pending", () => {
+    const now = Date.now();
+    const state = {
+      watchlist: {
+        id1: { status: "signaled", status_since_ts: now - 300000, league: "nba" }, // 5 min old
+        id2: { status: "signaled", status_since_ts: now - 600000, league: "cbb" }, // 10 min old
+        id3: { status: "pending_signal", status_since_ts: now - 5000, league: "esports" }, // 5s old
+        id4: { status: "watching", status_since_ts: now - 1000000 } // ignored (not signaled/pending)
+      },
+      runtime: { health: {} }
+    };
+    const response = buildHealthResponse(state, now, "test");
+
+    assert.ok(response.time_in_status.signaled_top5);
+    assert.ok(response.time_in_status.pending_top5);
+    assert.equal(response.time_in_status.signaled_top5.length, 2);
+    assert.equal(response.time_in_status.pending_top5.length, 1);
+    
+    // Should be sorted by age desc (oldest first)
+    assert.equal(response.time_in_status.signaled_top5[0].age_seconds, 600);
+    assert.equal(response.time_in_status.signaled_top5[1].age_seconds, 300);
   });
 
   it("computes uptime correctly", () => {
@@ -203,7 +273,7 @@ describe("startHealthServer (integration)", () => {
     }
   });
 
-  it("returns 404 for non-GET methods", async () => {
+  it("returns 405 for non-GET methods", async () => {
     const state = { watchlist: {}, runtime: { health: {} } };
     const server = startHealthServer(state, { port: testPort, host: "127.0.0.1" });
 
@@ -211,7 +281,7 @@ describe("startHealthServer (integration)", () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       const response = await fetch(`http://127.0.0.1:${testPort}/health`, { method: "POST" });
-      assert.equal(response.status, 404);
+      assert.equal(response.status, 405);
     } finally {
       server.server.close();
       await new Promise(resolve => setTimeout(resolve, 50));
@@ -244,6 +314,33 @@ describe("startHealthServer (integration)", () => {
       json = await response.json();
       assert.equal(json.watchlist.total, 2);
       assert.equal(json.loop.runs, 2);
+    } finally {
+      server.server.close();
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  });
+
+  it("serves HTML dashboard at / and /dashboard", async () => {
+    const state = { watchlist: {}, runtime: { health: {} } };
+    const server = startHealthServer(state, { port: testPort, host: "127.0.0.1" });
+
+    try {
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Test /
+      let response = await fetch(`http://127.0.0.1:${testPort}/`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("content-type"), "text/html");
+      let html = await response.text();
+      assert.ok(html.includes("<!DOCTYPE html>"));
+      assert.ok(html.includes("Polymarket Watchlist Bot"));
+
+      // Test /dashboard
+      response = await fetch(`http://127.0.0.1:${testPort}/dashboard`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("content-type"), "text/html");
+      html = await response.text();
+      assert.ok(html.includes("<!DOCTYPE html>"));
     } finally {
       server.server.close();
       await new Promise(resolve => setTimeout(resolve, 50));

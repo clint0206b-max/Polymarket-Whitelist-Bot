@@ -2,15 +2,18 @@
 
 ## Overview
 
-HTTP endpoint for external observability and alerting without reading state files.
+HTTP server for external observability with JSON API and visual dashboard.
 
-**Endpoint**: `GET http://localhost:3210/health`
+**Endpoints**:
+- `GET http://localhost:3210/health` — JSON API for monitoring/alerting
+- `GET http://localhost:3210/` or `/dashboard` — Visual HTML dashboard
 
 **Design principles:**
 - Read-only (no state mutation)
 - No authentication (local-only, binds to 127.0.0.1)
 - No sensitive data (no watchlist details, tokens, credentials)
 - Lightweight (responds in <10ms)
+- Dashboard consumes `/health` endpoint (single source of truth)
 
 ## Configuration
 
@@ -72,7 +75,36 @@ Disable by setting `health.enabled: false` in `src/config/local.json`.
       "pending_signal": 15,
       "signaled": 3,
       "expired": 2
+    },
+    "by_league": {
+      "nba": 50,
+      "cbb": 40,
+      "esports": 25,
+      "soccer": 5
     }
+  },
+
+  "reject_reasons": {
+    "top5": [
+      { "reason": "gamma_metadata_missing", "count": 150 },
+      { "reason": "http_fallback_failed", "count": 80 },
+      { "reason": "quote_incomplete_one_sided_book", "count": 50 },
+      { "reason": "spread_too_wide", "count": 30 },
+      { "reason": "depth_insufficient", "count": 20 }
+    ],
+    "other_count": 10
+  },
+
+  "time_in_status": {
+    "signaled_top5": [
+      { "age_seconds": 7200, "league": "nba" },
+      { "age_seconds": 3600, "league": "cbb" },
+      { "age_seconds": 1800, "league": "esports" }
+    ],
+    "pending_top5": [
+      { "age_seconds": 5, "league": "nba" },
+      { "age_seconds": 3, "league": "cbb" }
+    ]
   }
 }
 ```
@@ -123,10 +155,41 @@ Disable by setting `health.enabled: false` in `src/config/local.json`.
 ### watchlist
 - `total`: Total markets in watchlist
 - `by_status`: Count by status (watching, pending_signal, signaled, expired, ignored, traded)
+- `by_league`: Count by league (nba, cbb, esports, soccer) — excludes expired/ignored
+
+### reject_reasons
+- `top5`: Top 5 reject reasons from last cycle (sorted by count desc)
+- `other_count`: Sum of all other reject reasons outside top 5
+
+**Note:** Uses aggregated counters from `runtime.health.reject_counts_last_cycle`. Only tracks last cycle, not cumulative.
+
+### time_in_status
+- `signaled_top5`: Top 5 signaled markets by time in status (oldest first)
+- `pending_top5`: Top 5 pending markets by time in status (oldest first)
+
+Each entry includes:
+- `age_seconds`: How long market has been in current status
+- `league`: Market league (for context)
+
+**Note:** Excludes sensitive data (no slugs, conditionIds, or specific market details)
 
 ## Usage
 
-### Manual Check
+### Visual Dashboard
+```bash
+# Open in browser (auto-refreshes every 5s)
+open http://localhost:3210/
+```
+
+**Features:**
+- 4 cards: Loop, Staleness, HTTP, Persistence
+- Watchlist status breakdown table
+- League breakdown table
+- Top reject reasons (last cycle)
+- Auto-refresh every 5 seconds
+- Color-coded metrics (green/yellow/red thresholds)
+
+### Manual Check (JSON API)
 ```bash
 curl http://localhost:3210/health | jq
 ```
@@ -189,23 +252,28 @@ The `health-check.sh` script implements these thresholds:
 
 ## Testing
 
-**Tests**: `tests/health_server.test.mjs` (14 tests)
+**Tests**: `tests/health_server.test.mjs` (18 tests)
 
 **Coverage:**
-- ✅ Response includes all required fields
+- ✅ Response includes all required fields (incl. new: reject_reasons, time_in_status, by_league)
+- ✅ League breakdown computation
+- ✅ Reject reasons top5 + other
+- ✅ Time in status for signaled/pending
 - ✅ Uptime calculation
 - ✅ Status counts by watchlist
 - ✅ HTTP success rate computation
 - ✅ Staleness calculation for signaled markets
 - ✅ Persistence stats
 - ✅ Server binds and responds to GET /health
+- ✅ Serves HTML dashboard at / and /dashboard
 - ✅ Returns 404 for non-/health paths
-- ✅ Returns 404 for non-GET methods
+- ✅ Returns 405 for non-GET methods
 - ✅ Reflects live state updates
 
 Run tests:
 ```bash
-node --test tests/health_server.test.mjs
+node --test tests/health_server.test.mjs  # just health tests (18)
+node --test tests/*.test.mjs              # all tests (343)
 ```
 
 ## Troubleshooting
