@@ -221,11 +221,20 @@ function computeDailyUtilization(state) {
     return byLeague[l];
   };
 
+  // Build signal_id → league lookup from opens (for enriching closes that lack league)
+  const leagueBySignalId = {};
+  for (const s of signals) {
+    if (s.type === "signal_open" && s.signal_id && s.league) {
+      leagueBySignalId[s.signal_id] = s.league;
+    }
+  }
+
   for (const s of signals) {
     const ts = s.ts_open || s.ts_close || s.ts || s.resolve_ts || 0;
     if (ts < dayStartUtc) continue;
 
-    const league = s.league || "unknown";
+    // Resolve league: prefer own field, fallback to matching open's league
+    const league = s.league || leagueBySignalId[s.signal_id] || "unknown";
 
     if (s.type === "signal_open") {
       const d = ensure(league);
