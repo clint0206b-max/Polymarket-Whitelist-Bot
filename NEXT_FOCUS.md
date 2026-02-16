@@ -2,12 +2,13 @@
 
 ## Active Focus
 
-None — ready for deployment.
+None — all High ROI items complete.
 
-## High ROI (Next Sprint)
+## High ROI ✅ COMPLETE
 
-- **Watchlist state persistence**: Serialize watchlist state to disk (JSON) on each loop cycle, reload on startup. Prevents losing watchlist on restart. (~1h)
-- **Graceful shutdown**: Handle SIGTERM/SIGINT to persist state before exit. (~30m)
+- ✅ **Watchlist state persistence**: Crash-safe persistence with fsync + backup (commit 529e89f)
+- ✅ **Graceful shutdown**: Shutdown handler always persists final state (commit 529e89f)
+- ✅ **Health monitoring**: HTTP endpoint + alerting script (commit TBD)
 
 ## Medium ROI
 
@@ -16,11 +17,7 @@ None — ready for deployment.
   - Add "time in status" for pending markets
   - Show reject reason distribution (pie chart)
   - Add league breakdown (esports/NBA/CBB/soccer)
-
-- **Health monitoring**:
-  - Expose health endpoint (HTTP or file-based)
-  - Add alerting for fetch failures, rate limits, resolve failures
-  - Track "time to signal" histogram (from first seen to signaled)
+  - Integrate health metrics (reuse `buildHealthResponse()` from health_server.mjs)
 
 ## Low ROI (Backlog)
 
@@ -54,6 +51,33 @@ If you need to add a new status or change universe rules:
 2. Update `tests/universe_selection.test.mjs` with new invariants
 3. Run all tests (`node --test tests/*.test.mjs`)
 4. Document the change here
+
+### Health Monitoring (2026-02-16)
+
+**HTTP endpoint for external observability:**
+- Endpoint: `GET http://localhost:3210/health`
+- No authentication (local-only, binds to 127.0.0.1)
+- No sensitive data (no watchlist details, tokens, credentials)
+- Response includes: uptime, loop stats, HTTP success rate, staleness, persistence, status counts
+- Alerting script: `scripts/health-check.sh` with configurable thresholds
+- Tests: `tests/health_server.test.mjs` (14 tests)
+- Docs: `HEALTH.md`
+
+**Alert thresholds:**
+- HTTP success rate < 98.5%
+- Stale signaled markets > 0% for >2min
+- Rate limited count > 0
+- Last write age > 10s (2x persistence throttle)
+- Last cycle age > 10s (loop stalled)
+
+**Usage:**
+```bash
+# Manual check
+curl http://localhost:3210/health | jq
+
+# Monitor script
+./scripts/health-check.sh --alert-only || echo "ALERT: Bot unhealthy"
+```
 
 ### Status Lifecycle
 

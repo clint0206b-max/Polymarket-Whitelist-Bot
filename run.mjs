@@ -6,6 +6,7 @@ import { nowMs, sleepMs } from "./src/core/time.js";
 import { readJsonWithFallback, writeJsonAtomic, resolvePath } from "./src/core/state_store.js";
 import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, reconcileIndex } from "./src/core/journal.mjs";
 import { DirtyTracker, detectChanges } from "./src/core/dirty_tracker.mjs";
+import { startHealthServer } from "./src/runtime/health_server.mjs";
 
 import { execSync } from "node:child_process";
 
@@ -108,6 +109,21 @@ const stopAfterMs = Number(process.env.STOP_AFTER_MS || 60000); // Phase 0: run 
   } else {
     console.log(`[RECONCILE] open_index in sync (open=${Object.keys(idx.open).length} closed=${Object.keys(idx.closed).length})`);
   }
+}
+
+// --- Start health monitoring HTTP server ---
+let healthServer = null;
+try {
+  const healthPort = Number(cfg?.health?.port || 3210);
+  const healthHost = String(cfg?.health?.host || "127.0.0.1");
+  healthServer = startHealthServer(state, { 
+    port: healthPort, 
+    host: healthHost, 
+    startedMs: started, 
+    buildCommit: BUILD_COMMIT 
+  });
+} catch (e) {
+  console.error(`[HEALTH] Failed to start HTTP server: ${e?.message || e}`);
 }
 
 try {
@@ -351,5 +367,16 @@ try {
   } catch (e) {
     console.error(`[PERSIST] Shutdown write failed: ${e?.message || e}`);
   }
+
+  // Close health server
+  if (healthServer?.server) {
+    try {
+      healthServer.server.close();
+      console.log("[HEALTH] HTTP server closed");
+    } catch (e) {
+      console.error(`[HEALTH] Failed to close server: ${e?.message || e}`);
+    }
+  }
+
   releaseLock(LOCK_PATH);
 }
