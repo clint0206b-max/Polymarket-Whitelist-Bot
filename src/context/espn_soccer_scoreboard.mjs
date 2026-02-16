@@ -332,7 +332,8 @@ export function buildSoccerIndex(games) {
 export function matchMarketToGame(market, games) {
   const slug = String(market?.slug || "").toLowerCase();
   const title = String(market?.title || market?.event_title || "");
-  const startIso = market?.startDateIso || market?.endDateIso || null;
+  // endDateIso is the game date (e.g. "2026-02-16"), startDateIso is the listing date
+  const startIso = market?.endDateIso || market?.startDateIso || null;
 
   const result = {
     matched: false,
@@ -399,18 +400,26 @@ export function matchMarketToGame(market, games) {
 
   const best = candidates[0];
 
-  // Time cross-check (±6h window)
+  // Time cross-check (same calendar day, UTC)
+  // Polymarket endDateIso can be date-only ("2026-02-16") or full ISO.
+  // ESPN startDate is full ISO ("2026-02-16T22:00Z").
+  // Compare calendar days (UTC) instead of ±6h window, because date-only strings
+  // parse to midnight which can cause false mismatches with evening games.
   if (startIso && best.game.startDate) {
     try {
-      const polyTime = new Date(startIso).getTime();
-      const espnTime = new Date(best.game.startDate).getTime();
-      const diffH = Math.abs(polyTime - espnTime) / (1000 * 60 * 60);
-      if (diffH > 6) {
-        result.reasons.push("time_mismatch");
-        return result;
+      const polyDay = new Date(startIso).toISOString().slice(0, 10);
+      const espnDay = new Date(best.game.startDate).toISOString().slice(0, 10);
+      if (polyDay !== espnDay) {
+        // Allow 1-day tolerance for games near midnight UTC (e.g. Americas late evening)
+        const polyMs = new Date(polyDay + "T00:00:00Z").getTime();
+        const espnMs = new Date(espnDay + "T00:00:00Z").getTime();
+        const diffDays = Math.abs(polyMs - espnMs) / (1000 * 60 * 60 * 24);
+        if (diffDays > 1) {
+          result.reasons.push("time_mismatch");
+          return result;
+        }
       }
     } catch {
-      // If date parsing fails, don't block — but note it
       result.reasons.push("time_parse_error");
     }
   }
