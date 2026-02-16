@@ -325,6 +325,10 @@ try {
       state.runtime.last_state_write_ts = now;
       bumpHealthBucket(state, now, "state_write", 1);
 
+      // Prepare state for serialization: exclude non-serializable runtime objects
+      const wsClient = state.runtime?.wsClient;
+      if (wsClient) delete state.runtime.wsClient;
+
       // Size guardrail: warn if state exceeds 1MB (regression detection)
       const stateJson = JSON.stringify(state);
       const stateSizeKB = Math.round(stateJson.length / 1024);
@@ -338,6 +342,10 @@ try {
 
       // Write with atomic tmp+rename + fsync + backup
       writeJsonAtomic(STATE_PATH, state);
+      
+      // Restore wsClient after persist
+      if (wsClient) state.runtime.wsClient = wsClient;
+      
       dirtyTracker.clear(now);
 
       // Debug: log reasons for observability
@@ -362,6 +370,14 @@ try {
     state.runtime.last_state_write_ts = now;
     bumpHealthBucket(state, now, "state_write", 1);
     console.log("[PERSIST] Shutdown: writing final state...");
+    
+    // Exclude non-serializable runtime objects
+    const wsClient = state.runtime?.wsClient;
+    if (wsClient) {
+      delete state.runtime.wsClient;
+      wsClient.close(); // Clean shutdown of WebSocket
+    }
+    
     writeJsonAtomic(STATE_PATH, state);
     console.log("[PERSIST] Shutdown complete");
   } catch (e) {

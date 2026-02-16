@@ -258,6 +258,8 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       other_count: rejectReasons.other_count
     },
 
+    websocket: state?.runtime?.wsClient?.getMetrics() || null,
+
     time_in_status: {
       signaled_top5: timeInStatus.signaled,
       pending_top5: timeInStatus.pending

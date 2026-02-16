@@ -1,5 +1,6 @@
 import { getBook } from "../clob/book_http_client.mjs";
 import { parseAndNormalizeBook } from "../clob/book_parser.mjs";
+import { CLOBWebSocketClient } from "../clob/ws_client.mjs";
 import { is_base_signal_candidate, is_near_signal_margin } from "../strategy/stage1.mjs";
 import { compute_depth_metrics, is_depth_sufficient } from "../strategy/stage2.mjs";
 import { createHttpQueue } from "./http_queue.mjs";
@@ -205,6 +206,14 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   state.runtime = state.runtime || {};
   state.runtime.health = state.runtime.health || {};
   const health = state.runtime.health;
+
+  // Initialize WebSocket client (singleton pattern, lazy connect)
+  if (!state.runtime.wsClient) {
+    state.runtime.wsClient = new CLOBWebSocketClient(cfg);
+    // Don't call connect() here - let it connect on first subscribe() call
+    console.log("[WS] Client initialized (lazy mode)");
+  }
+  const wsClient = state.runtime.wsClient;
 
   // Eval tick observability
   health.last_eval_tick_ts = now;
@@ -1293,92 +1302,139 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       continue;
     }
 
-    // Reason A: need usable price (fetch both YES and NO token books for complementary pricing)
+    // Dynamic subscription: subscribe to YES/NO tokens via WebSocket
     const noToken = m.tokens.no_token_id;
+    const tokensToSubscribe = [yesToken];
+    if (noToken) tokensToSubscribe.push(noToken);
+    wsClient.subscribe(tokensToSubscribe);
+
+    // Reason A: need usable price (WS primary, HTTP fallback)
+    // Try WebSocket first (real-time, zero HTTP overhead)
+    const wsMaxStaleSec = 10; // Consider WS price stale if >10s old
+    let bestAskFromSource = null;
+    let bestBidFromSource = null;
+    let priceSource = null;
+
+    const wsYes = wsClient.getPrice(yesToken);
+    const wsNo = noToken ? wsClient.getPrice(noToken) : null;
     
-    const respYes = await queue.enqueue(() => getBook(yesToken, cfg), { reason: "price" });
-    const respNo = noToken ? await queue.enqueue(() => getBook(noToken, cfg), { reason: "price" }) : { ok: false };
-    
-    if (!respYes.ok && !respNo.ok) {
-      // health
-      if (respYes.http_status === 429 || respYes.error_code === "http_429") {
-        health.rate_limited_count = (health.rate_limited_count || 0) + 1;
-        health.last_rate_limited_ts = now;
+    const wsYesFresh = wsYes && ((tNow - wsYes.lastUpdate) < wsMaxStaleSec * 1000);
+    const wsNoFresh = wsNo && ((tNow - wsNo.lastUpdate) < wsMaxStaleSec * 1000);
+
+    // WS as primary source: use if YES token has fresh data
+    // (NO token is optional for complementary pricing)
+    if (wsYesFresh) {
+      if (wsNoFresh) {
+        // Both tokens fresh: use complementary pricing
+        bestAskFromSource = Math.min(wsYes.bestAsk, 1 - wsNo.bestBid);
+        bestBidFromSource = Math.max(wsYes.bestBid, 1 - wsNo.bestAsk);
+        priceSource = "ws_both";
+        bumpBucket("health", "price_source_ws_both", 1);
+      } else {
+        // Only YES fresh: use YES prices directly
+        bestAskFromSource = wsYes.bestAsk;
+        bestBidFromSource = wsYes.bestBid;
+        priceSource = "ws_yes_only";
+        bumpBucket("health", "price_source_ws_yes", 1);
       }
-      health.http_fallback_fail_count = (health.http_fallback_fail_count || 0) + 1;
-      health.reject_counts_last_cycle.http_fallback_failed = (health.reject_counts_last_cycle.http_fallback_failed || 0) + 1;
-      bumpBucket("reject", "http_fallback_failed", 1);
-      bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed`, 1);
-
-      // breakdown (observability)
-      const r = "http_fail";
-      health.http_fallback_fail_by_reason_last_cycle[r] = (health.http_fallback_fail_by_reason_last_cycle[r] || 0) + 1;
-      bumpBucket("reject", `http_fallback_failed:${r}`, 1);
-      bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed:${r}`, 1);
-
-      m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
-      recordPendingConfirmFail("fail_http_fallback_failed");
-      continue;
+    } else {
+      // WS stale or missing: fallback to HTTP
+      priceSource = "http_fallback";
+      bumpBucket("health", "price_source_http_fallback", 1);
     }
 
-    health.http_fallback_success_count = (health.http_fallback_success_count || 0) + 1;
-
-    // Parse both books
-    const parsedYes = respYes.ok ? parseAndNormalizeBook(respYes.rawBook, cfg, health) : { ok: false, reason: "no_yes_book" };
-    const parsedNo = respNo.ok ? parseAndNormalizeBook(respNo.rawBook, cfg, health) : { ok: false, reason: "no_no_book" };
-
-    if (!parsedYes.ok && !parsedNo.ok) {
-      health.http_fallback_fail_count = (health.http_fallback_fail_count || 0) + 1;
-      health.reject_counts_last_cycle.http_fallback_failed = (health.reject_counts_last_cycle.http_fallback_failed || 0) + 1;
-      bumpBucket("reject", "http_fallback_failed", 1);
-      bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed`, 1);
-
-      // breakdown (observability)
-      const r = String(parsedYes.reason || "book_not_usable");
-      health.http_fallback_fail_by_reason_last_cycle[r] = (health.http_fallback_fail_by_reason_last_cycle[r] || 0) + 1;
-      bumpBucket("reject", `http_fallback_failed:${r}`, 1);
-      bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed:${r}`, 1);
-
-      m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
-      recordPendingConfirmFail("fail_http_fallback_failed");
-      continue;
-    }
-
-    // Construct best ask/bid with complementary pricing logic
-    // For binary markets: YES price + NO price = 1.00
-    // yes_best_ask = min(yes_book.asks[0], 1 - no_book.bids[0])  ← cheapest way to buy YES
-    // yes_best_bid = max(yes_book.bids[0], 1 - no_book.asks[0])  ← best way to sell YES
+    // HTTP fallback if WS didn't provide usable prices
+    let respYes = { ok: false };
+    let respNo = { ok: false };
     
-    const yesBookAsk = parsedYes.ok ? parsedYes.book.bestAsk : null;
-    const yesBookBid = parsedYes.ok ? parsedYes.book.bestBid : null;
-    const noBookBid = parsedNo.ok ? parsedNo.book.bestBid : null;
-    const noBookAsk = parsedNo.ok ? parsedNo.book.bestAsk : null;
+    if (priceSource === "http_fallback") {
+      respYes = await queue.enqueue(() => getBook(yesToken, cfg), { reason: "price" });
+      respNo = noToken ? await queue.enqueue(() => getBook(noToken, cfg), { reason: "price" }) : { ok: false };
+    }
+    
+    // Process HTTP fallback if used
+    let bestAsk = bestAskFromSource;
+    let bestBid = bestBidFromSource;
+    let parsedYes = { ok: false };
 
-    // Synthetic prices from NO book (complement)
-    const yesSyntheticAsk = noBookBid != null ? (1 - noBookBid) : null;
-    const yesSyntheticBid = noBookAsk != null ? (1 - noBookAsk) : null;
+    if (priceSource === "http_fallback") {
+      if (!respYes.ok && !respNo.ok) {
+        // HTTP failed
+        if (respYes.http_status === 429 || respYes.error_code === "http_429") {
+          health.rate_limited_count = (health.rate_limited_count || 0) + 1;
+          health.last_rate_limited_ts = now;
+        }
+        health.http_fallback_fail_count = (health.http_fallback_fail_count || 0) + 1;
+        health.reject_counts_last_cycle.http_fallback_failed = (health.reject_counts_last_cycle.http_fallback_failed || 0) + 1;
+        bumpBucket("reject", "http_fallback_failed", 1);
+        bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed`, 1);
 
-    // Choose best prices (min for ask, max for bid)
-    let bestAsk = null;
-    if (yesBookAsk != null && yesSyntheticAsk != null) {
-      bestAsk = Math.min(yesBookAsk, yesSyntheticAsk);
+        const r = "http_fail";
+        health.http_fallback_fail_by_reason_last_cycle[r] = (health.http_fallback_fail_by_reason_last_cycle[r] || 0) + 1;
+        bumpBucket("reject", `http_fallback_failed:${r}`, 1);
+        bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed:${r}`, 1);
+
+        m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
+        recordPendingConfirmFail("fail_http_fallback_failed");
+        continue;
+      }
+
+      health.http_fallback_success_count = (health.http_fallback_success_count || 0) + 1;
+
+      // Parse both books
+      parsedYes = respYes.ok ? parseAndNormalizeBook(respYes.rawBook, cfg, health) : { ok: false, reason: "no_yes_book" };
+      const parsedNo = respNo.ok ? parseAndNormalizeBook(respNo.rawBook, cfg, health) : { ok: false, reason: "no_no_book" };
+
+      if (!parsedYes.ok && !parsedNo.ok) {
+        health.http_fallback_fail_count = (health.http_fallback_fail_count || 0) + 1;
+        health.reject_counts_last_cycle.http_fallback_failed = (health.reject_counts_last_cycle.http_fallback_failed || 0) + 1;
+        bumpBucket("reject", "http_fallback_failed", 1);
+        bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed`, 1);
+
+        const r = String(parsedYes.reason || "book_not_usable");
+        health.http_fallback_fail_by_reason_last_cycle[r] = (health.http_fallback_fail_by_reason_last_cycle[r] || 0) + 1;
+        bumpBucket("reject", `http_fallback_failed:${r}`, 1);
+        bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed:${r}`, 1);
+
+        m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
+        recordPendingConfirmFail("fail_http_fallback_failed");
+        continue;
+      }
+
+      // Construct best ask/bid with complementary pricing logic (HTTP path)
+      const yesBookAsk = parsedYes.ok ? parsedYes.book.bestAsk : null;
+      const yesBookBid = parsedYes.ok ? parsedYes.book.bestBid : null;
+      const noBookBid = parsedNo.ok ? parsedNo.book.bestBid : null;
+      const noBookAsk = parsedNo.ok ? parsedNo.book.bestAsk : null;
+
+      // Synthetic prices from NO book (complement)
+      const yesSyntheticAsk = noBookBid != null ? (1 - noBookBid) : null;
+      const yesSyntheticBid = noBookAsk != null ? (1 - noBookAsk) : null;
+
+      // Choose best prices (min for ask, max for bid)
+      if (yesBookAsk != null && yesSyntheticAsk != null) {
+        bestAsk = Math.min(yesBookAsk, yesSyntheticAsk);
+      } else {
+        bestAsk = yesBookAsk ?? yesSyntheticAsk;
+      }
+
+      if (yesBookBid != null && yesSyntheticBid != null) {
+        bestBid = Math.max(yesBookBid, yesSyntheticBid);
+      } else {
+        bestBid = yesBookBid ?? yesSyntheticBid;
+      }
+
+      // Observability: log when synthetic prices are used
+      if (bestAsk != null && yesBookAsk == null && yesSyntheticAsk != null) {
+        bumpBucket("health", "price_synthetic_ask_used", 1);
+      }
+      if (bestBid != null && yesBookBid == null && yesSyntheticBid != null) {
+        bumpBucket("health", "price_synthetic_bid_used", 1);
+      }
     } else {
-      bestAsk = yesBookAsk ?? yesSyntheticAsk;
-    }
-
-    let bestBid = null;
-    if (yesBookBid != null && yesSyntheticBid != null) {
-      bestBid = Math.max(yesBookBid, yesSyntheticBid);
-    } else {
-      bestBid = yesBookBid ?? yesSyntheticBid;
-    }
-
-    // Observability: log when synthetic prices are used (sanity check)
-    if (bestAsk != null && yesBookAsk == null && yesSyntheticAsk != null) {
-      bumpBucket("health", "price_synthetic_ask_used", 1);
-    }
-    if (bestBid != null && yesBookBid == null && yesSyntheticBid != null) {
-      bumpBucket("health", "price_synthetic_bid_used", 1);
+      // WS path: prices already computed, need parsedYes for depth checks later
+      // Create a mock parsedYes with empty book (depth will come from HTTP if needed)
+      parsedYes = { ok: true, book: { bids: [], asks: [], bestBid, bestAsk } };
     }
 
     // Quote usability gate (v1 strict): need BOTH bestAsk + bestBid to compute spread and evaluate Stage 1.
@@ -1581,6 +1637,21 @@ export async function loopEvalHttpOnly(state, cfg, now) {
             bumpBucket("health", "cooldown_active_while_hot", 1);
           }
         }
+      }
+    }
+
+    // Lazy HTTP fetch for depth if WS was used (WS only provides best bid/ask, not full book)
+    if (priceSource !== "http_fallback" && parsedYes.book.bids.length === 0 && parsedYes.book.asks.length === 0) {
+      // WS was used, but we need full book for depth check → HTTP fetch now
+      const respYesDepth = await queue.enqueue(() => getBook(yesToken, cfg), { reason: "depth" });
+      if (respYesDepth.ok) {
+        const parsedDepth = parseAndNormalizeBook(respYesDepth.rawBook, cfg, health);
+        if (parsedDepth.ok) {
+          parsedYes.book = parsedDepth.book;
+          bumpBucket("health", "depth_http_fetch_after_ws", 1);
+        }
+      } else {
+        bumpBucket("health", "depth_http_fetch_failed", 1);
       }
     }
 
