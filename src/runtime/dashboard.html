@@ -38,6 +38,7 @@
     <div class="flex items-center gap-4">
       <h1 class="text-lg font-bold text-white">⚡ Polymarket Bot</h1>
       <span id="runner-badge" class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 mono">prod</span>
+      <span id="trading-mode" class="text-xs px-2 py-0.5 rounded-full mono">paper</span>
       <span id="build" class="text-xs text-slate-500 mono"></span>
     </div>
     <div class="flex items-center gap-4">
@@ -319,6 +320,18 @@
       if (h.is_shadow) {
         $('runner-badge').className = 'text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 mono';
       }
+      // Trading mode badge
+      const tb = h.trade_bridge || {};
+      const tMode = tb.mode || 'paper';
+      const tmEl = $('trading-mode');
+      tmEl.textContent = tb.paused ? `${tMode} (PAUSED)` : tMode;
+      const tmColors = {
+        paper: 'bg-slate-500/20 text-slate-400',
+        shadow_live: 'bg-yellow-500/20 text-yellow-400',
+        live: 'bg-emerald-500/20 text-emerald-400',
+      };
+      tmEl.className = 'text-xs px-2 py-0.5 rounded-full mono ' + (tb.paused ? 'bg-red-500/20 text-red-400' : (tmColors[tMode] || tmColors.paper));
+
       $('build').textContent = h.build_commit || '';
       $('uptime').textContent = 'up ' + ago((h.uptime_seconds || 0) * 1000);
 

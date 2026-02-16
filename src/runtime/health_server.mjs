@@ -393,7 +393,9 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
     time_in_status: {
       signaled_top5: timeInStatus.signaled,
       pending_top5: timeInStatus.pending
-    }
+    },
+
+    trade_bridge: state?.runtime?.trade_bridge || { mode: "paper", paused: false },
   };
 }
 
