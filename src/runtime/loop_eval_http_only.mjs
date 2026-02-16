@@ -333,7 +333,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   // Cumulative reject counts (never reset, survives across cycles)
   if (!health.reject_counts_cumulative) health.reject_counts_cumulative = {};
   function setReject(m, reason, extra) {
-    m.last_reject = { reason, ts: tNow, ...extra };
+    m.last_reject = { reason, ts: Date.now(), ...extra };
     health.reject_counts_cumulative[reason] = (health.reject_counts_cumulative[reason] || 0) + 1;
   }
 
