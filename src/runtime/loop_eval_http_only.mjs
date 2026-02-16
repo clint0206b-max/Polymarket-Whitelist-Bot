@@ -2381,6 +2381,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         reject_reason: rejectReason,
         context_entry_evaluated: ctxEvaluated,
         context_entry_allowed: ctxAllowed,
+        yes_best_bid: lp.yes_best_bid ?? null,
+        entry_threshold: Number(cfg?.strategy?.min_prob || 0.93),
       });
     }
 

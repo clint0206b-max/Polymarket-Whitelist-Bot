@@ -898,6 +898,15 @@ printOpportunity("Esports", state?.runtime?.esports_opportunity);
       const evReasons = s.top_event_miss_reasons.map(r => `${r.reason}:${r.events}ev`).join(", ");
       console.log(`    missed:${s.missed} events → ${evReasons}`);
     }
+    // Capture analysis
+    if (s.capture && s.capture.markets_crossed_threshold > 0) {
+      console.log(`    capture: ${s.capture.markets_entered}/${s.capture.markets_crossed_threshold} crossed threshold (${s.capture.capture_rate})`);
+      if (s.capture.missed_opportunities?.length) {
+        for (const mo of s.capture.missed_opportunities.slice(0, 3)) {
+          console.log(`      ✗ ${mo.slug.slice(0,45)} | max_bid=${mo.max_bid.toFixed(3)} | reason=${mo.dominant_reject}`);
+        }
+      }
+    }
   }
 }
 

@@ -79,6 +79,8 @@ function getEvent(state, dateKey, league, eventId) {
       reject_reasons: {},
       // Market slugs seen (for dedup)
       market_slugs: [],
+      // Price tracking per market slug: { slug: { max_bid, max_bid_ts, first_cross_ts, first_cross_price } }
+      market_prices: {},
     };
   }
   return state[dateKey][league][eventId];
@@ -104,6 +106,8 @@ export function recordMarketTick(state, dateKey, info) {
     reject_reason = null,
     context_entry_evaluated = false,
     context_entry_allowed = false,
+    yes_best_bid = null,
+    entry_threshold = 0.93,
   } = info;
 
   if (!league || !event_id) return;
@@ -129,6 +133,26 @@ export function recordMarketTick(state, dateKey, info) {
   // Reject reasons (increment)
   if (reject_reason) {
     ev.reject_reasons[reject_reason] = (ev.reject_reasons[reject_reason] || 0) + 1;
+  }
+
+  // Price tracking per market slug
+  if (slug && yes_best_bid != null && Number.isFinite(yes_best_bid)) {
+    if (!ev.market_prices) ev.market_prices = {};
+    const mp = ev.market_prices[slug] || { max_bid: 0, max_bid_ts: null, first_cross_ts: null, first_cross_price: null };
+    const now = Date.now();
+    
+    if (yes_best_bid > mp.max_bid) {
+      mp.max_bid = yes_best_bid;
+      mp.max_bid_ts = now;
+    }
+    
+    // Track first time bid crosses entry threshold
+    if (yes_best_bid >= entry_threshold && !mp.first_cross_ts) {
+      mp.first_cross_ts = now;
+      mp.first_cross_price = yes_best_bid;
+    }
+    
+    ev.market_prices[slug] = mp;
   }
 }
 
@@ -184,9 +208,48 @@ export function getSummary(state, dateKey, league) {
     .slice(0, 5)
     .map(([reason, events]) => ({ reason, events }));
 
+  // Capture analysis: how many markets crossed the entry threshold?
+  let markets_crossed_threshold = 0;
+  let markets_crossed_and_entered = 0;
+  let markets_crossed_not_entered = 0;
+  const missed_opportunities = []; // markets that crossed but we didn't enter
+  
+  for (const ev of entries) {
+    const prices = ev.market_prices || {};
+    for (const [slug, mp] of Object.entries(prices)) {
+      if (mp.first_cross_ts) {
+        markets_crossed_threshold++;
+        if (ev.had_signal) {
+          markets_crossed_and_entered++;
+        } else {
+          markets_crossed_not_entered++;
+          // Find dominant reject reason for this event
+          const reasons = Object.entries(ev.reject_reasons || {});
+          reasons.sort((a, b) => b[1] - a[1]);
+          missed_opportunities.push({
+            slug,
+            max_bid: mp.max_bid,
+            first_cross_price: mp.first_cross_price,
+            dominant_reject: reasons[0]?.[0] || "unknown",
+          });
+        }
+      }
+    }
+  }
+
   return {
     total, with_quote, with_two_sided, with_tradeable, with_signal,
     with_context_entry, with_context_allowed,
-    missed, top_miss_reasons, top_event_miss_reasons
+    missed, top_miss_reasons, top_event_miss_reasons,
+    // Capture metrics
+    capture: {
+      markets_crossed_threshold,
+      markets_entered: markets_crossed_and_entered,
+      markets_missed: markets_crossed_not_entered,
+      capture_rate: markets_crossed_threshold > 0 
+        ? (markets_crossed_and_entered / markets_crossed_threshold * 100).toFixed(1) + "%" 
+        : "n/a",
+      missed_opportunities: missed_opportunities.slice(0, 10), // Top 10
+    }
   };
 }
