@@ -82,7 +82,8 @@ polymarket-watchlist-v1/
 │   ├── daily_events.json      # Daily event utilization (keyed by date → league → event_id)
 │   ├── journal/
 │   │   ├── signals.jsonl      # Append-only: signal_open + signal_close entries
-│   │   └── open_index.json    # { open: { id: {...} }, closed: { id: {...} } }
+│   │   ├── open_index.json    # { open: { id: {...} }, closed: { id: {...} } }
+│   │   └── context_snapshots.jsonl  # Win prob snapshots for ALL price levels (0.80-0.98)
 │   ├── watchlist.lock         # PID-based lock (prevents concurrent runs)
 │   └── runner.pid             # PID of nohup background process
 │
@@ -317,4 +318,19 @@ git push
 - **Mac sleep** will kill the nohup process. No watchdog/restart mechanism yet.
 
 ---
-*Last updated: 2026-02-15 (commit a798f34)*
+## Context Snapshots (win_prob validation)
+
+File: `state/journal/context_snapshots.jsonl`
+
+Captures win_prob + ask/bid for in-game markets at ALL price levels for model calibration:
+- **Conditions**: game "in" state, minutes_left ≤ 8, ask ∈ [0.80, 0.98]
+- **Throttle**: max 1 snapshot per market per 30 seconds
+- **Purpose**: validate win_prob calibration AND detect mispricing at lower ask levels
+- **Future analysis**: join with resolution outcomes → "when win_prob said 0.96 and ask was 0.88, did the team win?"
+
+```json
+{ "ts": ..., "league": "cbb", "slug": "...", "ask": 0.88, "bid": 0.86, "win_prob": 0.96,
+  "ev_edge": 0.08, "margin_for_yes": 12, "minutes_left": 3.5, "period": 2 }
+```
+
+*Last updated: 2026-02-15 (commit 583af5e+)*

@@ -7,6 +7,7 @@ import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWi
 import { fetchEspnNbaScoreboardForDate, deriveNbaContextForMarket } from "../context/espn_nba_scoreboard.mjs";
 import { estimateWinProb, checkContextEntryGate } from "../strategy/win_prob_table.mjs";
 import { loadDailyEvents, saveDailyEvents, recordMarketTick } from "../metrics/daily_events.mjs";
+import { appendJsonl } from "../core/journal.mjs";
 
 function ensure(obj, k, v) { if (obj[k] === undefined) obj[k] = v; }
 
@@ -1127,6 +1128,45 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         source: "http"
       };
       if (!prevTs || prevTs !== now) bumpBucket("health", "quote_update", 1);
+    }
+
+    // --- Context snapshot for win_prob validation (throttled) ---
+    // Captures ask/bid/win_prob for in-game markets across ALL price levels (0.80-0.98)
+    // for post-hoc model calibration and mispricing analysis.
+    {
+      const ce = m.context_entry;
+      const ctx = m.context;
+      const ctxState = ctx?.state;
+      const minutesLeft = ctx?.minutes_left;
+      const wp = ce?.win_prob;
+
+      // Conditions: in-game, has win_prob, minutes_left <= 8, ask in [0.80, 0.98]
+      if (ctxState === "in" && wp != null && minutesLeft != null && minutesLeft <= 8 &&
+          bestAsk >= 0.80 && bestAsk <= 0.98) {
+        // Throttle: max 1 snapshot per market per 30s
+        const lastSnap = Number(m._last_ctx_snapshot_ts || 0);
+        if (!lastSnap || (tNow - lastSnap) >= 30000) {
+          m._last_ctx_snapshot_ts = tNow;
+          appendJsonl("state/journal/context_snapshots.jsonl", {
+            ts: tNow,
+            league: m.league,
+            event_id: m.event_id || m.event_slug || null,
+            slug: m.slug,
+            yes_outcome_name: ce.yes_outcome_name ?? null,
+            ask: bestAsk,
+            bid: bestBid,
+            spread: Number((bestAsk - bestBid).toFixed(4)),
+            win_prob: wp,
+            ev_edge: Number((wp - bestAsk).toFixed(4)),
+            margin_for_yes: ce.margin_for_yes ?? null,
+            minutes_left: minutesLeft,
+            period: ctx.period ?? null,
+            schema_version: 2,
+          });
+          bumpBucket("health", "context_snapshot_written", 1);
+          bumpBucket("health", `context_snapshot_written:${m.league}`, 1);
+        }
+      }
     }
 
     // Stage 1 evaluated counter (only when quote complete and we actually run Stage 1)
