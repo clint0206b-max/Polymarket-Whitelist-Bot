@@ -158,16 +158,39 @@ function computeLeagueBreakdown(state) {
  * @returns {object} - { top5: Array, other_count: number }
  */
 function computeRejectReasons(state) {
-  const health = state?.runtime?.health || {};
-  const rejectCounts = health.reject_counts_last_cycle || {};
+  // Count last_reject reasons from all watching markets (current state, always accurate)
+  const wl = state?.watchlist || {};
+  const counts = {};
+  for (const m of Object.values(wl)) {
+    if (!m || m.status !== "watching") continue;
+    const reason = m.last_reject?.reason;
+    if (reason) counts[reason] = (counts[reason] || 0) + 1;
+  }
 
-  const entries = Object.entries(rejectCounts).map(([reason, count]) => ({ reason, count }));
+  const entries = Object.entries(counts).map(([reason, count]) => ({ reason, count }));
   entries.sort((a, b) => b.count - a.count);
 
   const top5 = entries.slice(0, 5);
   const otherCount = entries.slice(5).reduce((sum, e) => sum + e.count, 0);
 
   return { top5, other_count: otherCount };
+}
+
+/**
+ * Compute league summary with status breakdown for daily utilization panel.
+ */
+function computeLeagueSummary(state) {
+  const wl = state?.watchlist || {};
+  const leagues = {};
+  for (const m of Object.values(wl)) {
+    if (!m) continue;
+    const l = m.league || "unknown";
+    if (!leagues[l]) leagues[l] = { total: 0, watching: 0, signaled: 0, pending_signal: 0, expired: 0 };
+    leagues[l].total++;
+    const s = m.status || "unknown";
+    if (leagues[l][s] !== undefined) leagues[l][s]++;
+  }
+  return leagues;
 }
 
 /**
@@ -298,6 +321,7 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       by_league: leagueBreakdown
     },
 
+    league_summary: computeLeagueSummary(state),
     reject_reasons: {
       top5: rejectReasons.top5,
       other_count: rejectReasons.other_count

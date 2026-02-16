@@ -47,30 +47,27 @@ describe("buildHealthResponse", () => {
     assert.equal(response.watchlist.by_league.esports, 1);
   });
 
-  it("includes reject reasons top5 + other", () => {
-    const state = {
-      watchlist: {},
-      runtime: {
-        health: {
-          reject_counts_last_cycle: {
-            reason1: 100,
-            reason2: 80,
-            reason3: 50,
-            reason4: 30,
-            reason5: 20,
-            reason6: 10,
-            reason7: 5
-          }
-        }
-      }
-    };
+  it("includes reject reasons top5 + other from watching markets", () => {
+    const wl = {};
+    // Create 7 watching markets with different reject reasons (some repeated)
+    for (let i = 0; i < 5; i++) wl[`m${i}`] = { status: "watching", last_reject: { reason: "reason_a" } };
+    for (let i = 5; i < 8; i++) wl[`m${i}`] = { status: "watching", last_reject: { reason: "reason_b" } };
+    for (let i = 8; i < 10; i++) wl[`m${i}`] = { status: "watching", last_reject: { reason: "reason_c" } };
+    wl.m10 = { status: "watching", last_reject: { reason: "reason_d" } };
+    wl.m11 = { status: "watching", last_reject: { reason: "reason_e" } };
+    wl.m12 = { status: "watching", last_reject: { reason: "reason_f" } };
+    wl.m13 = { status: "watching", last_reject: { reason: "reason_g" } };
+    // signaled markets should NOT count
+    wl.m14 = { status: "signaled", last_reject: { reason: "reason_a" } };
+
+    const state = { watchlist: wl, runtime: { health: {} } };
     const response = buildHealthResponse(state, Date.now(), "test");
 
     assert.ok(response.reject_reasons.top5);
     assert.equal(response.reject_reasons.top5.length, 5);
-    assert.equal(response.reject_reasons.top5[0].reason, "reason1");
-    assert.equal(response.reject_reasons.top5[0].count, 100);
-    assert.equal(response.reject_reasons.other_count, 15); // reason6 + reason7
+    assert.equal(response.reject_reasons.top5[0].reason, "reason_a");
+    assert.equal(response.reject_reasons.top5[0].count, 5);
+    assert.equal(response.reject_reasons.other_count, 2); // reason_f + reason_g
   });
 
   it("includes time in status for signaled and pending", () => {

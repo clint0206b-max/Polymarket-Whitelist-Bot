@@ -383,18 +383,19 @@
       }
 
       // Daily utilization
-      const bl = h.watchlist?.by_league;
+      const bl = h.league_summary;
       if (bl && Object.keys(bl).length) {
         $('daily-empty').classList.add('hidden');
-        const bs = h.watchlist?.by_status || {};
-        $('daily-util').innerHTML = Object.entries(bl).map(([league, count]) => {
-          const total = typeof count === 'object' ? (count.total || 0) : (count || 0);
-          const sig = typeof count === 'object' ? (count.signaled || 0) : 0;
-          const pct = total > 0 ? Math.round((sig / total) * 100) : 0;
+        $('daily-util').innerHTML = Object.entries(bl).sort((a,b) => b[1].total - a[1].total).map(([league, d]) => {
+          const total = d.total || 0;
+          const sig = d.signaled || 0;
+          const pending = d.pending_signal || 0;
+          const active = sig + pending;
+          const pct = total > 0 ? Math.round((active / total) * 100) : 0;
           return `<div>
             <div class="flex justify-between text-xs mb-0.5">
               ${leagueBadge(league)}
-              <span class="text-slate-400">${sig}/${total} (${pct}%)</span>
+              <span class="text-slate-400">${sig}sig ${pending ? pending+'pend ' : ''}/ ${total} (${pct}%)</span>
             </div>
             <div class="bg-slate-700 rounded-full h-1.5 overflow-hidden">
               <div class="h-full bg-blue-500 rounded-full" style="width:${Math.max(pct, 2)}%"></div>
