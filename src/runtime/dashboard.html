@@ -211,6 +211,12 @@
           <div id="daily-empty" class="text-slate-500 text-xs">No data yet</div>
         </div>
 
+        <!-- Execution Status -->
+        <div id="exec-panel" class="bg-card rounded-lg border border-slate-700 p-4">
+          <h3 class="font-semibold text-white text-sm mb-3">💸 Execution Status</h3>
+          <div id="exec-content" class="space-y-2 text-xs"></div>
+        </div>
+
         <!-- Config -->
         <div class="bg-card rounded-lg border border-slate-700 p-4">
           <h3 class="font-semibold text-white text-sm mb-3">⚙️ Config</h3>
@@ -550,22 +556,69 @@
       ).join('');
     }
 
+    function renderExecutions(data) {
+      const el = $('exec-content');
+      if (!data) { el.innerHTML = '<span class="text-slate-500">No data</span>'; return; }
+
+      const mode = data.mode || 'paper';
+      const paused = data.paused;
+      const bal = data.balance_usd;
+      const s = data.summary || {};
+      const div = data.divergence || {};
+
+      const modeColors = { paper: 'bg-slate-600', shadow_live: 'bg-yellow-600', live: 'bg-emerald-600' };
+      const modeBadge = `<span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${modeColors[mode] || 'bg-slate-600'}">${mode}</span>`;
+      const pauseBadge = paused ? ' <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-red-600">PAUSED</span>' : '';
+
+      // Divergence alert
+      const divOk = div.ok !== false;
+      const divAlert = divOk ? '' :
+        `<div class="bg-red-900/40 border border-red-700 rounded p-2 text-red-300">
+          ⚠️ Divergence: ${div.signals_without_buy || 0} signals without buy, ${div.signals_without_sell || 0} signals without sell
+        </div>`;
+
+      const balStr = bal != null ? `$${Number(bal).toFixed(2)}` : '—';
+
+      let rows = '';
+      if (mode === 'paper') {
+        rows = '<div class="text-slate-500 italic">Paper mode — no real trades</div>';
+      } else if (s.total_today === 0 && !paused) {
+        rows = '<div class="text-slate-500 italic">No executions today</div>';
+      } else {
+        rows = `<div class="grid grid-cols-2 gap-x-4 gap-y-1">
+          <span class="text-slate-400">Buys</span><span class="text-emerald-400 mono">${s.buys_today || 0}</span>
+          <span class="text-slate-400">Sells</span><span class="text-blue-400 mono">${s.sells_today || 0}</span>
+          <span class="text-slate-400">Failed</span><span class="${(s.failed_today || 0) > 0 ? 'text-red-400' : 'text-slate-300'} mono">${s.failed_today || 0}</span>
+        </div>`;
+      }
+
+      el.innerHTML = `
+        <div class="flex items-center gap-2 mb-2">${modeBadge}${pauseBadge}
+          <span class="text-slate-400 ml-auto">Balance: <span class="text-white mono">${balStr}</span></span>
+        </div>
+        ${divAlert}
+        ${rows}
+      `;
+    }
+
     // Fetch all endpoints
     async function fetchAll() {
       try {
-        const [health, trades, positions, watchlist, config] = await Promise.all([
+        const [health, trades, positions, watchlist, config, executions] = await Promise.all([
           fetch('/api/health').then(r => r.json()).catch(() => null),
           fetch('/api/trades').then(r => r.json()).catch(() => null),
           fetch('/api/positions').then(r => r.json()).catch(() => null),
           fetch('/api/watchlist').then(r => r.json()).catch(() => null),
           fetch('/api/config').then(r => r.json()).catch(() => null),
+          fetch('/api/executions').then(r => r.json()).catch(() => null),
         ]);
-        allData = { health, trades, positions, watchlist, config };
+        allData = { health, trades, positions, watchlist, config, executions };
         renderHealth(health);
         renderTrades(trades);
         renderPositions(positions);
         renderWatchlist(watchlist);
         renderConfig(config);
+        renderExecutions(executions);
         $('last-update').textContent = 'Updated: ' + new Date().toLocaleTimeString();
         $('data-age').textContent = 'Next refresh in 5s';
       } catch (e) {

@@ -891,6 +891,65 @@ export function startHealthServer(state, opts = {}) {
     };
   }
 
+  // API: build executions response (real trades from trade bridge)
+  function buildExecutionsResponse(state) {
+    const execPath = statePath("journal", "executions.jsonl");
+    const { items: execs } = cachedReadJsonl(execPath, 5000);
+    const bridge = state?.runtime?.trade_bridge || {};
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStart = new Date(todayStr + "T00:00:00Z").getTime();
+
+    const todayExecs = execs.filter(e => (e.ts || 0) >= todayStart);
+    const buys = todayExecs.filter(e => e.side === "buy" && e.status === "filled");
+    const sells = todayExecs.filter(e => e.side === "sell" && e.status === "filled");
+    const failed = todayExecs.filter(e => e.status === "error" || e.status === "failed");
+
+    // Cross-check: signals today vs executions today
+    const signalsPath = statePath("journal", "signals.jsonl");
+    const { items: signals } = cachedReadJsonl(signalsPath, 5000);
+    const signalOpensToday = signals.filter(s => s.type === "signal_open" && (s.ts_open || 0) >= todayStart);
+    const signalClosesToday = signals.filter(s => s.type === "signal_close" && (s.ts_close || 0) >= todayStart);
+
+    const executedBuyIds = new Set(buys.map(e => e.trade_id));
+    const executedSellIds = new Set(sells.map(e => e.trade_id));
+
+    // Divergences: signals without matching execution
+    const unexecutedOpens = signalOpensToday.filter(s => {
+      const tid = `buy:${s.signal_id}`;
+      return !executedBuyIds.has(tid);
+    });
+    const unexecutedCloses = signalClosesToday.filter(s => {
+      const tid = `sell:${s.signal_id}`;
+      return !executedSellIds.has(tid);
+    });
+
+    return {
+      as_of_ts: Date.now(),
+      mode: bridge.mode || "paper",
+      paused: bridge.paused || false,
+      balance_usd: bridge.balance_usd ?? null,
+      summary: {
+        buys_today: buys.length,
+        sells_today: sells.length,
+        failed_today: failed.length,
+        total_today: todayExecs.length,
+      },
+      divergence: {
+        signals_without_buy: unexecutedOpens.length,
+        signals_without_sell: unexecutedCloses.length,
+        ok: unexecutedOpens.length === 0 && unexecutedCloses.length === 0,
+      },
+      items: todayExecs.slice(-50).map(e => ({
+        trade_id: e.trade_id, side: e.side, status: e.status,
+        slug: e.slug, title: e.title || null,
+        shares: e.shares, price: e.avg_price || e.price,
+        cost_usd: e.cost_usd, ts: e.ts,
+        error: e.error || null,
+      })),
+    };
+  }
+
   // API: build watchlist response
   function buildWatchlistResponse() {
     const wl = state?.watchlist || {};
@@ -941,6 +1000,7 @@ export function startHealthServer(state, opts = {}) {
       if (req.url === "/api/positions") { json(buildPositionsResponse()); return; }
       if (req.url === "/api/watchlist") { json(buildWatchlistResponse()); return; }
       if (req.url === "/api/config") { json(buildConfigResponse()); return; }
+      if (req.url === "/api/executions") { json(buildExecutionsResponse(state)); return; }
 
       // Dashboard (new)
       if (req.url === "/" || req.url === "/dashboard") {
