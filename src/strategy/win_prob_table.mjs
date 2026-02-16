@@ -17,6 +17,7 @@
 const SPORT_PARAMS = {
   nba:  { sigma: 18, total_minutes: 48 },
   cbb:  { sigma: 19, total_minutes: 40 },
+  // Soccer uses Poisson model (not normal CDF) — see soccerWinProb()
 };
 
 // Rational approximation of the standard normal CDF (Abramowitz & Stegun 26.2.17)
@@ -72,6 +73,149 @@ export function estimateWinProb(marginForYes, minutesLeft, sport) {
   return normalCdf(z);
 }
 
+// ────────────────────────────────────────────────────────────────
+// Soccer: Poisson-based win probability
+// ────────────────────────────────────────────────────────────────
+// Goals are rare discrete events (~1.35/team/90min in top 5 leagues).
+// We model "P(rival scores >= margin goals in remaining minutes)"
+// using a Poisson distribution.
+//
+// λ = GOAL_RATE × minutesLeft × (INJURY_TIME_MULTIPLIER if min ≤ 5)
+//
+// P(catch up) = Σ Poisson(k, λ) for k = margin to margin + MAX_K_OFFSET
+// win_prob = 1 - P(catch up)
+
+const SOCCER_PARAMS = {
+  goal_rate: 0.015,               // goals/minute/team (~1.35 per 90 min, top 5 leagues avg)
+  injury_time_multiplier: 1.5,    // last 5 min have ~50% more goals (pressure, fatigue, desperation)
+  injury_time_threshold_min: 5,   // apply multiplier when minutes_left <= this
+  max_k_offset: 6,               // sum Poisson PMF from margin to margin + this
+};
+
+function logFactorial(n) {
+  if (n <= 1) return 0;
+  let sum = 0;
+  for (let i = 2; i <= n; i++) sum += Math.log(i);
+  return sum;
+}
+
+function poissonPmf(k, lambda) {
+  if (lambda <= 0) return k === 0 ? 1 : 0;
+  return Math.exp(-lambda + k * Math.log(lambda) - logFactorial(k));
+}
+
+/**
+ * Estimate win probability for soccer using Poisson model.
+ *
+ * @param {number} marginForYes  - goal difference (positive = yes team ahead)
+ * @param {number} minutesLeft   - minutes remaining (0 = injury time, negative = not valid)
+ * @returns {number|null}        - win probability [0, 1], or null if inputs invalid
+ */
+export function soccerWinProb(marginForYes, minutesLeft) {
+  if (typeof marginForYes !== "number" || !Number.isFinite(marginForYes)) return null;
+  if (typeof minutesLeft !== "number" || !Number.isFinite(minutesLeft)) return null;
+  if (minutesLeft < 0) return null;
+
+  // Not ahead → null (we don't trade losing/tied positions)
+  if (marginForYes <= 0) return null;
+
+  const p = SOCCER_PARAMS;
+
+  // λ = expected goals for the rival in remaining time
+  let lambda = p.goal_rate * Math.max(minutesLeft, 0.5); // clamp to avoid 0
+  if (minutesLeft <= p.injury_time_threshold_min) {
+    lambda *= p.injury_time_multiplier;
+  }
+
+  // P(rival scores >= margin goals) = catch-up probability
+  // In a "Team A wins" market, both draw and loss = lose the bet
+  // So rival needs to score >= margin goals to ruin us
+  let pCatchUp = 0;
+  const kMax = marginForYes + p.max_k_offset;
+  for (let k = marginForYes; k <= kMax; k++) {
+    pCatchUp += poissonPmf(k, lambda);
+  }
+
+  return 1 - pCatchUp;
+}
+
+/**
+ * Check soccer context entry gate (BLOQUEANTE, not tag-only).
+ *
+ * @param {object} opts
+ * @param {number|null} opts.period           - 1 or 2 (half)
+ * @param {number|null} opts.minutesLeft      - minutes remaining in game
+ * @param {number|null} opts.marginForYes     - goal difference from yes_outcome perspective
+ * @param {string}      opts.confidence       - "high" or "low" (minutes_left reliability)
+ * @param {number}      opts.lastScoreChangeAgoSec - seconds since last score change (for stability)
+ * @param {number}      opts.minWinProbMargin2 - win_prob threshold for margin=2 (default 0.97)
+ * @param {number}      opts.minWinProbMargin3 - win_prob threshold for margin>=3 (default 0.95)
+ * @param {number}      opts.maxMinutesMargin2 - max minutes for margin=2 entry (default 15)
+ * @param {number}      opts.maxMinutesMargin3 - max minutes for margin>=3 entry (default 20)
+ * @param {number}      opts.scoreChangeCooldownSec - cooldown after score change (default 90)
+ * @returns {{ allowed: boolean, reason: string, win_prob: number|null }}
+ */
+export function checkSoccerEntryGate(opts) {
+  const {
+    period,
+    minutesLeft,
+    marginForYes,
+    confidence = "low",
+    lastScoreChangeAgoSec = null,
+    minWinProbMargin2 = 0.97,
+    minWinProbMargin3 = 0.95,
+    maxMinutesMargin2 = 15,
+    maxMinutesMargin3 = 20,
+    scoreChangeCooldownSec = 90,
+  } = opts || {};
+
+  // No context available
+  if (period == null || minutesLeft == null || marginForYes == null) {
+    return { allowed: false, reason: "no_context", win_prob: null };
+  }
+
+  // Confidence check — must be "high" for soccer
+  if (confidence !== "high") {
+    return { allowed: false, reason: "low_confidence", win_prob: null };
+  }
+
+  // Must be in 2nd half (period 2). Block halftime, extra time (period > 2), 1st half.
+  if (period !== 2) {
+    return { allowed: false, reason: period === 1 ? "first_half" : "extra_time_or_invalid", win_prob: null };
+  }
+
+  // Margin >= 2 mandatory (1-goal leads are too risky)
+  if (marginForYes < 2) {
+    return { allowed: false, reason: "margin_too_small", win_prob: null };
+  }
+
+  // Score change cooldown (VAR / goal reversal protection)
+  if (lastScoreChangeAgoSec != null && lastScoreChangeAgoSec < scoreChangeCooldownSec) {
+    return { allowed: false, reason: "score_change_cooldown", win_prob: null };
+  }
+
+  // Time windows by margin
+  const isMargin2 = marginForYes === 2;
+  const maxMin = isMargin2 ? maxMinutesMargin2 : maxMinutesMargin3;
+  const minWP = isMargin2 ? minWinProbMargin2 : minWinProbMargin3;
+
+  if (minutesLeft > maxMin) {
+    return { allowed: false, reason: "too_much_time_left", win_prob: null };
+  }
+
+  // Win probability (Poisson)
+  const wp = soccerWinProb(marginForYes, minutesLeft);
+  if (wp == null) {
+    return { allowed: false, reason: "winprob_calc_error", win_prob: null };
+  }
+
+  if (wp < minWP) {
+    return { allowed: false, reason: "winprob_below_threshold", win_prob: wp };
+  }
+
+  return { allowed: true, reason: "pass", win_prob: wp };
+}
+
 /**
  * Check whether a market passes the context entry gate.
  *
@@ -110,6 +254,9 @@ export function checkContextEntryGate(opts) {
   } else if (s === "nba") {
     // Must be in Q4 or OT
     if (period < 4) return { allowed: false, reason: "not_final_period", win_prob: null };
+  } else if (s === "soccer") {
+    // Delegate to soccer-specific gate (BLOQUEANTE)
+    return checkSoccerEntryGate(opts);
   } else {
     return { allowed: false, reason: "unknown_sport", win_prob: null };
   }

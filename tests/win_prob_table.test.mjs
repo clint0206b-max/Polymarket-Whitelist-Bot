@@ -215,10 +215,19 @@ describe("checkContextEntryGate", () => {
   // --- unknown_sport ---
   it("unknown sport → unknown_sport", () => {
     const r = checkContextEntryGate({
-      sport: "soccer", period: 2, minutesLeft: 3, marginForYes: 10
+      sport: "curling", period: 2, minutesLeft: 3, marginForYes: 10
     });
     assert.equal(r.allowed, false);
     assert.equal(r.reason, "unknown_sport");
+  });
+
+  it("soccer delegates to checkSoccerEntryGate", () => {
+    // Soccer gate requires confidence:"high" — without it, blocks with low_confidence
+    const r = checkContextEntryGate({
+      sport: "soccer", period: 2, minutesLeft: 3, marginForYes: 2
+    });
+    assert.equal(r.allowed, false);
+    assert.equal(r.reason, "low_confidence"); // proves delegation happened
   });
 
   // --- minMargin edge case ---
