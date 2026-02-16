@@ -1415,6 +1415,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           const { appendJsonl } = await import("../core/journal.mjs");
           appendJsonl("state/journal/signals.jsonl", {
             type: "signal_timeout",
+            runner_id: process.env.SHADOW_ID || "prod",
             ts: tNow,
             slug: String(m.slug || ""),
             conditionId: String(m.conditionId || ""),

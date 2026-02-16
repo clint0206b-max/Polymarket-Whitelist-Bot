@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { loadConfig } from "./src/core/config.js";
+import { loadConfig, resolveRunner } from "./src/core/config.js";
 import { acquireLock, releaseLock } from "./src/core/lockfile.js";
 import { nowMs, sleepMs } from "./src/core/time.js";
 import { readJsonWithFallback, writeJsonAtomic, resolvePath } from "./src/core/state_store.js";
@@ -8,9 +8,62 @@ import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, reconcileIndex } fr
 import { DirtyTracker, detectChanges } from "./src/core/dirty_tracker.mjs";
 import { startHealthServer } from "./src/runtime/health_server.mjs";
 
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
+const runner = resolveRunner();
 const cfg = loadConfig();
+const RUNNER_ID = runner.id;
+const IS_SHADOW = !runner.isProd;
+
+// === SHADOW BOOT VALIDATION ===
+if (IS_SHADOW) {
+  // Ensure state dir exists
+  const stateDir = resolvePath("state", ".").replace(/\/+$/, ""); // resolves to state-{id}/
+  if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
+  
+  // Ensure journal subdirs exist
+  for (const sub of ["journal", "monitor"]) {
+    const p = resolvePath("state", sub);
+    if (!existsSync(p)) mkdirSync(p, { recursive: true });
+  }
+
+  // Kill switch: shadow must NEVER have real trading enabled
+  if (cfg.trading?.enabled || cfg.trading?.live) {
+    console.error(`[SHADOW:${RUNNER_ID}] FATAL: Shadow runner has live trading enabled. Refusing to start.`);
+    process.exit(1);
+  }
+
+  // Verify state isolation: state dir must NOT be "state/"
+  if (stateDir.endsWith("/state") || stateDir === "state") {
+    console.error(`[SHADOW:${RUNNER_ID}] FATAL: State dir resolves to prod directory. Refusing to start.`);
+    process.exit(1);
+  }
+
+  // Port guard: shadow must use a different port than prod default
+  const shadowPort = Number(cfg?.health?.port || 3210);
+  if (shadowPort === 3210) {
+    // Auto-assign based on shadow ID hash
+    const hash = createHash("md5").update(RUNNER_ID).digest();
+    cfg.health = cfg.health || {};
+    cfg.health.port = 3211 + (hash[0] % 50); // 3211-3260 range
+    console.log(`[SHADOW:${RUNNER_ID}] Auto-assigned health port: ${cfg.health.port}`);
+  }
+}
+
+// Save config snapshot at boot (for reproducibility)
+{
+  const configSnapshot = { ...cfg, _boot_ts: Date.now(), _runner: RUNNER_ID, _pid: process.pid };
+  const snapshotPath = resolvePath("state", "config-snapshot.json");
+  try { writeFileSync(snapshotPath, JSON.stringify(configSnapshot, null, 2) + "\n"); } catch {}
+}
+
+// Log effective paths at boot
+console.log(`[BOOT] runner=${RUNNER_ID} shadow=${IS_SHADOW} pid=${process.pid}`);
+console.log(`[BOOT] state_dir=${resolvePath("state", ".")} lock=${resolvePath("state", "watchlist.lock")}`);
+console.log(`[BOOT] health_port=${cfg?.health?.port || 3210}`);
+
 const BUILD_COMMIT = (() => { try { return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim(); } catch { return "unknown"; } })();
 const SCHEMA_VERSION = 2;
 
@@ -247,6 +300,7 @@ try {
 
             appendJsonl("state/journal/signals.jsonl", {
               type: "signal_open",
+              runner_id: RUNNER_ID,
               schema_version: SCHEMA_VERSION,
               build_commit: BUILD_COMMIT,
               signal_id: signalId,

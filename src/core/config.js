@@ -19,15 +19,45 @@ function deepMerge(a, b) {
   return out;
 }
 
+/**
+ * Resolve the runner identity from SHADOW_ID env var.
+ * Returns { id, isProd, stateDir, shadowConfigPath }
+ */
+export function resolveRunner() {
+  const shadowId = process.env.SHADOW_ID || "";
+  const isProd = !shadowId;
+  const id = shadowId || "prod";
+  const stateDir = isProd ? "state" : `state-${shadowId}`;
+  const shadowConfigPath = isProd ? null : resolve(process.cwd(), stateDir, "config-override.json");
+  return { id, isProd, stateDir, shadowConfigPath };
+}
+
 export function loadConfig() {
+  const runner = resolveRunner();
   const defaultsPath = resolve(process.cwd(), "src", "config", "defaults.json");
   const localPath = resolve(process.cwd(), "src", "config", "local.json");
 
   const defaults = readJsonFile(defaultsPath);
   const local = existsSync(localPath) ? readJsonFile(localPath) : {};
 
+  // Shadow config overlay (if shadow runner)
+  let shadowOverlay = {};
+  if (runner.shadowConfigPath && existsSync(runner.shadowConfigPath)) {
+    shadowOverlay = readJsonFile(runner.shadowConfigPath);
+  }
+
   // Env overrides (minimal v0): allow JSON blob override
   const envJson = process.env.WATCHLIST_CONFIG_JSON ? JSON.parse(process.env.WATCHLIST_CONFIG_JSON) : {};
 
-  return deepMerge(deepMerge(defaults, local), envJson);
+  // Precedence: defaults → local (prod) → shadow overlay → env vars
+  const merged = deepMerge(deepMerge(deepMerge(defaults, local), shadowOverlay), envJson);
+
+  // Inject runner metadata
+  merged._runner = {
+    id: runner.id,
+    isProd: runner.isProd,
+    stateDir: runner.stateDir,
+  };
+
+  return merged;
 }

@@ -117,6 +117,14 @@ export function readJsonWithFallback(path) {
   return null;
 }
 
+/**
+ * Resolve a path relative to CWD.
+ * If parts[0] is "state" and SHADOW_ID is set, redirects to state-{SHADOW_ID}/.
+ */
 export function resolvePath(...parts) {
+  const shadowId = process.env.SHADOW_ID || "";
+  if (shadowId && parts.length > 0 && parts[0] === "state") {
+    return resolve(process.cwd(), `state-${shadowId}`, ...parts.slice(1));
+  }
   return resolve(process.cwd(), ...parts);
 }

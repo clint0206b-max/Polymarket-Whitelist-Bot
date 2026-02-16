@@ -173,6 +173,7 @@ export async function loopResolutionTracker(cfg, state) {
 
     appendJsonl("state/journal/signals.jsonl", {
       type: "signal_close",
+      runner_id: process.env.SHADOW_ID || "prod",
       signal_id: id,
       slug: row.slug,
       title: row.title || null,
@@ -272,6 +273,7 @@ export async function loopResolutionTracker(cfg, state) {
       
       appendJsonl(journalPath, {
         type: "timeout_resolved",
+        runner_id: process.env.SHADOW_ID || "prod",
         slug: to.slug,
         timeout_ts: to.ts,
         resolve_ts: nowMs(),

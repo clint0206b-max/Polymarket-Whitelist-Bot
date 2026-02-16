@@ -213,10 +213,13 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
 
   return {
     status: "ok", // always "ok" if server is responding
+    runner_id: process.env.SHADOW_ID || "prod",
+    is_shadow: !!process.env.SHADOW_ID,
     timestamp: now,
     uptime_seconds: uptimeSeconds,
     pid: process.pid,
     build_commit: buildCommit || "unknown",
+    state_dir: process.env.SHADOW_ID ? `state-${process.env.SHADOW_ID}` : "state",
 
     loop: {
       runs: state?.runtime?.runs || 0,

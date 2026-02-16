@@ -10,3 +10,5 @@ state/*.lock
 
 # Local overrides
 src/config/local.json
+state-*/
+!state-*/.keep
