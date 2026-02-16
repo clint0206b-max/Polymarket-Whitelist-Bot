@@ -1129,6 +1129,11 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     for (const id of (gammaSnapshot.prev_ids || [])) gammaLiveSet.add(id);
   }
 
+  // WS activity threshold: if no WS update for this token in 10min, Gamma "live" is stale
+  const WS_ACTIVITY_THRESHOLD_MS = Number(cfg?.purge?.ws_activity_threshold_ms || 600000);
+  // Check WS global health: if WS is down, don't penalize individual markets
+  const wsHealthy = wsClient?.isConnected === true;
+
   function isGammaLiveProtected(m) {
     if (!gammaSnapshotFresh) return false;
     if (!gammaLiveSet.has(m.conditionId)) return false;
@@ -1136,6 +1141,26 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     // Safety cap: don't protect forever if market is stuck degraded
     const expiredAt = m.expired_at_ts || 0;
     if (expiredAt && (now - expiredAt) > GAMMA_LIVE_MAX_PROTECT_MS) return false;
+    
+    // WS activity check: if WS is healthy but token has no recent activity, market is dead
+    // If WS is unhealthy or token is missing, stay conservative (keep protection)
+    if (wsHealthy) {
+      const yesToken = m.tokens?.yes_token_id;
+      if (yesToken) {
+        const wsPrice = wsClient.getPrice(yesToken);
+        if (wsPrice) {
+          const wsAge = now - wsPrice.lastUpdate;
+          if (wsAge > WS_ACTIVITY_THRESHOLD_MS) {
+            bumpBucket("health", "gamma_live_unprotected_ws_stale", 1);
+            return false; // WS healthy, token exists, but no activity → dead market
+          }
+        }
+        // wsPrice null = never received WS data for this token
+        // Could be newly subscribed — stay conservative, keep protection
+      }
+      // No token = data incomplete — stay conservative, keep protection
+    }
+    // WS unhealthy = can't judge — stay conservative, keep protection
     
     return true;
   }
