@@ -761,7 +761,8 @@ export function startHealthServer(state, opts = {}) {
           ? signals.find(s => s.type === "signal_open" && s.signal_id === c.signal_id)
           : null;
         return {
-          slug: c.slug, league: c.league || openMatch?.league || "",
+          slug: c.slug, title: c.title || openMatch?.title || null,
+          league: c.league || openMatch?.league || "",
           ts_open: c.ts_open || openMatch?.ts_open || null,
           ts_close: c.ts_close,
           entry_price: c.entry_price || openMatch?.entry_price || null,
