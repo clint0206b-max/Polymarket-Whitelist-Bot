@@ -224,6 +224,79 @@ export async function loopResolutionTracker(cfg, state) {
   // Save if anything changed (resolved OR price updated)
   if (resolvedCount || priceUpdated) saveOpenIndex(idx);
 
+  // === Resolve pending timeouts (counterfactual analysis) ===
+  // Check signal_timeout entries that don't have an outcome yet.
+  // This tells us: "would we have won or lost if we had entered?"
+  try {
+    const fs = await import("node:fs");
+    const journalPath = "state/journal/signals.jsonl";
+    const lines = fs.readFileSync(journalPath, "utf8").trim().split("\n").filter(Boolean);
+    const entries = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    
+    // Find unresolved timeouts (no matching timeout_resolved)
+    const resolvedTimeoutSlugs = new Set(
+      entries.filter(e => e.type === "timeout_resolved").map(e => e.slug + "|" + e.timeout_ts)
+    );
+    const unresolvedTimeouts = entries.filter(e => 
+      e.type === "signal_timeout" && 
+      !resolvedTimeoutSlugs.has(e.slug + "|" + e.ts)
+    );
+
+    // Limit checks per cycle to avoid hammering Gamma
+    const maxTimeoutChecks = 3;
+    let timeoutResolved = 0;
+    
+    for (const to of unresolvedTimeouts.slice(0, maxTimeoutChecks)) {
+      const r = await fetchGammaMarketBySlug(to.slug, 5000);
+      if (!r.ok) continue;
+      
+      const det = detectResolved(r.market);
+      if (!det.resolved) continue; // Not resolved yet, check next cycle
+      
+      // Determine counterfactual: would we have won?
+      // We would have bought the YES side at entry_bid_at_pending price
+      // Winner is the outcome with price → 1.0
+      // We need to know which outcome we would have bet on
+      // In our strategy, we always buy the high-probability side (the one at ≥0.93)
+      // So if winner matches the high-prob outcome, we would have won
+      const wouldHaveWon = det.maxPrice >= 0.995; // Terminal = the side we'd have bought won
+      // More precisely: we'd buy YES at entry_bid ≥ 0.93, so if YES resolves to 1.0, we win
+      // det.winner is the outcome that resolved to ~1.0
+      // Without knowing which outcome we'd have picked, approximate:
+      // If entry_bid was ≥ 0.93, we were buying the favorite → favorite won if maxPrice ≥ 0.995
+      
+      const entryBid = to.entry_bid_at_pending || 0;
+      const hypotheticalPnl = wouldHaveWon 
+        ? (10 / entryBid) * (1 - entryBid) // WIN: shares * (1 - entry)
+        : -(10); // LOSS: lost entire notional
+      
+      appendJsonl(journalPath, {
+        type: "timeout_resolved",
+        slug: to.slug,
+        timeout_ts: to.ts,
+        resolve_ts: nowMs(),
+        league: to.league,
+        market_kind: to.market_kind,
+        entry_bid_at_pending: entryBid,
+        bid_at_timeout: to.bid_at_timeout,
+        timeout_reason: to.timeout_reason,
+        resolved_winner: det.winner,
+        resolve_method: det.method,
+        would_have_won: wouldHaveWon,
+        hypothetical_pnl_usd: Number(hypotheticalPnl.toFixed(2)),
+        verdict: wouldHaveWon ? "filter_cost_us" : "filter_saved_us",
+      });
+      
+      const emoji = wouldHaveWon ? "❌" : "✅";
+      console.log(`[TIMEOUT_RESOLVED] ${emoji} ${to.slug} | ${wouldHaveWon ? "WOULD HAVE WON" : "SAVED US"} | hyp_pnl=$${hypotheticalPnl.toFixed(2)} | reason=${to.timeout_reason}`);
+      timeoutResolved++;
+    }
+    
+    if (timeoutResolved > 0) {
+      health.timeout_resolved_count = (health.timeout_resolved_count || 0) + timeoutResolved;
+    }
+  } catch {}
+
   // Persist counters
   health.paper_resolution_markets_checked = (health.paper_resolution_markets_checked || 0) + toCheck.length;
   health.paper_resolution_resolved_count = (health.paper_resolution_resolved_count || 0) + resolvedCount;

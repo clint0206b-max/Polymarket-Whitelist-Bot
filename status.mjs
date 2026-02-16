@@ -876,6 +876,23 @@ printOpportunity("Esports", state?.runtime?.esports_opportunity);
     const lastCheckTs = h.paper_resolution_last_check_ts || null;
     const lastAge = lastCheckTs ? Math.round((now - lastCheckTs) / 1000) : null;
     console.log(`  resolution_tracker: ${pollCycles} polls | last_check: ${lastAge != null ? lastAge + "s ago" : "never"}`);
+
+    // Timeout analysis (6s confirmation window effectiveness)
+    const timeouts = signalEntries.filter(e => e.type === "signal_timeout");
+    const timeoutResolved = signalEntries.filter(e => e.type === "timeout_resolved");
+    if (timeouts.length > 0 || timeoutResolved.length > 0) {
+      const savedUs = timeoutResolved.filter(e => e.verdict === "filter_saved_us");
+      const costUs = timeoutResolved.filter(e => e.verdict === "filter_cost_us");
+      const savedPnl = savedUs.reduce((s, e) => s + Math.abs(e.hypothetical_pnl_usd || 0), 0);
+      const costPnl = costUs.reduce((s, e) => s + (e.hypothetical_pnl_usd || 0), 0);
+      console.log(`\n=== Pending Timeout Analysis (6s window) ===`);
+      console.log(`  timeouts_total: ${timeouts.length} | resolved: ${timeoutResolved.length} | pending: ${timeouts.length - timeoutResolved.length}`);
+      if (timeoutResolved.length > 0) {
+        console.log(`  filter_saved_us: ${savedUs.length} (avoided $${savedPnl.toFixed(2)} loss)`);
+        console.log(`  filter_cost_us: ${costUs.length} (missed $${costPnl.toFixed(2)} profit)`);
+        console.log(`  verdict: ${savedUs.length >= costUs.length ? "6s window is NET POSITIVE ✅" : "6s window is NET NEGATIVE ❌ — consider reducing"}`);
+      }
+    }
   }
 }
 
