@@ -365,6 +365,31 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       };
     })(),
 
+    depth_cache: (() => {
+      const dc = state?.runtime?._depthCache;
+      if (!dc) return null;
+      const entries = Object.values(dc);
+      const ages = entries.map(e => now - (e.ts || 0)).filter(a => a >= 0);
+      const healthBuckets = state?.runtime?.health?.buckets?.health;
+      let hits = 0, misses = 0, busts = 0;
+      if (healthBuckets?.buckets) {
+        for (const b of healthBuckets.buckets) {
+          if (b.counts) {
+            hits += b.counts.depth_cache_hit || 0;
+            misses += b.counts.depth_http_fetch_after_ws || 0;
+            busts += b.counts.depth_cache_bust_price_move || 0;
+          }
+        }
+      }
+      const total = hits + misses;
+      return {
+        size: entries.length,
+        hit_rate: total > 0 ? Math.round((hits / total) * 1000) / 10 : null,
+        hits, misses, busts,
+        avg_age_ms: ages.length > 0 ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : null,
+      };
+    })(),
+
     time_in_status: {
       signaled_top5: timeInStatus.signaled,
       pending_top5: timeInStatus.pending

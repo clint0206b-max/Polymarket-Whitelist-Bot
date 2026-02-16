@@ -1816,14 +1816,23 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     }
 
     // Lazy HTTP fetch for depth if WS was used (WS only provides best bid/ask, not full book)
-    // Uses TTL cache to avoid refetching every cycle
+    // Uses TTL cache with dynamic TTL by status + cache bust on significant price moves
     if (priceSource !== "http_fallback" && parsedYes.book.bids.length === 0 && parsedYes.book.asks.length === 0) {
-      const depthCacheTtl = Number(cfg?.polling?.depth_cache_ttl_seconds || 15) * 1000;
+      // Dynamic TTL: shorter for pending/signaled (decision-critical), longer for watching
+      const baseTtl = Number(cfg?.polling?.depth_cache_ttl_seconds || 15) * 1000;
+      const depthCacheTtl = (m.status === "pending_signal" || m.status === "signaled") ? Math.min(baseTtl, 5000) : baseTtl;
+
       if (!state.runtime._depthCache) state.runtime._depthCache = {};
       const cached = state.runtime._depthCache[yesToken];
       const cacheAge = cached ? (tNow - cached.ts) : Infinity;
 
-      if (cached && cacheAge < depthCacheTtl) {
+      // Cache bust: invalidate if price moved significantly since cache was written
+      const priceMoved = cached && bestBid != null && cached.bid_at_cache != null
+        ? Math.abs(bestBid - cached.bid_at_cache) >= 0.03
+        : false;
+      if (priceMoved) bumpBucket("health", "depth_cache_bust_price_move", 1);
+
+      if (cached && cacheAge < depthCacheTtl && !priceMoved) {
         // Use cached depth
         parsedYes.book = cached.book;
         bumpBucket("health", "depth_cache_hit", 1);
@@ -1834,7 +1843,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           const parsedDepth = parseAndNormalizeBook(respYesDepth.rawBook, cfg, health);
           if (parsedDepth.ok) {
             parsedYes.book = parsedDepth.book;
-            state.runtime._depthCache[yesToken] = { book: parsedDepth.book, ts: tNow };
+            state.runtime._depthCache[yesToken] = { book: parsedDepth.book, ts: tNow, bid_at_cache: bestBid };
             bumpBucket("health", "depth_http_fetch_after_ws", 1);
           }
         } else {
