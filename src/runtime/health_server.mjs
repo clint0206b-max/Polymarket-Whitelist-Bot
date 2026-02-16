@@ -286,9 +286,7 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       
       // Validate that cache_miss + stale = total http_fallback
       const sumBreakdown = httpCacheMiss + httpStale;
-      if (sumBreakdown !== httpUsed && httpUsed > 0) {
-        console.warn(`[HEALTH] HTTP fallback mismatch: cache_miss=${httpCacheMiss} + stale=${httpStale} = ${sumBreakdown} != total=${httpUsed}`);
-      }
+      const httpFallbackMismatch = (sumBreakdown !== httpUsed && httpUsed > 0);
       
       return {
         ...wsMetrics,
@@ -297,6 +295,7 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
           http_fallback_fetches: httpUsed,
           http_fallback_cache_miss: httpCacheMiss,
           http_fallback_stale: httpStale,
+          http_fallback_mismatch: httpFallbackMismatch,
           ws_ratio_percent: wsRatio
         }
       };

@@ -1310,7 +1310,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     // Reason A: need usable price (WS primary, HTTP fallback)
     // Try WebSocket first (real-time, zero HTTP overhead)
-    const wsMaxStaleSec = 10; // Consider WS price stale if >10s old
+    const wsMaxStaleSec = Number(cfg?.ws?.max_stale_seconds ?? 10);
     let bestAskFromSource = null;
     let bestBidFromSource = null;
     let priceSource = null;

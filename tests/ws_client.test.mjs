@@ -177,4 +177,16 @@ describe("CLOBWebSocketClient", () => {
     assert.strictEqual(client.ws, null);
     assert.strictEqual(client.pingTimer, null);
   });
+
+  test("close sets _closing flag to prevent reconnect", () => {
+    const client = new CLOBWebSocketClient();
+    assert.strictEqual(client._closing, false);
+    
+    client.close();
+    
+    assert.strictEqual(client._closing, true);
+    // scheduleReconnect should be a no-op after close
+    client.scheduleReconnect();
+    assert.strictEqual(client.metrics.reconnects, 0); // Should NOT increment
+  });
 });

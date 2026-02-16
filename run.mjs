@@ -134,7 +134,7 @@ try {
     state.runtime.last_run_ts = now;
 
     // Initialize loop timing buckets
-    const loopTimings = { gamma_ms: 0, eval_ms: 0, persist_ms: 0 };
+    const loopTimings = { gamma_ms: 0, eval_ms: 0, journal_ms: 0, resolution_ms: 0, persist_ms: 0 };
 
     // --- Phase 1: Gamma discovery loop ---
     const lastGamma = Number(state.runtime.last_gamma_fetch_ts || 0);
@@ -188,6 +188,7 @@ try {
       loopTimings.eval_ms = nowMs() - evalStartMs;
 
       // Journal: paper positions for new signals (append-only) + open_index
+      const journalStartMs = nowMs();
       try {
         const curSignals = Array.isArray(state?.runtime?.last_signals) ? state.runtime.last_signals : [];
         const prevSet = new Set(prevSignals.map(s => `${Number(s?.ts || 0)}|${String(s?.slug || "")}`));
@@ -305,8 +306,10 @@ try {
           dirtyTracker.mark(`eval:signals_generated:${newOnes.length}`, true);
         }
       } catch {}
+      loopTimings.journal_ms = nowMs() - journalStartMs;
 
       // Resolve paper positions (cheap: only open signals)
+      const resolutionStartMs = nowMs();
       try {
         const lastRes = Number(state.runtime?.last_resolution_ts || 0);
         const everyResMs = Number(cfg?.paper?.resolution_poll_seconds ?? 60) * 1000;
@@ -315,6 +318,7 @@ try {
           state.runtime.last_resolution_ts = now;
         }
       } catch {}
+      loopTimings.resolution_ms = nowMs() - resolutionStartMs;
 
       state.runtime.last_eval_ts = now;
 
@@ -357,11 +361,13 @@ try {
       // Restore wsClient after persist
       if (wsClient) state.runtime.wsClient = wsClient;
       
+      // Debug: log reasons for observability (BEFORE clear, or reasons are lost)
+      const reasons = dirtyTracker.getReasons();
+      const wasCritical = dirtyTracker.isCritical();
+      
       dirtyTracker.clear(now);
 
-      // Debug: log reasons for observability
-      const reasons = dirtyTracker.getReasons();
-      if (reasons.length > 0 && dirtyTracker.isCritical()) {
+      if (reasons.length > 0 && wasCritical) {
         console.log(`[PERSIST] Critical write: ${reasons.join(", ")}`);
       }
       
@@ -405,13 +411,10 @@ try {
       const externalMB = Math.round(mem.external / 1024 / 1024);
       const marketCount = Object.keys(state.watchlist || {}).length;
       
-      if (loopTotalMs >= 5000) {
-        metrics.very_slow_loops++;
-        console.warn(`[VERY_SLOW_LOOP] ${loopTotalMs}ms | gamma=${loopTimings.gamma_ms}ms eval=${loopTimings.eval_ms}ms persist=${loopTimings.persist_ms}ms | markets=${marketCount} heapUsed=${heapMB}MB heapTotal=${heapTotalMB}MB external=${externalMB}MB`);
-      } else {
-        metrics.slow_loops++;
-        console.warn(`[SLOW_LOOP] ${loopTotalMs}ms | gamma=${loopTimings.gamma_ms}ms eval=${loopTimings.eval_ms}ms persist=${loopTimings.persist_ms}ms | markets=${marketCount} heapUsed=${heapMB}MB heapTotal=${heapTotalMB}MB external=${externalMB}MB`);
-      }
+      const tag = loopTotalMs >= 5000 ? 'VERY_SLOW_LOOP' : 'SLOW_LOOP';
+      if (loopTotalMs >= 5000) metrics.very_slow_loops++;
+      else metrics.slow_loops++;
+      console.warn(`[${tag}] ${loopTotalMs}ms | gamma=${loopTimings.gamma_ms}ms eval=${loopTimings.eval_ms}ms journal=${loopTimings.journal_ms}ms resolution=${loopTimings.resolution_ms}ms persist=${loopTimings.persist_ms}ms | markets=${marketCount} heapUsed=${heapMB}MB heapTotal=${heapTotalMB}MB external=${externalMB}MB`);
     }
 
     if (stopAfterMs > 0 && now - started >= stopAfterMs) {

@@ -17,6 +17,8 @@ export class CLOBWebSocketClient {
     this.isConnected = false;
     this.initialSubscribeSent = false; // Track if initial subscribe was sent
     
+    this._closing = false; // Intentional shutdown flag
+    
     // Metrics
     this.metrics = {
       connects: 0,
@@ -93,9 +95,15 @@ export class CLOBWebSocketClient {
 
       this.ws.on("close", (code, reason) => {
         this.isConnected = false;
+        this.stopPingHeartbeat();
+        
+        if (this._closing) {
+          console.log(`[WS] Closed (shutdown)`);
+          return; // Intentional close — don't reconnect or bump disconnect metrics
+        }
+        
         this.metrics.disconnects++;
         console.log(`[WS] Disconnected (code=${code}, reason=${reason || "none"})`);
-        this.stopPingHeartbeat();
         this.scheduleReconnect();
       });
 
@@ -111,10 +119,13 @@ export class CLOBWebSocketClient {
   }
 
   scheduleReconnect() {
+    if (this._closing) return; // Don't reconnect during shutdown
+    
     this.metrics.reconnects++;
     console.log(`[WS] Reconnecting in ${this.reconnectDelay}ms...`);
     
     setTimeout(() => {
+      if (this._closing) return;
       this.connect();
     }, this.reconnectDelay);
 
@@ -279,6 +290,7 @@ export class CLOBWebSocketClient {
   }
 
   close() {
+    this._closing = true; // Signal intentional shutdown BEFORE closing
     this.stopPingHeartbeat();
     if (this.ws) {
       this.ws.close();
