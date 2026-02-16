@@ -94,6 +94,11 @@
     "fees_roundtrip": 0,
     "enable_gate": false
   },
+  "purge": {
+    "stale_book_minutes": 15,
+    "stale_quote_incomplete_minutes": 10,
+    "stale_tradeability_minutes": 12
+  },
   "context": {
     "enabled": false,
     "entry_rules": {

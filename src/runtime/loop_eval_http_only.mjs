@@ -1122,6 +1122,56 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       m.pending_confirm_fail_last_ts = tNow;
     };
 
+    // === PURGE GATES ===
+    // Purge markets in 'watching' status that have sustained tradeability issues
+    // Rule A: Book stale (15 min) → purge
+    // Rule B: Quote incomplete (10 min) → purge
+    // Rule C: Double condition: spread > max AND depth insufficient (12 min) → purge
+    if (m.status === "watching" && m.purge_gates) {
+      const gates = m.purge_gates;
+      const staleBookMin = Number(cfg?.purge?.stale_book_minutes || 15);
+      const staleQuoteMin = Number(cfg?.purge?.stale_quote_incomplete_minutes || 10);
+      const staleTradeMin = Number(cfg?.purge?.stale_tradeability_minutes || 12);
+
+      const bookStaleSec = gates.last_book_update_ts ? (tNow - gates.last_book_update_ts) / 1000 : null;
+      const quoteStaleSec = gates.first_incomplete_quote_ts ? (tNow - gates.first_incomplete_quote_ts) / 1000 : null;
+      const tradeStaleSec = gates.first_bad_tradeability_ts ? (tNow - gates.first_bad_tradeability_ts) / 1000 : null;
+
+      let purgeReason = null;
+      let purgeDetail = {};
+
+      // Rule A: Book stale
+      if (bookStaleSec != null && bookStaleSec > staleBookMin * 60) {
+        purgeReason = "purge_book_stale";
+        purgeDetail = { stale_minutes: (bookStaleSec / 60).toFixed(1) };
+      }
+      // Rule B: Quote incomplete
+      else if (quoteStaleSec != null && quoteStaleSec > staleQuoteMin * 60) {
+        purgeReason = "purge_quote_incomplete";
+        purgeDetail = { stale_minutes: (quoteStaleSec / 60).toFixed(1) };
+      }
+      // Rule C: Tradeability degraded (both spread and depth fail)
+      else if (tradeStaleSec != null && tradeStaleSec > staleTradeMin * 60) {
+        purgeReason = "purge_tradeability_degraded";
+        purgeDetail = { stale_minutes: (tradeStaleSec / 60).toFixed(1) };
+      }
+
+      if (purgeReason) {
+        m.status = "expired";
+        m.expired_at_ts = tNow;
+        m.expired_reason = purgeReason;
+        m.purge_detail = purgeDetail;
+        bumpBucket("health", purgeReason, 1);
+        bumpBucket("health", `purge:${m.league}:${purgeReason}`, 1);
+        
+        // Log purge event with full diagnostics
+        const lastPrice = m.last_price || {};
+        console.log(`[PURGE] ${purgeReason} | ${m.slug} | ${purgeDetail.stale_minutes}min | spread=${lastPrice.spread?.toFixed(4)} ask=${lastPrice.yes_best_ask?.toFixed(4)} bid=${lastPrice.yes_best_bid?.toFixed(4)} | depth_bid=$${m.liquidity?.exit_depth_usd_bid?.toFixed(0)} depth_ask=$${m.liquidity?.entry_depth_usd_ask?.toFixed(0)}`);
+        
+        continue; // Skip further processing
+      }
+    }
+
     m.tokens = m.tokens || {};
 
     // Esports series guard (tag-only): compute and persist derived context for audit.
@@ -1291,6 +1341,17 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     // Quote usability gate (v1 strict): need BOTH bestAsk + bestBid to compute spread and evaluate Stage 1.
     if (bestAsk == null || bestBid == null) {
+      // Track incomplete quote gate for purge
+      if (!m.purge_gates) {
+        m.purge_gates = {
+          first_incomplete_quote_ts: tNow,
+          first_bad_tradeability_ts: null,
+          last_book_update_ts: tNow
+        };
+      } else if (m.purge_gates.first_incomplete_quote_ts == null) {
+        m.purge_gates.first_incomplete_quote_ts = tNow;
+      }
+
       // primary reject
       health.reject_counts_last_cycle.quote_incomplete_one_sided_book = (health.reject_counts_last_cycle.quote_incomplete_one_sided_book || 0) + 1;
       bumpBucket("reject", "quote_incomplete_one_sided_book", 1);
@@ -1342,6 +1403,21 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     bumpBucket("health", `quote_complete:${m.league}`, 1);
 
     const quote = { probAsk: bestAsk, probBid: bestBid, spread: bestAsk - bestBid };
+
+    // Initialize purge_gates if needed
+    if (!m.purge_gates) {
+      m.purge_gates = {
+        first_incomplete_quote_ts: null,
+        first_bad_tradeability_ts: null,
+        last_book_update_ts: tNow
+      };
+    }
+
+    // Update last_book_update_ts (book was successfully fetched and parsed)
+    m.purge_gates.last_book_update_ts = tNow;
+
+    // Reset incomplete quote gate (quote is complete now)
+    m.purge_gates.first_incomplete_quote_ts = null;
 
     // persist last_price snapshot
     {
@@ -1439,9 +1515,9 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     const maxSpread = Number(cfg?.filters?.max_spread);
 
     const baseRangePass = (quote.probAsk + EPS) >= minProb && (quote.probAsk - EPS) <= maxEntry;
-    const spreadPass = (quote.spread - EPS) <= maxSpread;
+    const spreadPassFunnel = (quote.spread - EPS) <= maxSpread;
     if (baseRangePass) bumpBucket("health", "base_range_pass", 1);
-    if (spreadPass) bumpBucket("health", "spread_pass", 1);
+    if (spreadPassFunnel) bumpBucket("health", "spread_pass", 1);
 
     // per-market Stage 1 observability
     m.stage1 = m.stage1 || {};
@@ -1449,7 +1525,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     // Triggered relaxed hot candidate (observability): ignore base range, require spread+near+depth
     const nearOkForRelaxed = (await Promise.resolve(is_near_signal_margin(quote, cfg)));
-    if (spreadPass && nearOkForRelaxed) {
+    if (spreadPassFunnel && nearOkForRelaxed) {
       const metricsRelax = compute_depth_metrics(parsedYes.book, cfg);
       const depthRelax = is_depth_sufficient(metricsRelax, cfg);
       if (depthRelax.pass) {
@@ -1466,7 +1542,35 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       }
     }
 
+    // Evaluate Stage 2 depth metrics early (before Stage 1 rejects) to track tradeability gate
+    const metrics = compute_depth_metrics(parsedYes.book, cfg);
+    const depth = is_depth_sufficient(metrics, cfg);
+    const depthPass = depth.pass;
+
+    // Evaluate Stage 1 (spread) for tradeability gate tracking
     const base = is_base_signal_candidate(quote, cfg);
+    const spreadPass = base.pass;
+
+    // Track or reset tradeability gate (double condition: !spreadPass && !depthPass)
+    if (!spreadPass && !depthPass) {
+      // Both fail: track first occurrence
+      if (!m.purge_gates) {
+        m.purge_gates = {
+          first_incomplete_quote_ts: null,
+          first_bad_tradeability_ts: tNow,
+          last_book_update_ts: tNow
+        };
+      } else if (m.purge_gates.first_bad_tradeability_ts == null) {
+        m.purge_gates.first_bad_tradeability_ts = tNow;
+      }
+    } else if (spreadPass || depthPass) {
+      // At least one passes: reset gate
+      if (m.purge_gates) {
+        m.purge_gates.first_bad_tradeability_ts = null;
+      }
+    }
+
+    // Stage 1 reject (spread)
     if (!base.pass) {
       health.reject_counts_last_cycle[base.reason] = (health.reject_counts_last_cycle[base.reason] || 0) + 1;
       bumpBucket("reject", base.reason, 1);
@@ -1499,8 +1603,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     bumpBucket("health", "near_margin_pass", 1);
 
-    // Stage 2 metrics from the same book (no extra HTTP)
-    const metrics = compute_depth_metrics(parsedYes.book, cfg);
+    // Persist liquidity metrics (already computed earlier for tradeability gate)
     m.liquidity = {
       entry_depth_usd_ask: metrics.entry_depth_usd_ask,
       exit_depth_usd_bid: metrics.exit_depth_usd_bid,
@@ -1510,7 +1613,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       source: "http"
     };
 
-    const depth = is_depth_sufficient(metrics, cfg);
+    // Stage 2 reject (depth, already evaluated earlier)
     if (!depth.pass) {
       health.reject_counts_last_cycle[depth.reason] = (health.reject_counts_last_cycle[depth.reason] || 0) + 1;
       bumpBucket("reject", depth.reason, 1);
