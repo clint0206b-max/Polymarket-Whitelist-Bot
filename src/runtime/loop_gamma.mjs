@@ -220,6 +220,16 @@ export async function loopGamma(state, cfg, now) {
     seen++;
   }
 
+  // Snapshot of live conditionIds from this Gamma fetch (used by purge gates)
+  // Maintained as rolling cache: keep IDs from last 2 fetches for fault tolerance
+  const prevLive = state.runtime.gamma_live_snapshot || { ts: 0, ids: [], prev_ids: [] };
+  const currentLiveIds = candidates.map(c => c.conditionId).filter(Boolean);
+  state.runtime.gamma_live_snapshot = {
+    ts: now,
+    ids: currentLiveIds,
+    prev_ids: prevLive.ids // Keep previous cycle for tolerance
+  };
+
   const exp = markExpired(state, cfg, now);
   const ev = evictIfNeeded(state, cfg);
 

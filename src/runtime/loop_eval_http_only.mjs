@@ -1111,6 +1111,35 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   const enteredPendingThisTick = new Set();
 
   // Universe A: price updates (watching, pending_signal, signaled)
+  
+  // === GAMMA LIVE PROTECTION ===
+  // Markets that Gamma reports as live should NOT be purged by TTL or gates.
+  // Uses rolling cache (current + previous cycle) for fault tolerance.
+  // Freshness: only trust if snapshot is <90s old (3x gamma_discovery_seconds).
+  // Safety cap: if market has been "live but degraded" for >2h, allow purge anyway.
+  const GAMMA_LIVE_MAX_STALE_MS = 90000; // 90s (3x 30s gamma interval)
+  const GAMMA_LIVE_MAX_PROTECT_MS = 2 * 60 * 60 * 1000; // 2h cap
+  const gammaSnapshot = state.runtime?.gamma_live_snapshot;
+  const gammaSnapshotFresh = gammaSnapshot && (now - gammaSnapshot.ts) < GAMMA_LIVE_MAX_STALE_MS;
+  
+  // Build merged live set (current + previous cycle)
+  const gammaLiveSet = new Set();
+  if (gammaSnapshotFresh) {
+    for (const id of (gammaSnapshot.ids || [])) gammaLiveSet.add(id);
+    for (const id of (gammaSnapshot.prev_ids || [])) gammaLiveSet.add(id);
+  }
+
+  function isGammaLiveProtected(m) {
+    if (!gammaSnapshotFresh) return false;
+    if (!gammaLiveSet.has(m.conditionId)) return false;
+    
+    // Safety cap: don't protect forever if market is stuck degraded
+    const expiredAt = m.expired_at_ts || 0;
+    if (expiredAt && (now - expiredAt) > GAMMA_LIVE_MAX_PROTECT_MS) return false;
+    
+    return true;
+  }
+
   // === PURGE EXPIRED TTL ===
   // For only_live strategy: purge expired/resolved markets older than X hours
   // This keeps the watchlist fresh and prevents accumulation of stale entries
@@ -1140,6 +1169,12 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     const ageHours = (now - ageTs) / (1000 * 60 * 60);
     
     if (ageHours > expiredTtlHours) {
+      // Live event protection: don't TTL-purge if Gamma says it's still live
+      if (isGammaLiveProtected(m)) {
+        bumpBucket("health", "ttl_purge_blocked_live", 1);
+        continue;
+      }
+      
       delete state.watchlist[key];
       expiredPurgedCount++;
       bumpBucket("health", "expired_purged_ttl", 1);
@@ -1268,18 +1303,31 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       }
 
       if (purgeReason) {
-        m.status = "expired";
-        m.expired_at_ts = tNow;
-        m.expired_reason = purgeReason;
-        m.purge_detail = purgeDetail;
-        bumpBucket("health", purgeReason, 1);
-        bumpBucket("health", `purge:${m.league}:${purgeReason}`, 1);
-        
-        // Log purge event with full diagnostics
-        const lastPrice = m.last_price || {};
-        console.log(`[PURGE] ${purgeReason} | ${m.slug} | ${purgeDetail.stale_minutes}min | spread=${lastPrice.spread?.toFixed(4)} ask=${lastPrice.yes_best_ask?.toFixed(4)} bid=${lastPrice.yes_best_bid?.toFixed(4)} | depth_bid=$${m.liquidity?.exit_depth_usd_bid?.toFixed(0)} depth_ask=$${m.liquidity?.entry_depth_usd_ask?.toFixed(0)}`);
-        
-        continue; // Skip further processing
+        // Live event protection: don't expire if Gamma says it's still live
+        if (isGammaLiveProtected(m)) {
+          bumpBucket("health", "purge_blocked_live", 1);
+          bumpBucket("health", `purge_blocked_live:${purgeReason}`, 1);
+          // Reset purge gate timers so we re-evaluate fresh next cycle
+          if (m.purge_gates) {
+            if (purgeReason === "purge_book_stale") m.purge_gates.last_book_update_ts = tNow;
+            if (purgeReason === "purge_quote_incomplete") m.purge_gates.first_incomplete_quote_ts = null;
+            if (purgeReason === "purge_tradeability_degraded") m.purge_gates.first_bad_tradeability_ts = null;
+          }
+          // Don't expire — continue evaluation
+        } else {
+          m.status = "expired";
+          m.expired_at_ts = tNow;
+          m.expired_reason = purgeReason;
+          m.purge_detail = purgeDetail;
+          bumpBucket("health", purgeReason, 1);
+          bumpBucket("health", `purge:${m.league}:${purgeReason}`, 1);
+          
+          // Log purge event with full diagnostics
+          const lastPrice = m.last_price || {};
+          console.log(`[PURGE] ${purgeReason} | ${m.slug} | ${purgeDetail.stale_minutes}min | spread=${lastPrice.spread?.toFixed(4)} ask=${lastPrice.yes_best_ask?.toFixed(4)} bid=${lastPrice.yes_best_bid?.toFixed(4)} | depth_bid=$${m.liquidity?.exit_depth_usd_bid?.toFixed(0)} depth_ask=$${m.liquidity?.entry_depth_usd_ask?.toFixed(0)}`);
+          
+          continue; // Skip further processing
+        }
       }
     }
 
