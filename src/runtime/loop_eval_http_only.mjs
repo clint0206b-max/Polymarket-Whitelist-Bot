@@ -1349,10 +1349,6 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           }
           // Don't expire — continue evaluation
         } else {
-          m.status = "expired";
-          m.expired_at_ts = tNow;
-          m.expired_reason = purgeReason;
-          m.purge_detail = purgeDetail;
           bumpBucket("health", purgeReason, 1);
           bumpBucket("health", `purge:${m.league}:${purgeReason}`, 1);
           
@@ -1360,6 +1356,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           const lastPrice = m.last_price || {};
           console.log(`[PURGE] ${purgeReason} | ${m.slug} | ${purgeDetail.stale_minutes}min | spread=${lastPrice.spread?.toFixed(4)} ask=${lastPrice.yes_best_ask?.toFixed(4)} bid=${lastPrice.yes_best_bid?.toFixed(4)} | depth_bid=$${m.liquidity?.exit_depth_usd_bid?.toFixed(0)} depth_ask=$${m.liquidity?.entry_depth_usd_ask?.toFixed(0)}`);
           
+          // Delete immediately (no point keeping expired markets)
+          delete state.watchlist[m.slug];
           continue; // Skip further processing
         }
       }
@@ -1700,11 +1698,9 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
       // Terminal price check via HTTP (catches markets without WS data)
       if (bestBid >= 0.995 && m.status === "watching") {
-        m.status = "expired";
-        m.expired_at_ts = tNow;
-        m.expired_reason = "terminal_price_http";
         bumpBucket("health", "expired_terminal_http", 1);
-        console.log(`[TERMINAL_HTTP] ${m.slug} | bid=${bestBid.toFixed(3)} → expired`);
+        console.log(`[TERMINAL_HTTP] ${m.slug} | bid=${bestBid.toFixed(3)} → deleted`);
+        delete state.watchlist[m.slug];
         continue;
       }
     }
