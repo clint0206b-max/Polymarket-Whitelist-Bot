@@ -333,7 +333,7 @@ describe("startHealthServer (integration)", () => {
       assert.equal(response.headers.get("content-type"), "text/html");
       let html = await response.text();
       assert.ok(html.includes("<!DOCTYPE html>"));
-      assert.ok(html.includes("Polymarket Watchlist Bot"));
+      assert.ok(html.includes("Polymarket Bot") || html.includes("Polymarket Watchlist Bot"));
 
       // Test /dashboard
       response = await fetch(`http://127.0.0.1:${testPort}/dashboard`);

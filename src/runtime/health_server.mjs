@@ -14,9 +14,50 @@
  */
 
 import { createServer } from "node:http";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
 
 function nowMs() {
   return Date.now();
+}
+
+// --- Simple TTL cache for file reads ---
+const _fileCache = new Map();
+function cachedReadJson(path, ttlMs = 3000) {
+  const cached = _fileCache.get(path);
+  if (cached && (Date.now() - cached.ts) < ttlMs) return cached.data;
+  try {
+    if (!existsSync(path)) return null;
+    const data = JSON.parse(readFileSync(path, "utf8"));
+    _fileCache.set(path, { data, ts: Date.now() });
+    return data;
+  } catch { return null; }
+}
+
+function cachedReadJsonl(path, ttlMs = 3000) {
+  const cached = _fileCache.get(path + ":jsonl");
+  if (cached && (Date.now() - cached.ts) < ttlMs) return cached.data;
+  try {
+    if (!existsSync(path)) return [];
+    const lines = readFileSync(path, "utf8").trim().split("\n").filter(Boolean);
+    const data = [];
+    let parseErrors = 0;
+    for (const l of lines) {
+      try { data.push(JSON.parse(l)); } catch { parseErrors++; }
+    }
+    const result = { items: data, parse_errors: parseErrors };
+    _fileCache.set(path + ":jsonl", { data: result, ts: Date.now() });
+    return result;
+  } catch { return { items: [], parse_errors: 0 }; }
+}
+
+function stateDir() {
+  const sid = process.env.SHADOW_ID;
+  return sid ? `state-${sid}` : "state";
+}
+
+function statePath(...parts) {
+  return resolve(process.cwd(), stateDir(), ...parts);
 }
 
 /**
@@ -612,34 +653,158 @@ export function startHealthServer(state, opts = {}) {
   const startedMs = opts.startedMs || Date.now();
   const buildCommit = opts.buildCommit || "unknown";
 
+  // Load dashboard HTML from file (cached)
+  let _dashboardHtml = null;
+  let _dashboardHtmlTs = 0;
+  function getDashboardHtml() {
+    const now = Date.now();
+    if (_dashboardHtml && (now - _dashboardHtmlTs) < 30000) return _dashboardHtml;
+    try {
+      const p = resolve(process.cwd(), "src", "runtime", "dashboard.html");
+      _dashboardHtml = readFileSync(p, "utf8");
+      _dashboardHtmlTs = now;
+    } catch {
+      _dashboardHtml = "<h1>Dashboard HTML not found</h1>";
+    }
+    return _dashboardHtml;
+  }
+
+  // API: build trades response
+  function buildTradesResponse() {
+    const signalsPath = statePath("journal", "signals.jsonl");
+    const { items: signals, parse_errors } = cachedReadJsonl(signalsPath, 3000);
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStart = new Date(todayStr + "T00:00:00Z").getTime();
+
+    const closes = signals.filter(s => s.type === "signal_close");
+    const closesToday = closes.filter(s => (s.ts_close || 0) >= todayStart);
+    const wins = closesToday.filter(s => s.win === true);
+    const losses = closesToday.filter(s => s.win === false);
+    const pnlToday = closesToday.reduce((sum, s) => sum + (s.pnl_usd || 0), 0);
+    const pnlTotal = closes.reduce((sum, s) => sum + (s.pnl_usd || 0), 0);
+    const wrToday = (wins.length + losses.length) > 0
+      ? ((wins.length / (wins.length + losses.length)) * 100).toFixed(1) + "%"
+      : "n/a";
+
+    // Timeout analysis
+    const timeouts = signals.filter(s => s.type === "signal_timeout");
+    const toResolved = signals.filter(s => s.type === "timeout_resolved");
+    const savedUs = toResolved.filter(s => s.verdict === "filter_saved_us").length;
+    const costUs = toResolved.filter(s => s.verdict === "filter_cost_us").length;
+
+    return {
+      as_of_ts: Date.now(),
+      parse_errors,
+      summary: {
+        trades_today: closesToday.length,
+        wins_today: wins.length,
+        losses_today: losses.length,
+        pnl_today: pnlToday,
+        pnl_total: pnlTotal,
+        wr_today: wrToday,
+        timeouts_total: timeouts.length,
+        timeouts_saved: savedUs,
+        timeouts_cost: costUs,
+        timeouts_pending: timeouts.length - toResolved.length,
+      },
+      items: closesToday.map(c => ({
+        slug: c.slug, league: c.league || "",
+        ts_open: c.ts_open || null, ts_close: c.ts_close,
+        entry_price: c.entry_price || null,
+        win: c.win, pnl_usd: c.pnl_usd, roi: c.roi,
+        close_reason: c.close_reason,
+      })),
+    };
+  }
+
+  // API: build positions response
+  function buildPositionsResponse() {
+    const idx = cachedReadJson(statePath("journal", "open_index.json"), 3000);
+    const open = idx?.open || {};
+    return {
+      as_of_ts: Date.now(),
+      items: Object.values(open).map(p => ({
+        slug: p.slug, title: p.title || null,
+        league: p.league || "", market_kind: p.market_kind || null,
+        ts_open: p.ts_open, entry_price: p.entry_price,
+        paper_notional_usd: p.paper_notional_usd,
+        entry_outcome_name: p.entry_outcome_name,
+        price_tracking: p.price_tracking || null,
+      })),
+    };
+  }
+
+  // API: build watchlist response
+  function buildWatchlistResponse() {
+    const wl = state?.watchlist || {};
+    return {
+      as_of_ts: Date.now(),
+      items: Object.values(wl).map(m => ({
+        slug: m.slug, status: m.status, league: m.league || "",
+        last_price: m.last_price || {},
+        last_reject: m.last_reject || {},
+        first_seen_ts: m.first_seen_ts,
+      })),
+    };
+  }
+
+  // API: build config response (safe keys only)
+  function buildConfigResponse() {
+    const snap = cachedReadJson(statePath("config-snapshot.json"), 10000);
+    if (!snap) return { as_of_ts: Date.now(), config: null };
+    // Allowlist of safe keys
+    const safe = {};
+    const allow = ["strategy", "polling", "filters", "purge", "health", "gamma", "paper", "_runner", "_boot_ts"];
+    for (const k of allow) {
+      if (snap[k] != null) safe[k] = snap[k];
+    }
+    return { as_of_ts: Date.now(), config: safe };
+  }
+
   const server = createServer((req, res) => {
-    // Support GET /health (JSON) and GET / or /dashboard (HTML)
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Method not allowed" }));
       return;
     }
 
-    if (req.url === "/health") {
-      try {
-        const response = buildHealthResponse(state, startedMs, buildCommit);
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(response, null, 2));
-      } catch (e) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal server error", message: e?.message || String(e) }));
+    const json = (data) => {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify(data));
+    };
+
+    try {
+      // Legacy health endpoint
+      if (req.url === "/health" || req.url === "/api/health") {
+        json(buildHealthResponse(state, startedMs, buildCommit));
+        return;
       }
-      return;
-    }
+      if (req.url === "/api/trades") { json(buildTradesResponse()); return; }
+      if (req.url === "/api/positions") { json(buildPositionsResponse()); return; }
+      if (req.url === "/api/watchlist") { json(buildWatchlistResponse()); return; }
+      if (req.url === "/api/config") { json(buildConfigResponse()); return; }
 
-    if (req.url === "/" || req.url === "/dashboard") {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(generateDashboardHTML());
-      return;
-    }
+      // Dashboard (new)
+      if (req.url === "/" || req.url === "/dashboard") {
+        res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+        res.end(getDashboardHtml());
+        return;
+      }
 
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Not found", path: req.url }));
+      // Legacy dashboard (keep for backward compat)
+      if (req.url === "/legacy") {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(generateDashboardHTML());
+        return;
+      }
+
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not found", path: req.url }));
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Internal server error", message: e?.message || String(e) }));
+    }
   });
 
   server.listen(port, host, () => {

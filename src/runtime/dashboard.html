@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polymarket Bot — Command Center</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            surface: '#0f172a',
+            card: '#1e293b',
+            cardHover: '#334155',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #1e293b; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-surface text-slate-200 min-h-screen">
+  
+  <!-- Header -->
+  <header class="bg-card border-b border-slate-700 px-6 py-3 flex items-center justify-between sticky top-0 z-50">
+    <div class="flex items-center gap-4">
+      <h1 class="text-lg font-bold text-white">⚡ Polymarket Bot</h1>
+      <span id="runner-badge" class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 mono">prod</span>
+      <span id="build" class="text-xs text-slate-500 mono"></span>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2" id="semaphores">
+        <div class="flex items-center gap-1" title="Loop">
+          <span class="text-xs text-slate-400">Loop</span>
+          <span id="sem-loop" class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
+        </div>
+        <div class="flex items-center gap-1" title="WebSocket">
+          <span class="text-xs text-slate-400">WS</span>
+          <span id="sem-ws" class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
+        </div>
+        <div class="flex items-center gap-1" title="Gamma">
+          <span class="text-xs text-slate-400">Gamma</span>
+          <span id="sem-gamma" class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
+        </div>
+      </div>
+      <span id="uptime" class="text-xs text-slate-500"></span>
+      <span id="refresh-indicator" class="w-2 h-2 rounded-full bg-blue-500 pulse-dot" title="Auto-refreshing"></span>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+    
+    <!-- KPI Row -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3" id="kpi-row">
+      <div class="bg-card rounded-lg p-4 border border-slate-700">
+        <div class="text-xs text-slate-400 uppercase tracking-wide">PnL Today</div>
+        <div id="kpi-pnl" class="text-2xl font-bold mono mt-1">—</div>
+      </div>
+      <div class="bg-card rounded-lg p-4 border border-slate-700">
+        <div class="text-xs text-slate-400 uppercase tracking-wide">Win Rate</div>
+        <div id="kpi-wr" class="text-2xl font-bold mono mt-1">—</div>
+      </div>
+      <div class="bg-card rounded-lg p-4 border border-slate-700">
+        <div class="text-xs text-slate-400 uppercase tracking-wide">Trades Today</div>
+        <div id="kpi-trades" class="text-2xl font-bold mono mt-1">—</div>
+      </div>
+      <div class="bg-card rounded-lg p-4 border border-slate-700">
+        <div class="text-xs text-slate-400 uppercase tracking-wide">Open Positions</div>
+        <div id="kpi-open" class="text-2xl font-bold mono mt-1">—</div>
+      </div>
+      <div class="bg-card rounded-lg p-4 border border-slate-700">
+        <div class="text-xs text-slate-400 uppercase tracking-wide">Watchlist</div>
+        <div id="kpi-watchlist" class="text-2xl font-bold mono mt-1">—</div>
+      </div>
+    </div>
+
+    <!-- Open Positions -->
+    <section class="bg-card rounded-lg border border-slate-700">
+      <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+        <h2 class="font-semibold text-white">📊 Open Positions</h2>
+        <span id="positions-count" class="text-xs text-slate-400"></span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="text-xs text-slate-400 uppercase bg-slate-800/50">
+            <tr>
+              <th class="px-4 py-2 text-left">Market</th>
+              <th class="px-4 py-2 text-left">League</th>
+              <th class="px-4 py-2 text-right">Entry</th>
+              <th class="px-4 py-2 text-right">Current</th>
+              <th class="px-4 py-2 text-right">PnL</th>
+              <th class="px-4 py-2 text-right">Age</th>
+            </tr>
+          </thead>
+          <tbody id="positions-body" class="divide-y divide-slate-700/50"></tbody>
+        </table>
+        <div id="positions-empty" class="hidden px-4 py-6 text-center text-slate-500 text-sm">No open positions</div>
+      </div>
+    </section>
+
+    <!-- Trades Today -->
+    <section class="bg-card rounded-lg border border-slate-700">
+      <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+        <h2 class="font-semibold text-white">💰 Trades Today</h2>
+        <span id="trades-summary" class="text-xs text-slate-400"></span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="text-xs text-slate-400 uppercase bg-slate-800/50">
+            <tr>
+              <th class="px-4 py-2 text-left">Result</th>
+              <th class="px-4 py-2 text-left">Market</th>
+              <th class="px-4 py-2 text-left">League</th>
+              <th class="px-4 py-2 text-right">Entry</th>
+              <th class="px-4 py-2 text-right">PnL</th>
+              <th class="px-4 py-2 text-right">ROI</th>
+              <th class="px-4 py-2 text-right">Duration</th>
+            </tr>
+          </thead>
+          <tbody id="trades-body" class="divide-y divide-slate-700/50"></tbody>
+        </table>
+        <div id="trades-empty" class="hidden px-4 py-6 text-center text-slate-500 text-sm">No trades today</div>
+      </div>
+    </section>
+
+    <!-- Two columns: Watchlist + Stats -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- Watchlist (2/3 width) -->
+      <section class="lg:col-span-2 bg-card rounded-lg border border-slate-700">
+        <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+          <h2 class="font-semibold text-white">👁️ Watchlist Live</h2>
+          <div class="flex gap-2" id="watchlist-filters">
+            <button onclick="setWlFilter('all')" class="wl-filter text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-300 hover:bg-slate-600" data-f="all">All</button>
+            <button onclick="setWlFilter('signaled')" class="wl-filter text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-300 hover:bg-slate-600" data-f="signaled">Signaled</button>
+            <button onclick="setWlFilter('watching')" class="wl-filter text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-300 hover:bg-slate-600" data-f="watching">Watching</button>
+          </div>
+        </div>
+        <div class="overflow-x-auto max-h-96 overflow-y-auto">
+          <table class="w-full text-sm">
+            <thead class="text-xs text-slate-400 uppercase bg-slate-800/50 sticky top-0">
+              <tr>
+                <th class="px-3 py-2 text-left">Status</th>
+                <th class="px-3 py-2 text-left">Market</th>
+                <th class="px-3 py-2 text-left">League</th>
+                <th class="px-3 py-2 text-right">Bid</th>
+                <th class="px-3 py-2 text-right">Ask</th>
+                <th class="px-3 py-2 text-right">Spread</th>
+                <th class="px-3 py-2 text-left">Reject</th>
+              </tr>
+            </thead>
+            <tbody id="watchlist-body" class="divide-y divide-slate-700/50"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Right sidebar: Stats -->
+      <section class="space-y-4">
+        
+        <!-- Loop Performance -->
+        <div class="bg-card rounded-lg border border-slate-700 p-4">
+          <h3 class="font-semibold text-white text-sm mb-3">⚡ Loop Performance</h3>
+          <div class="space-y-2 text-sm" id="loop-stats">
+            <div class="flex justify-between"><span class="text-slate-400">Avg cycle</span><span id="loop-avg" class="mono">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Slow loops</span><span id="loop-slow" class="mono">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">WS ratio</span><span id="loop-ws" class="mono">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Runs (boot)</span><span id="loop-runs" class="mono">—</span></div>
+          </div>
+        </div>
+
+        <!-- Reject Reasons -->
+        <div class="bg-card rounded-lg border border-slate-700 p-4">
+          <h3 class="font-semibold text-white text-sm mb-3">🚫 Top Reject Reasons</h3>
+          <div class="space-y-1.5" id="reject-reasons"></div>
+          <div id="reject-empty" class="text-slate-500 text-xs">No data yet</div>
+        </div>
+
+        <!-- Timeout Analysis -->
+        <div class="bg-card rounded-lg border border-slate-700 p-4">
+          <h3 class="font-semibold text-white text-sm mb-3">⏱️ 6s Window Analysis</h3>
+          <div class="space-y-2 text-sm" id="timeout-stats">
+            <div class="flex justify-between"><span class="text-slate-400">Timeouts</span><span id="to-total" class="mono">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Saved us</span><span id="to-saved" class="mono text-emerald-400">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Cost us</span><span id="to-cost" class="mono text-red-400">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Pending</span><span id="to-pending" class="mono">—</span></div>
+          </div>
+        </div>
+
+        <!-- Daily Utilization -->
+        <div class="bg-card rounded-lg border border-slate-700 p-4">
+          <h3 class="font-semibold text-white text-sm mb-3">📈 Daily Utilization</h3>
+          <div class="space-y-2" id="daily-util"></div>
+          <div id="daily-empty" class="text-slate-500 text-xs">No data yet</div>
+        </div>
+
+        <!-- Config -->
+        <div class="bg-card rounded-lg border border-slate-700 p-4">
+          <h3 class="font-semibold text-white text-sm mb-3">⚙️ Config</h3>
+          <div class="space-y-1 text-xs mono" id="config-display"></div>
+        </div>
+
+      </section>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="text-center text-xs text-slate-600 py-4">
+    <span id="last-update">—</span> · <span id="data-age">—</span>
+  </footer>
+
+  <script>
+    // State
+    let wlFilter = 'all';
+    let allData = {};
+
+    function setWlFilter(f) {
+      wlFilter = f;
+      document.querySelectorAll('.wl-filter').forEach(b => {
+        b.classList.toggle('bg-blue-600', b.dataset.f === f);
+        b.classList.toggle('text-white', b.dataset.f === f);
+        b.classList.toggle('bg-slate-700', b.dataset.f !== f);
+      });
+      if (allData.watchlist) renderWatchlist(allData.watchlist);
+    }
+
+    // Helpers
+    function $(id) { return document.getElementById(id); }
+    function ago(ms) {
+      if (!ms || ms <= 0) return '—';
+      const s = Math.round(ms / 1000);
+      if (s < 60) return s + 's';
+      const m = Math.round(s / 60);
+      if (m < 60) return m + 'm';
+      const h = Math.round(m / 60);
+      return h + 'h';
+    }
+    function dur(ms) {
+      if (!ms) return '—';
+      const s = Math.round(ms / 1000);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      return m + 'm ' + (s % 60) + 's';
+    }
+    function pnlColor(v) { return v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-slate-300'; }
+    function pnlStr(v) { return v == null ? '—' : (v >= 0 ? '+$' + v.toFixed(2) : '-$' + Math.abs(v).toFixed(2)); }
+    function semColor(level) {
+      if (level === 'green') return 'bg-emerald-500';
+      if (level === 'yellow') return 'bg-yellow-500';
+      if (level === 'red') return 'bg-red-500';
+      return 'bg-slate-600';
+    }
+    function statusBadge(s) {
+      const colors = {
+        signaled: 'bg-blue-500/20 text-blue-400',
+        pending_signal: 'bg-yellow-500/20 text-yellow-400',
+        watching: 'bg-slate-500/20 text-slate-400',
+        expired: 'bg-red-500/20 text-red-400',
+      };
+      return `<span class="text-xs px-1.5 py-0.5 rounded ${colors[s] || 'bg-slate-500/20 text-slate-400'}">${s}</span>`;
+    }
+    function leagueBadge(l) {
+      const colors = { nba: 'text-orange-400', cbb: 'text-blue-400', esports: 'text-purple-400', soccer: 'text-green-400' };
+      return `<span class="text-xs ${colors[l] || 'text-slate-400'}">${(l||'?').toUpperCase()}</span>`;
+    }
+    function truncSlug(s, max=40) { return s && s.length > max ? s.slice(0, max) + '…' : s || '—'; }
+
+    // Render functions
+    function renderHealth(h) {
+      if (!h) return;
+      const rId = h.runner_id || 'prod';
+      $('runner-badge').textContent = rId;
+      if (h.is_shadow) {
+        $('runner-badge').className = 'text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 mono';
+      }
+      $('build').textContent = h.build_commit || '';
+      $('uptime').textContent = 'up ' + ago((h.uptime_seconds || 0) * 1000);
+
+      // Semaphores
+      const loopAge = h.loop?.last_cycle_age_seconds;
+      $('sem-loop').className = 'w-2.5 h-2.5 rounded-full ' + semColor(loopAge == null ? 'red' : loopAge < 5 ? 'green' : loopAge < 15 ? 'yellow' : 'red');
+
+      const wsRatio = h.ws?.ws_ratio_pct;
+      $('sem-ws').className = 'w-2.5 h-2.5 rounded-full ' + semColor(wsRatio == null ? 'yellow' : wsRatio > 90 ? 'green' : wsRatio > 50 ? 'yellow' : 'red');
+
+      const gammaAge = h.staleness?.gamma_stale_seconds;
+      $('sem-gamma').className = 'w-2.5 h-2.5 rounded-full ' + semColor(gammaAge == null ? 'yellow' : gammaAge < 120 ? 'green' : gammaAge < 300 ? 'yellow' : 'red');
+
+      // Loop stats
+      $('loop-avg').textContent = h.loop?.avg_cycle_ms != null ? h.loop.avg_cycle_ms + 'ms' : '—';
+      $('loop-slow').textContent = h.loop?.slow_loops != null ? h.loop.slow_loops : '—';
+      $('loop-ws').textContent = wsRatio != null ? wsRatio.toFixed(1) + '%' : '—';
+      $('loop-runs').textContent = h.loop?.runs_since_boot || h.loop?.runs || '—';
+
+      // Reject reasons
+      const rr = h.reject_reasons || [];
+      if (rr.length) {
+        $('reject-empty').classList.add('hidden');
+        const maxCount = rr[0]?.count || 1;
+        $('reject-reasons').innerHTML = rr.slice(0, 8).map(r => {
+          const pct = Math.round((r.count / maxCount) * 100);
+          return `<div class="flex items-center gap-2">
+            <div class="flex-1 bg-slate-700 rounded-full h-1.5 overflow-hidden">
+              <div class="h-full bg-red-500/60 rounded-full" style="width:${pct}%"></div>
+            </div>
+            <span class="text-xs text-slate-400 w-24 truncate">${r.reason}</span>
+            <span class="text-xs mono text-slate-300 w-8 text-right">${r.count}</span>
+          </div>`;
+        }).join('');
+      }
+
+      // Daily utilization
+      const bl = h.by_league;
+      if (bl && Object.keys(bl).length) {
+        $('daily-empty').classList.add('hidden');
+        $('daily-util').innerHTML = Object.entries(bl).map(([league, d]) => {
+          const total = d.total || 0;
+          const sig = d.signaled || 0;
+          const pct = total > 0 ? Math.round((sig / total) * 100) : 0;
+          return `<div>
+            <div class="flex justify-between text-xs mb-0.5">
+              ${leagueBadge(league)}
+              <span class="text-slate-400">${sig}/${total} (${pct}%)</span>
+            </div>
+            <div class="bg-slate-700 rounded-full h-1.5 overflow-hidden">
+              <div class="h-full bg-blue-500 rounded-full" style="width:${Math.max(pct, 2)}%"></div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    function renderPositions(data) {
+      if (!data) return;
+      const items = data.items || [];
+      $('positions-count').textContent = items.length + ' position' + (items.length !== 1 ? 's' : '');
+      if (!items.length) {
+        $('positions-body').innerHTML = '';
+        $('positions-empty').classList.remove('hidden');
+        return;
+      }
+      $('positions-empty').classList.add('hidden');
+      const now = Date.now();
+      $('positions-body').innerHTML = items.map(p => {
+        const curPrice = p.price_tracking?.price_last ?? null;
+        const pnl = curPrice != null ? ((curPrice - p.entry_price) / p.entry_price * p.paper_notional_usd) : null;
+        const ageMs = now - (p.ts_open || now);
+        return `<tr class="hover:bg-slate-800/50">
+          <td class="px-4 py-2 text-left"><span class="text-xs" title="${p.slug}">${truncSlug(p.slug)}</span></td>
+          <td class="px-4 py-2 text-left">${leagueBadge(p.league)}</td>
+          <td class="px-4 py-2 text-right mono text-xs">${(p.entry_price||0).toFixed(3)}</td>
+          <td class="px-4 py-2 text-right mono text-xs">${curPrice != null ? curPrice.toFixed(3) : '<span class="text-slate-500">—</span>'}</td>
+          <td class="px-4 py-2 text-right mono text-xs ${pnlColor(pnl)}">${pnlStr(pnl)}</td>
+          <td class="px-4 py-2 text-right text-xs text-slate-400">${ago(ageMs)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function renderTrades(data) {
+      if (!data) return;
+      const s = data.summary || {};
+      const items = data.items || [];
+
+      // KPIs
+      $('kpi-pnl').textContent = pnlStr(s.pnl_today);
+      $('kpi-pnl').className = 'text-2xl font-bold mono mt-1 ' + pnlColor(s.pnl_today);
+      $('kpi-wr').textContent = s.wr_today || '—';
+      $('kpi-trades').textContent = s.trades_today ?? '—';
+
+      $('trades-summary').textContent = `${s.wins_today||0}W / ${s.losses_today||0}L · $${(s.pnl_total||0).toFixed(2)} all-time`;
+
+      // Timeout stats
+      $('to-total').textContent = s.timeouts_total ?? '—';
+      $('to-saved').textContent = s.timeouts_saved ?? '—';
+      $('to-cost').textContent = s.timeouts_cost ?? '—';
+      $('to-pending').textContent = s.timeouts_pending ?? '—';
+
+      if (!items.length) {
+        $('trades-body').innerHTML = '';
+        $('trades-empty').classList.remove('hidden');
+        return;
+      }
+      $('trades-empty').classList.add('hidden');
+      $('trades-body').innerHTML = items.reverse().map(t => {
+        const badge = t.win === true ? '<span class="text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400">WIN</span>'
+          : t.win === false ? '<span class="text-xs px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">LOSS</span>'
+          : '<span class="text-xs px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-400">?</span>';
+        const durMs = (t.ts_close || 0) - (t.ts_open || 0);
+        return `<tr class="hover:bg-slate-800/50">
+          <td class="px-4 py-2">${badge}</td>
+          <td class="px-4 py-2 text-left"><span class="text-xs" title="${t.slug}">${truncSlug(t.slug)}</span></td>
+          <td class="px-4 py-2">${leagueBadge(t.league)}</td>
+          <td class="px-4 py-2 text-right mono text-xs">${(t.entry_price||0).toFixed(3)}</td>
+          <td class="px-4 py-2 text-right mono text-xs ${pnlColor(t.pnl_usd)}">${pnlStr(t.pnl_usd)}</td>
+          <td class="px-4 py-2 text-right mono text-xs">${t.roi != null ? (t.roi * 100).toFixed(1) + '%' : '—'}</td>
+          <td class="px-4 py-2 text-right text-xs text-slate-400">${dur(durMs)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function renderWatchlist(data) {
+      if (!data) return;
+      let items = data.items || [];
+      $('kpi-watchlist').textContent = items.length;
+      $('kpi-open').textContent = allData.positions?.items?.length ?? '—';
+
+      if (wlFilter !== 'all') items = items.filter(i => i.status === wlFilter);
+
+      // Sort: signaled first, then pending, then watching
+      const order = { signaled: 0, pending_signal: 1, watching: 2, expired: 3 };
+      items.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+
+      $('watchlist-body').innerHTML = items.map(m => {
+        const lp = m.last_price || {};
+        const bid = lp.yes_best_bid;
+        const ask = lp.yes_best_ask;
+        const spread = lp.spread;
+        const reject = m.last_reject?.reason || '';
+        return `<tr class="hover:bg-slate-800/50">
+          <td class="px-3 py-1.5">${statusBadge(m.status)}</td>
+          <td class="px-3 py-1.5 text-xs" title="${m.slug}">${truncSlug(m.slug, 35)}</td>
+          <td class="px-3 py-1.5">${leagueBadge(m.league)}</td>
+          <td class="px-3 py-1.5 text-right mono text-xs">${bid != null ? bid.toFixed(3) : '—'}</td>
+          <td class="px-3 py-1.5 text-right mono text-xs">${ask != null ? ask.toFixed(3) : '—'}</td>
+          <td class="px-3 py-1.5 text-right mono text-xs ${spread != null && spread > 0.03 ? 'text-yellow-400' : ''}">${spread != null ? spread.toFixed(3) : '—'}</td>
+          <td class="px-3 py-1.5 text-xs text-slate-500 truncate max-w-[120px]">${reject}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function renderConfig(data) {
+      if (!data || !data.config) return;
+      const c = data.config;
+      const lines = [];
+      function flat(obj, prefix) {
+        for (const [k, v] of Object.entries(obj || {})) {
+          const key = prefix ? prefix + '.' + k : k;
+          if (v && typeof v === 'object' && !Array.isArray(v)) flat(v, key);
+          else lines.push([key, JSON.stringify(v)]);
+        }
+      }
+      flat(c, '');
+      $('config-display').innerHTML = lines.slice(0, 20).map(([k, v]) =>
+        `<div class="flex justify-between gap-2"><span class="text-slate-500 truncate">${k}</span><span class="text-slate-300">${v}</span></div>`
+      ).join('');
+    }
+
+    // Fetch all endpoints
+    async function fetchAll() {
+      try {
+        const [health, trades, positions, watchlist, config] = await Promise.all([
+          fetch('/api/health').then(r => r.json()).catch(() => null),
+          fetch('/api/trades').then(r => r.json()).catch(() => null),
+          fetch('/api/positions').then(r => r.json()).catch(() => null),
+          fetch('/api/watchlist').then(r => r.json()).catch(() => null),
+          fetch('/api/config').then(r => r.json()).catch(() => null),
+        ]);
+        allData = { health, trades, positions, watchlist, config };
+        renderHealth(health);
+        renderTrades(trades);
+        renderPositions(positions);
+        renderWatchlist(watchlist);
+        renderConfig(config);
+        $('last-update').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+        $('data-age').textContent = 'Next refresh in 5s';
+      } catch (e) {
+        console.error('Fetch error:', e);
+      }
+    }
+
+    // Init
+    setWlFilter('all');
+    fetchAll();
+    setInterval(fetchAll, 5000);
+  </script>
+</body>
+</html>
