@@ -1,24 +1,40 @@
 // ESPN Soccer Scoreboard Adapter
 // Fail-closed: if confidence !== "high", no trade is allowed.
 //
-// Supports: Premier League, La Liga, Serie A, Ligue 1, Bundesliga,
-//           Champions League, Europa League, Liga MX, Argentina,
-//           Eredivisie, Portugal
+// Supports: 23 leagues — all major European, UEFA, Americas, Asia/Oceania
+// Add new leagues to ESPN_LEAGUES below (ESPN API covers most FIFA leagues)
 
 // ─── League mapping ──────────────────────────────────────────
 
 const ESPN_LEAGUES = {
+  // Top 5 European leagues
   "eng.1":           { name: "Premier League",       slugPrefix: "epl" },
   "esp.1":           { name: "La Liga",              slugPrefix: "lal" },
   "ita.1":           { name: "Serie A",              slugPrefix: "sea" },
   "fra.1":           { name: "Ligue 1",              slugPrefix: "fl1" },
   "ger.1":           { name: "Bundesliga",           slugPrefix: "bun" },
+  // UEFA competitions
   "uefa.champions":  { name: "Champions League",     slugPrefix: "ucl" },
   "uefa.europa":     { name: "Europa League",        slugPrefix: "uel" },
+  "uefa.europa.conf":{ name: "Conference League",    slugPrefix: "uec" },
+  // Americas
   "mex.1":           { name: "Liga MX",              slugPrefix: "mex" },
   "arg.1":           { name: "Liga Argentina",       slugPrefix: "arg" },
+  "bra.1":           { name: "Brazilian Serie A",    slugPrefix: "bra" },
+  "usa.1":           { name: "MLS",                  slugPrefix: "mls" },
+  "conmebol.libertadores": { name: "Copa Libertadores", slugPrefix: "lib" },
+  "conmebol.sudamericana": { name: "Copa Sudamericana", slugPrefix: "sud" },
+  // Other European
   "ned.1":           { name: "Eredivisie",           slugPrefix: "ere" },
   "por.1":           { name: "Liga Portugal",        slugPrefix: "por" },
+  "tur.1":           { name: "Turkish Super Lig",    slugPrefix: "tur" },
+  "sco.1":           { name: "Scottish Premiership",  slugPrefix: "sco" },
+  "bel.1":           { name: "Belgian Pro League",   slugPrefix: "bel" },
+  "gre.1":           { name: "Greek Super League",   slugPrefix: "gre" },
+  "rus.1":           { name: "Russian Premier League", slugPrefix: "rus" },
+  // Asia / Oceania
+  "aus.1":           { name: "A-League Men",         slugPrefix: "aul" },
+  "jpn.1":           { name: "J-League",             slugPrefix: "jpn" },
 };
 
 export const ESPN_LEAGUE_IDS = Object.keys(ESPN_LEAGUES);
