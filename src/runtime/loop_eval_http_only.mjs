@@ -1399,6 +1399,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         }
 
         // Persist last_pending_timeout snapshot (runtime)
+        const lp_timeout = m.last_price || {};
         state.runtime.last_pending_timeout = {
           ts: tNow,
           slug: String(m.slug || ""),
@@ -1408,6 +1409,25 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           remaining_ms_at_timeout: Math.max(0, Number(deadline) - tNow),
           last_reason_before_timeout: String(m.last_reject?.reason || "-")
         };
+
+        // Log timeout for future outcome analysis (was this a good or bad filter?)
+        try {
+          const { appendJsonl } = await import("../core/journal.mjs");
+          appendJsonl("state/journal/signals.jsonl", {
+            type: "signal_timeout",
+            ts: tNow,
+            slug: String(m.slug || ""),
+            conditionId: String(m.conditionId || ""),
+            league: String(m.league || ""),
+            market_kind: String(m.market_kind || ""),
+            entry_bid_at_pending: Number(m.pending_entry_bid || lp_timeout.yes_best_bid || 0),
+            bid_at_timeout: Number(lp_timeout.yes_best_bid || 0),
+            ask_at_timeout: Number(lp_timeout.yes_best_ask || 0),
+            spread_at_timeout: Number(lp_timeout.spread || 0),
+            pending_duration_ms: tNow - Number(ps),
+            timeout_reason: String(m.pending_confirm_fail_last_reason || m.last_reject?.reason || "unknown"),
+          });
+        } catch {}
 
         m.last_reject = { reason: "pending_timeout", ts: tNow };
         m.status = "watching";
@@ -1909,6 +1929,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       // IMPORTANT: set timing at the moment of transition (real time)
       m.pending_since_ts = tNow;
       m.pending_deadline_ts = tNow + pendingWinMs;
+      m.pending_entry_bid = Number(quote?.probBid || 0); // Save for timeout analysis
 
       // classify pending_enter by near_by (mutually exclusive)
       const pendingType = (near_by === "spread") ? "microstructure" : ((near_by === "ask" || near_by === "both") ? "highprob" : "unknown");
