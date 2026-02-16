@@ -387,6 +387,88 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     return Math.round((day - nowDay) / (24 * 60 * 60 * 1000));
   }
 
+  // Purge stale context cache entries (dateKeys > 2 days old with no active markets)
+  {
+    const cc = state.runtime?.context_cache;
+    if (cc) {
+      const activeDateKeys = new Set();
+      for (const m of Object.values(state.watchlist || {})) {
+        if (!(m.status === "watching" || m.status === "pending_signal")) continue;
+        const dk = dateKeyFromIsoUtc(m.endDateIso || m.startDateIso);
+        if (dk) activeDateKeys.add(dk);
+      }
+      for (const cacheKey of ["cbb_by_dateKey", "nba_by_dateKey"]) {
+        const node = cc[cacheKey];
+        if (!node || typeof node !== "object") continue;
+        for (const dk of Object.keys(node)) {
+          const delta = daysDeltaFromNowUtc(dk);
+          if (delta != null && delta < -2 && !activeDateKeys.has(dk)) {
+            delete node[dk];
+            bumpBucket("health", `context_cache_purged:${cacheKey}:${dk}`, 1);
+          }
+        }
+      }
+      // Purge legacy cbb cache if present
+      if (cc.cbb && typeof cc.cbb === "object") {
+        const legacySize = JSON.stringify(cc.cbb).length;
+        if (legacySize > 1000) {
+          delete cc.cbb;
+          bumpBucket("health", "context_cache_purged:cbb_legacy", 1);
+        }
+      }
+    }
+  }
+
+  // Strip ESPN event to only the fields needed for matching/context (saves ~90% of cache size)
+  function stripEspnEvent(ev) {
+    if (!ev || typeof ev !== "object") return ev;
+    const stripped = {
+      id: ev.id,
+      uid: ev.uid,
+      date: ev.date,
+      name: ev.name,
+      shortName: ev.shortName,
+      status: ev.status ? {
+        clock: ev.status.clock,
+        displayClock: ev.status.displayClock,
+        period: ev.status.period,
+        type: ev.status.type ? {
+          id: ev.status.type.id,
+          name: ev.status.type.name,
+          state: ev.status.type.state,
+          completed: ev.status.type.completed,
+          description: ev.status.type.description,
+        } : undefined,
+      } : undefined,
+    };
+    // Only keep competitors from competitions[0]
+    const comp0 = ev.competitions?.[0];
+    if (comp0) {
+      const competitors = Array.isArray(comp0.competitors)
+        ? comp0.competitors.map(c => ({
+            homeAway: c.homeAway,
+            score: c.score,
+            winner: c.winner,
+            team: c.team ? {
+              id: c.team.id,
+              name: c.team.name,
+              shortDisplayName: c.team.shortDisplayName,
+              displayName: c.team.displayName,
+              abbreviation: c.team.abbreviation,
+              location: c.team.location,
+            } : undefined,
+          }))
+        : [];
+      stripped.competitions = [{ competitors, startDate: comp0.startDate }];
+    }
+    return stripped;
+  }
+
+  function stripEspnEvents(events) {
+    if (!Array.isArray(events)) return events;
+    return events.map(stripEspnEvent);
+  }
+
   async function getCbbEventsForDateKey(dateKey) {
     if (!contextEnabled) return null;
     if (!dateKey) return null;
@@ -439,7 +521,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       cur.ts = now;
       cur.date_key = dateKey;
       cur.days_fetched = days;
-      cur.events = merged.events;
+      cur.events = stripEspnEvents(merged.events);
       cur.games_total = merged.games_total;
       cur.games_unique = merged.games_unique;
 
@@ -507,7 +589,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       cur.ts = now;
       cur.date_key = dateKey;
       cur.days_fetched = days;
-      cur.events = merged.events;
+      cur.events = stripEspnEvents(merged.events);
       cur.games_total = merged.games_total;
       cur.games_unique = merged.games_unique;
 
