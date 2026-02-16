@@ -1151,6 +1151,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
             ts: tNow,
             league: m.league,
             event_id: m.event_id || m.event_slug || null,
+            conditionId: m.conditionId || null,
             slug: m.slug,
             yes_outcome_name: ce.yes_outcome_name ?? null,
             ask: bestAsk,
