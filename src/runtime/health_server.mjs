@@ -924,9 +924,13 @@ export function startHealthServer(state, opts = {}) {
       return !executedSellIds.has(tid);
     });
 
+    const mode = bridge.mode || "paper";
+    // Divergence only meaningful in live/shadow_live mode
+    const divApplies = mode !== "paper";
+
     return {
       as_of_ts: Date.now(),
-      mode: bridge.mode || "paper",
+      mode,
       paused: bridge.paused || false,
       balance_usd: bridge.balance_usd ?? null,
       summary: {
@@ -935,11 +939,11 @@ export function startHealthServer(state, opts = {}) {
         failed_today: failed.length,
         total_today: todayExecs.length,
       },
-      divergence: {
+      divergence: divApplies ? {
         signals_without_buy: unexecutedOpens.length,
         signals_without_sell: unexecutedCloses.length,
         ok: unexecutedOpens.length === 0 && unexecutedCloses.length === 0,
-      },
+      } : { ok: true, note: "paper_mode" },
       items: todayExecs.slice(-50).map(e => ({
         trade_id: e.trade_id, side: e.side, status: e.status,
         slug: e.slug, title: e.title || null,
