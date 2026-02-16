@@ -12,6 +12,31 @@ export function isEsportsSlug(slug) {
   return /^(lol|cs2|cs|csgo|val|dota|dota2|rl|cod|r6|r6siege|ow|apex|pubg|sc2|halo|smash|sf|tekken|fifa|fc|hok)-/.test(v);
 }
 
+// Soccer slug prefixes by league (derived from Polymarket data)
+const SOCCER_PREFIXES = [
+  "epl-", "lal-", "sea-", "fl1-", "bun-",  // top 5 leagues
+  "ucl-", "uel-",                            // UEFA
+  "mex-", "arg-", "ere-", "por-",            // other leagues
+  "bra-", "tur-", "sco-", "bel-", "aut-",   // extended
+];
+
+export function isSoccerSlug(slug) {
+  const v = s(slug).toLowerCase();
+  return SOCCER_PREFIXES.some(p => v.startsWith(p));
+}
+
+export function isSoccerBannedSlug(slug) {
+  const v = s(slug).toLowerCase();
+  if (!isSoccerSlug(v)) return false;
+  // Ban: draw, total, spread, btts, over, under
+  return v.includes("-draw") ||
+         v.includes("-total-") ||
+         v.includes("-spread-") ||
+         v.includes("-btts") ||
+         v.includes("-over-") ||
+         v.includes("-under-");
+}
+
 function gammaVol24hUsd(m) {
   const v = m?.volume24hr ?? m?.volume24h ?? m?.volumeNum ?? m?.volume;
   const n = Number(v);
@@ -28,6 +53,16 @@ function pickMarketsForEvent(tag, e, cfg) {
     const main = active.find(m => s(m.slug) === s(e.slug));
     if (main && !isSpreadOrTotalSlug(main.slug)) return [main];
     return active.filter(m => !isSpreadOrTotalSlug(m.slug)).slice(0, 1);
+  }
+
+  // Soccer: only team-win markets (ban draw, total, spread, btts, over, under)
+  if (tag === "soccer") {
+    const teamWins = active.filter(m => isSoccerSlug(m.slug) && !isSoccerBannedSlug(m.slug));
+    // Also include non-soccer-prefix markets that aren't banned (fallback)
+    const nonPrefixed = active.filter(m => !isSoccerSlug(m.slug) && !isSpreadOrTotalSlug(m.slug));
+    const all = [...teamWins, ...nonPrefixed];
+    const maxMkts = Number(cfg?.gamma?.events_max_markets_per_event || 6);
+    return all.slice(0, maxMkts);
   }
 
   // Esports: prefer game/map markets; include main if present
@@ -50,6 +85,7 @@ function leagueFromTag(tag) {
   if (tag === "nba") return "nba";
   if (tag === "ncaa-basketball") return "cbb";
   if (tag === "esports") return "esports";
+  if (tag === "soccer") return "soccer";
   return tag;
 }
 
