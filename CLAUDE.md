@@ -1,7 +1,7 @@
 # CLAUDE.md — Polymarket Watchlist Bot v1
 
-> Paper-trading signal generator for Polymarket sports/esports prediction markets.
-> **No real orders** — generates paper signals, tracks them to resolution, computes PnL.
+> Signal generator + trade executor for Polymarket sports/esports prediction markets.
+> Supports **paper**, **shadow_live** (dry-run with real API), and **live** trading modes.
 
 ## Quick Reference
 
@@ -551,3 +551,77 @@ Enables day-over-day comparison without parsing JSONL.
 **Total: 437 tests** (all passing)
 
 *Last updated: 2026-02-16 (commit d8de816 — capture tracking, timeout counterfactual, shadow runners, visual dashboard, daily snapshots)*
+
+## Trade Execution Layer
+
+### Modes (`trading.mode` in local.json)
+- `"paper"` (default): Signals only, no CLOB connection
+- `"shadow_live"`: Connects to CLOB, checks balance/book, logs what WOULD trade, doesn't execute
+- `"live"`: Executes real trades via FAK market orders
+
+### Go-Live Runbook
+
+**Preflight (shadow_live):**
+1. Set `trading.mode: "shadow_live"` in `src/config/local.json`
+2. Restart: `launchctl unload/load`
+3. Verify in logs:
+   - `[BOOT] trading.mode=shadow_live | SL=0.7 | max_pos=$10`
+   - `[TRADE_BRIDGE] mode=shadow_live | funder=0xddb6... | balance=$XX.XX`
+4. Wait for a signal → confirm `[SHADOW_BUY]` log appears with valid balance/tokenId
+5. Run for 1-2 hours minimum
+
+**Go live:**
+1. Set `trading.mode: "live"` in `src/config/local.json`
+2. Restart
+3. Watch first trade: `[LIVE_BUY]` → `[FILLED_BUY]` with slippage
+4. Monitor `state/journal/executions.jsonl`
+
+**Emergency stop:**
+1. Set `trading.mode: "paper"` and restart — instant, no position impact
+2. Or: `launchctl unload` to stop entirely
+3. Open positions stay on Polymarket — manual close via UI if needed
+
+### Safety Guards
+- **Boot guard**: Fails if SL, credentials, or limits not configured for non-paper modes
+- **Idempotency**: `trade_id = buy:{signal_id}` / `sell:{signal_id}` — no double execution
+- **Pause fail-closed**: If SL sell fails all attempts, ALL trading pauses (buys + sells)
+- **SL floor minimum**: Never sells below `triggerPrice - 0.10`
+- **Post-fill check**: Verifies conditional balance after each buy
+- **Reconciliation**: Every 5min against real positions (orphan detection)
+
+### Config Reference
+```json
+{
+  "paper": { "stop_loss_bid": 0.70 },
+  "trading": {
+    "mode": "paper",
+    "credentials_path": "/path/to/.polymarket-credentials.json",
+    "funder_address": "0xddb60e6980B311997F75CDA0028080E46fACeBFA",
+    "max_position_usd": 10,
+    "max_total_exposure_usd": 50,
+    "max_concurrent_positions": 5,
+    "max_trades_per_day": 50,
+    "allowlist": null
+  }
+}
+```
+
+### Key Files
+- `src/execution/order_executor.mjs` — Low-level CLOB API (buy/sell/balance)
+- `src/execution/trade_bridge.mjs` — Idempotent bridge (signals → trades)
+- `state/execution_state.json` — Trade state (idempotency, pause, daily counts)
+- `state/journal/executions.jsonl` — Execution audit log
+
+### signal_id Definition
+Format: `{ts_open}|{slug}` — deterministic, stable across buy→sell lifecycle.
+Same ID used for signal_open, signal_close, buy trade_id, sell trade_id.
+
+### SL Ladder (stop_loss sell)
+When bid ≤ 0.70: try to sell with escalating floor discount:
+1. floor = triggerPrice (0.70)
+2. floor = triggerPrice - 0.01
+3. floor = triggerPrice - 0.02
+4. floor = triggerPrice - 0.03
+5. floor = triggerPrice - 0.05
+Absolute minimum: triggerPrice - 0.10 (never below 0.60).
+If all 5 attempts fail → pause ALL trading.
