@@ -3,8 +3,9 @@
 import { loadConfig } from "./src/core/config.js";
 import { acquireLock, releaseLock } from "./src/core/lockfile.js";
 import { nowMs, sleepMs } from "./src/core/time.js";
-import { readJson, writeJsonAtomic, resolvePath } from "./src/core/state_store.js";
+import { readJsonWithFallback, writeJsonAtomic, resolvePath } from "./src/core/state_store.js";
 import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, reconcileIndex } from "./src/core/journal.mjs";
+import { DirtyTracker, detectChanges } from "./src/core/dirty_tracker.mjs";
 
 import { execSync } from "node:child_process";
 
@@ -76,11 +77,15 @@ if (!lock.ok) {
 
 let state = null;
 try {
-  state = readJson(STATE_PATH) || baseState();
+  state = readJsonWithFallback(STATE_PATH) || baseState();
+  console.log(`[STATE] Loaded from disk: ${Object.keys(state.watchlist || {}).length} markets, runs=${state.runtime?.runs || 0}`);
 } catch (e) {
   console.error(`[STATE] Failed to read state, starting fresh: ${e?.message || e}`);
   state = baseState();
 }
+
+// Dirty tracker for intelligent persistence
+const dirtyTracker = new DirtyTracker();
 
 let running = true;
 const shutdown = (sig) => {
@@ -119,11 +124,12 @@ try {
     const lastEval = Number(state.runtime.last_eval_ts || 0);
     const evalEveryMs = Number(cfg.polling?.clob_eval_seconds || 3) * 1000;
 
-    let dirty = false;
-
     if (now - lastGamma >= gammaEveryMs) {
       const { loopGamma } = await import("./src/runtime/loop_gamma.mjs");
       const { checkAndFixInvariants } = await import("./src/core/invariants.js");
+
+      // Snapshot state before operation
+      const beforeWatchlistSize = Object.keys(state.watchlist || {}).length;
 
       const r = await loopGamma(state, cfg, now);
       checkAndFixInvariants(state, cfg, now);
@@ -132,7 +138,16 @@ try {
       state.runtime.health.watchlist_total = Object.keys(state.watchlist || {}).length;
       state.runtime.health.loop_gamma_last = r.stats;
 
-      dirty = dirty || !!r.changed;
+      // Mark dirty if watchlist changed
+      if (r.changed) {
+        const afterWatchlistSize = Object.keys(state.watchlist || {}).length;
+        const delta = afterWatchlistSize - beforeWatchlistSize;
+        if (delta !== 0) {
+          dirtyTracker.mark(`gamma:markets_${delta > 0 ? 'added' : 'removed'}:${Math.abs(delta)}`);
+        } else {
+          dirtyTracker.mark("gamma:markets_updated");
+        }
+      }
     }
 
     if (now - lastEval >= evalEveryMs) {
@@ -259,6 +274,9 @@ try {
             console.log(`[SIGNAL] ${String(s.league || "").toUpperCase()} | ${marketTitle || s.slug} | ${entryOutcome || "?"} @ ${entryPrice.toFixed(2)} | spread=${Number(s.spread).toFixed(3)} | ${String(s.signal_type || "")}`);
           }
           saveOpenIndex(idx);
+
+          // Mark CRITICAL dirty: new paper positions opened (must persist immediately)
+          dirtyTracker.mark(`eval:signals_generated:${newOnes.length}`, true);
         }
       } catch {}
 
@@ -273,13 +291,19 @@ try {
       } catch {}
 
       state.runtime.last_eval_ts = now;
-      dirty = dirty || !!r.changed;
+
+      // Mark dirty if eval changed state (status transitions, etc.)
+      if (r.changed) {
+        dirtyTracker.mark("eval:state_changed");
+      }
     }
 
-    // Persist strategy:
-    // - persist if dirty
-    // - else persist at most every ~4s (needed for human-visible status freshness)
-    const shouldPersist = dirty || (state.runtime.runs % 2 === 0);
+    // Persist strategy (v2: dirty tracking with fsync + backup):
+    // - ALWAYS persist critical changes immediately (new signals, resolutions)
+    // - Otherwise persist if dirty AND >= 5s since last write (throttled)
+    // - Skip persist if not dirty and throttle window not elapsed
+    const shouldPersist = dirtyTracker.shouldPersist(now, { throttleMs: 5000 });
+    
     if (shouldPersist) {
       state.runtime.health.state_write_count = (state.runtime.health.state_write_count || 0) + 1;
       state.runtime.last_state_write_ts = now;
@@ -295,7 +319,16 @@ try {
         state.runtime.health.state_size_warn_count = (state.runtime.health.state_size_warn_count || 0) + 1;
         bumpHealthBucket(state, now, "state_size_warn", 1);
       }
+
+      // Write with atomic tmp+rename + fsync + backup
       writeJsonAtomic(STATE_PATH, state);
+      dirtyTracker.clear(now);
+
+      // Debug: log reasons for observability
+      const reasons = dirtyTracker.getReasons();
+      if (reasons.length > 0 && dirtyTracker.isCritical()) {
+        console.log(`[PERSIST] Critical write: ${reasons.join(", ")}`);
+      }
     } else {
       state.runtime.health.state_write_skipped_count = (state.runtime.health.state_write_skipped_count || 0) + 1;
     }
@@ -312,7 +345,11 @@ try {
     const now = nowMs();
     state.runtime.last_state_write_ts = now;
     bumpHealthBucket(state, now, "state_write", 1);
+    console.log("[PERSIST] Shutdown: writing final state...");
     writeJsonAtomic(STATE_PATH, state);
-  } catch {}
+    console.log("[PERSIST] Shutdown complete");
+  } catch (e) {
+    console.error(`[PERSIST] Shutdown write failed: ${e?.message || e}`);
+  }
   releaseLock(LOCK_PATH);
 }
