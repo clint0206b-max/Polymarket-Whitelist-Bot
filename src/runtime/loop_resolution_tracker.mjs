@@ -1,5 +1,6 @@
 // Paper positions resolution tracker (B0.2)
 // Resolves open paper signals by polling Gamma market endpoint (by slug).
+// Also tracks price extremes (min/max) for offline SL analysis.
 
 import { appendJsonl, loadOpenIndex, saveOpenIndex, removeOpen, addClosed } from "../core/journal.mjs";
 
@@ -46,6 +47,27 @@ async function fetchGammaMarketBySlug(slug, timeoutMs = 5000) {
   } finally {
     clearTimeout(to);
   }
+}
+
+/**
+ * Extract current price for a specific outcome from Gamma market.
+ * @param {object} market - Gamma market response
+ * @param {string} outcomeName - the outcome we bought (e.g. "Seattle Redhawks")
+ * @returns {number|null} - price 0-1, or null if can't determine
+ */
+export function getOutcomePrice(market, outcomeName) {
+  if (!market || !outcomeName) return null;
+  const outcomes = parseJsonMaybe(market.outcomes);
+  const prices = parseJsonMaybe(market.outcomePrices);
+  if (!Array.isArray(outcomes) || !Array.isArray(prices) || outcomes.length !== prices.length) return null;
+
+  const target = normTeam(outcomeName);
+  for (let i = 0; i < outcomes.length; i++) {
+    if (normTeam(outcomes[i]) === target) {
+      return toNum(prices[i]);
+    }
+  }
+  return null;
 }
 
 export function detectResolved(market) {
@@ -106,6 +128,8 @@ export async function loopResolutionTracker(cfg, state) {
 
   let resolvedCount = 0;
   let fetchFailCount = 0;
+  let priceUpdated = false;
+
   for (const id of toCheck) {
     const row = open[id];
     const slug = row?.slug;
@@ -114,22 +138,28 @@ export async function loopResolutionTracker(cfg, state) {
     const r = await fetchGammaMarketBySlug(slug, 5000);
     if (!r.ok) { fetchFailCount++; continue; }
 
+    // --- Price tracking (always, even if not resolved yet) ---
+    const curPrice = getOutcomePrice(r.market, row.entry_outcome_name);
+    if (curPrice != null) {
+      const prev = row.price_tracking || {};
+      const newMin = (prev.price_min != null) ? Math.min(prev.price_min, curPrice) : curPrice;
+      const newMax = (prev.price_max != null) ? Math.max(prev.price_max, curPrice) : curPrice;
+      row.price_tracking = {
+        price_min: newMin,
+        price_max: newMax,
+        price_last: curPrice,
+        samples: (prev.samples || 0) + 1,
+        first_seen_ts: prev.first_seen_ts || nowMs(),
+        last_seen_ts: nowMs(),
+      };
+      priceUpdated = true;
+    }
+
     const det = detectResolved(r.market);
     if (!det.resolved) continue;
 
     let entryOutcome = row?.entry_outcome_name || null;
 
-    // Fallback: if entry_outcome_name is null (legacy entries), derive from Gamma response
-    // The "yes" side is whichever had the higher price at entry time. Since we always buy
-    // the favored side, and for binary markets the "Yes"/"Team A" side is outcomes[0],
-    // we can derive: if the market has 2 outcomes, the one that is NOT the winner
-    // determines loss, and the one that IS the winner determines win.
-    // But we need to know WHICH outcome we bet on. Without clobTokenIds mapping in the
-    // open_index, we use a heuristic: the favored team at entry was likely the one
-    // with the higher price, which at resolution is the winner (if we won) or the loser
-    // (if we lost). Since we can't be sure, we mark won=null for legacy entries.
-    //
-    // For entries with entry_outcome_name set correctly, this is a clean comparison.
     const won = (entryOutcome && normTeam(det.winner) && normTeam(entryOutcome))
       ? (normTeam(det.winner) === normTeam(entryOutcome))
       : null;
@@ -137,6 +167,9 @@ export async function loopResolutionTracker(cfg, state) {
     const { pnl_usd, roi, shares } = (won == null)
       ? { pnl_usd: null, roi: null, shares: null }
       : computePnl(row.entry_price, row.paper_notional_usd, won);
+
+    // Include price extremes in signal_close for offline SL analysis
+    const pt = row.price_tracking || {};
 
     appendJsonl("state/journal/signals.jsonl", {
       type: "signal_close",
@@ -151,14 +184,20 @@ export async function loopResolutionTracker(cfg, state) {
       win: won,
       paper_shares: shares,
       pnl_usd,
-      roi
+      roi,
+      // Price extremes during position lifetime (for SL analysis)
+      price_min_seen: pt.price_min ?? null,
+      price_max_seen: pt.price_max ?? null,
+      price_last_seen: pt.price_last ?? null,
+      price_samples: pt.samples ?? 0,
     });
 
     // Human-readable log
     const pnlStr = pnl_usd != null ? (pnl_usd >= 0 ? `+$${pnl_usd.toFixed(2)}` : `-$${Math.abs(pnl_usd).toFixed(2)}`) : "?";
-    console.log(`[RESOLVED] ${row.slug} | ${won ? "WIN" : won === false ? "LOSS" : "?"} ${pnlStr} | winner: ${det.winner || "?"}`);
+    const minStr = pt.price_min != null ? ` | min=${pt.price_min.toFixed(3)}` : "";
+    console.log(`[RESOLVED] ${row.slug} | ${won ? "WIN" : won === false ? "LOSS" : "?"} ${pnlStr} | winner: ${det.winner || "?"}${minStr}`);
 
-    // Move to closed index before removing from open
+    // Move to closed index
     addClosed(idx, id, {
       slug: row.slug,
       title: row.title || null,
@@ -174,12 +213,16 @@ export async function loopResolutionTracker(cfg, state) {
       win: won,
       pnl_usd,
       roi,
+      price_min_seen: pt.price_min ?? null,
+      price_max_seen: pt.price_max ?? null,
+      price_samples: pt.samples ?? 0,
     });
     removeOpen(idx, id);
     resolvedCount++;
   }
 
-  if (resolvedCount) saveOpenIndex(idx);
+  // Save if anything changed (resolved OR price updated)
+  if (resolvedCount || priceUpdated) saveOpenIndex(idx);
 
   // Persist counters
   health.paper_resolution_markets_checked = (health.paper_resolution_markets_checked || 0) + toCheck.length;
