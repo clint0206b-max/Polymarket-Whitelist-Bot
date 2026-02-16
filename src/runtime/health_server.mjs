@@ -173,7 +173,7 @@ function computeRejectReasons(state) {
 }
 
 /**
- * Compute league summary with status breakdown for daily utilization panel.
+ * Compute active-now league summary from watchlist (snapshot).
  */
 function computeLeagueSummary(state) {
   const wl = state?.watchlist || {};
@@ -187,6 +187,93 @@ function computeLeagueSummary(state) {
     if (leagues[l][s] !== undefined) leagues[l][s]++;
   }
   return leagues;
+}
+
+/**
+ * Compute daily utilization from signals.jsonl + watchlist.
+ * Cached for 30s to avoid reparsing every health request.
+ */
+let _dailyUtilCache = { ts: 0, data: null };
+const DAILY_UTIL_CACHE_MS = 30000;
+
+function computeDailyUtilization(state) {
+  const now = Date.now();
+  if (_dailyUtilCache.data && (now - _dailyUtilCache.ts) < DAILY_UTIL_CACHE_MS) {
+    return _dailyUtilCache.data;
+  }
+
+  // Day boundary: local Mendoza (UTC-3)
+  const localNow = new Date(now - 3 * 3600 * 1000);
+  const dayStr = localNow.toISOString().slice(0, 10);
+  const dayStartUtc = new Date(dayStr + "T03:00:00Z").getTime(); // 00:00 Mendoza = 03:00 UTC
+
+  // Parse signals.jsonl
+  const signalsPath = statePath("journal", "signals.jsonl");
+  const { items: signals } = cachedReadJsonl(signalsPath, 5000);
+
+  const byLeague = {};
+  const ensure = (l) => {
+    if (!byLeague[l]) byLeague[l] = {
+      signaled: 0, signaled_slugs: new Set(),
+      wins: 0, losses: 0, timeouts: 0,
+      pnl: 0, timeout_cost: 0, timeout_saved: 0,
+    };
+    return byLeague[l];
+  };
+
+  for (const s of signals) {
+    const ts = s.ts_open || s.ts_close || s.ts || s.resolve_ts || 0;
+    if (ts < dayStartUtc) continue;
+
+    const league = s.league || "unknown";
+
+    if (s.type === "signal_open") {
+      const d = ensure(league);
+      d.signaled++;
+      d.signaled_slugs.add(s.slug);
+    } else if (s.type === "signal_close") {
+      const d = ensure(league);
+      if (s.win === true) { d.wins++; d.pnl += (s.pnl_usd || 0); }
+      else if (s.win === false) { d.losses++; d.pnl += (s.pnl_usd || 0); }
+    } else if (s.type === "signal_timeout") {
+      ensure(league).timeouts++;
+    } else if (s.type === "timeout_resolved") {
+      const d = ensure(league);
+      if (s.verdict === "filter_saved_us") d.timeout_saved++;
+      else if (s.verdict === "filter_cost_us") d.timeout_cost++;
+    }
+  }
+
+  // Active now from watchlist
+  const wl = state?.watchlist || {};
+  for (const m of Object.values(wl)) {
+    if (!m) continue;
+    const l = m.league || "unknown";
+    const d = ensure(l);
+    // Discovered today: first_seen_ts within today
+    if (m.first_seen_ts && m.first_seen_ts >= dayStartUtc) {
+      d.discovered = (d.discovered || 0) + 1;
+    }
+  }
+
+  // Convert Sets to counts for JSON serialization
+  const result = {};
+  for (const [league, d] of Object.entries(byLeague)) {
+    result[league] = {
+      signaled_unique: d.signaled_slugs.size,
+      signaled_total: d.signaled,
+      wins: d.wins,
+      losses: d.losses,
+      timeouts: d.timeouts,
+      timeout_saved: d.timeout_saved,
+      timeout_cost: d.timeout_cost,
+      pnl: Math.round(d.pnl * 100) / 100,
+      discovered: d.discovered || 0,
+    };
+  }
+
+  _dailyUtilCache = { ts: now, data: result };
+  return result;
 }
 
 /**
@@ -318,6 +405,7 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
     },
 
     league_summary: computeLeagueSummary(state),
+    daily_utilization: computeDailyUtilization(state),
     reject_reasons: {
       top5: rejectReasons.top5,
       other_count: rejectReasons.other_count

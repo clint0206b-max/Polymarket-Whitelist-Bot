@@ -395,23 +395,33 @@
         }).join('');
       }
 
-      // Daily utilization
-      const bl = h.league_summary;
-      if (bl && Object.keys(bl).length) {
+      // Daily utilization (from signals.jsonl, not just active watchlist)
+      const du = h.daily_utilization;
+      if (du && Object.keys(du).length) {
         $('daily-empty').classList.add('hidden');
-        $('daily-util').innerHTML = Object.entries(bl).sort((a,b) => b[1].total - a[1].total).map(([league, d]) => {
-          const total = d.total || 0;
-          const sig = d.signaled || 0;
-          const pending = d.pending_signal || 0;
-          const active = sig + pending;
-          const pct = total > 0 ? Math.round((active / total) * 100) : 0;
-          return `<div>
-            <div class="flex justify-between text-xs mb-0.5">
+        $('daily-util').innerHTML = Object.entries(du)
+          .sort((a,b) => (b[1].signaled_total || 0) - (a[1].signaled_total || 0))
+          .map(([league, d]) => {
+          const sig = d.signaled_unique || 0;
+          const wins = d.wins || 0;
+          const losses = d.losses || 0;
+          const to = d.timeouts || 0;
+          const pnl = d.pnl || 0;
+          const disc = d.discovered || 0;
+          const toCost = d.timeout_cost || 0;
+          const toSaved = d.timeout_saved || 0;
+          const wr = (wins + losses) > 0 ? Math.round((wins / (wins + losses)) * 100) : null;
+          const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
+          const pnlColor = pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
+          const toStr = to > 0 ? ` · ${to}TO${toCost ? '('+toCost+'💸)' : ''}${toSaved ? '('+toSaved+'✅)' : ''}` : '';
+          return `<div class="flex justify-between items-center text-xs py-1 border-b border-slate-700/30">
+            <div class="flex items-center gap-2">
               ${leagueBadge(league)}
-              <span class="text-slate-400">${sig}sig ${pending ? pending+'pend ' : ''}/ ${total} (${pct}%)</span>
+              <span class="text-slate-300">${wins}W/${losses}L${wr != null ? ' ('+wr+'%)' : ''}</span>
             </div>
-            <div class="bg-slate-700 rounded-full h-1.5 overflow-hidden">
-              <div class="h-full bg-blue-500 rounded-full" style="width:${Math.max(pct, 2)}%"></div>
+            <div class="flex items-center gap-3">
+              <span class="${pnlColor} mono">${pnlStr}</span>
+              <span class="text-slate-500">${sig}sig${toStr}</span>
             </div>
           </div>`;
         }).join('');
