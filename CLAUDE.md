@@ -232,6 +232,7 @@ Agreed strategy — market price is primary, win_prob is confirmation:
 | CBB | ncaa-basketball | 1 (main) | ESPN CBB | Only fetches events within ±7 days |
 | NBA | nba | 1 (main) | ESPN NBA | Same window, All-Star has no clock data |
 | Esports | esports | Up to 6 (game/map sub-markets) | None | Series guard for BO3/BO5 |
+| Soccer | soccer | 2 per event (team A wins, team B wins) | ESPN Soccer | 11 leagues, Poisson model, gate BLOQUEANTE |
 
 ## Signal Journal Schema (v2)
 
@@ -318,6 +319,32 @@ git push
 - **Mac sleep** will kill the nohup process. No watchdog/restart mechanism yet.
 
 ---
+## Soccer Integration
+
+**Model**: Poisson (discrete goals, ~0.015 goals/min/team)
+**Gate**: BLOQUEANTE (not tag-only like CBB/NBA)
+
+| Rule | Value | Why |
+|------|-------|-----|
+| Min margin | **2 goals** | 1-goal leads vulnerable to late equalizer |
+| Max minutes (margin=2) | **15** | With win_prob ≥ 0.97 threshold |
+| Max minutes (margin=3+) | **20** | With win_prob ≥ 0.95 threshold |
+| Score change cooldown | **90s** | VAR / goal reversal protection |
+| Confidence required | **high** | Only 2nd half, clock 45-90 min |
+| Banned slugs | draw, total, spread, btts, over, under | Only team-win markets |
+| Period | **must be 2** | Blocks 1st half, halftime, extra time |
+
+**11 ESPN leagues**: eng.1, esp.1, ita.1, fra.1, ger.1, uefa.champions, uefa.europa, mex.1, arg.1, ned.1, por.1
+
+**Matching**: normalized team names + aliases (20+), unique match required, ±6h time window, fail-closed on any ambiguity.
+
+**Key files**:
+- `src/strategy/win_prob_table.mjs` — `soccerWinProb()`, `checkSoccerEntryGate()`
+- `src/context/espn_soccer_scoreboard.mjs` — adapter, matching, score tracking
+- `src/gamma/gamma_parser.mjs` — `isSoccerSlug()`, `isSoccerBannedSlug()`
+
+**Not yet integrated into pipeline** — Phases 1-3 done, Phase 4 (pipeline integration) pending.
+
 ## Context Snapshots (win_prob validation)
 
 File: `state/journal/context_snapshots.jsonl`
@@ -333,4 +360,4 @@ Captures win_prob + ask/bid for in-game markets at ALL price levels for model ca
   "ev_edge": 0.08, "margin_for_yes": 12, "minutes_left": 3.5, "period": 2 }
 ```
 
-*Last updated: 2026-02-15 (commit 583af5e+)*
+*Last updated: 2026-02-15 (commit 0638421)*
