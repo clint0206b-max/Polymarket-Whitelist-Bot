@@ -155,6 +155,65 @@ export async function loopResolutionTracker(cfg, state) {
       priceUpdated = true;
     }
 
+    // --- Paper Stop Loss ---
+    const slThreshold = Number(cfg?.paper?.stop_loss_bid ?? 0.70);
+    if (slThreshold > 0 && curPrice != null && curPrice <= slThreshold) {
+      const entryP = Number(row.entry_price);
+      const notional = Number(row.paper_notional_usd);
+      const shares = (entryP > 0 && entryP < 1) ? notional / entryP : 0;
+      const slPnl = shares * (curPrice - entryP);
+      const slRoi = notional > 0 ? slPnl / notional : 0;
+      const pt = row.price_tracking || {};
+
+      appendJsonl("state/journal/signals.jsonl", {
+        type: "signal_close",
+        runner_id: process.env.SHADOW_ID || "prod",
+        signal_id: id,
+        slug: row.slug,
+        title: row.title || null,
+        ts_close: nowMs(),
+        close_reason: "stop_loss",
+        sl_trigger_price: curPrice,
+        sl_threshold: slThreshold,
+        win: false,
+        paper_shares: shares,
+        pnl_usd: slPnl,
+        roi: slRoi,
+        price_min_seen: pt.price_min ?? null,
+        price_max_seen: pt.price_max ?? null,
+        price_last_seen: pt.price_last ?? null,
+        price_samples: pt.samples ?? 0,
+      });
+
+      const pnlStr = `−$${Math.abs(slPnl).toFixed(2)}`;
+      console.log(`[STOP_LOSS] ${row.slug} | price=${curPrice.toFixed(3)} <= ${slThreshold} | ${pnlStr} | entry=${entryP.toFixed(3)}`);
+
+      addClosed(idx, id, {
+        slug: row.slug,
+        title: row.title || null,
+        ts_open: row.ts_open,
+        ts_close: nowMs(),
+        league: row.league || "",
+        entry_price: row.entry_price,
+        paper_notional_usd: row.paper_notional_usd,
+        entry_outcome_name: row.entry_outcome_name,
+        close_reason: "stop_loss",
+        sl_trigger_price: curPrice,
+        win: false,
+        pnl_usd: slPnl,
+        roi: slRoi,
+        price_min_seen: pt.price_min ?? null,
+        price_max_seen: pt.price_max ?? null,
+        price_samples: pt.samples ?? 0,
+      });
+      removeOpen(idx, id);
+      resolvedCount++;
+
+      // Bump health counters
+      health.paper_stop_loss_count = (health.paper_stop_loss_count || 0) + 1;
+      continue;
+    }
+
     const det = detectResolved(r.market);
     if (!det.resolved) continue;
 
