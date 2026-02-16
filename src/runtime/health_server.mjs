@@ -796,6 +796,7 @@ export function startHealthServer(state, opts = {}) {
       as_of_ts: Date.now(),
       items: Object.values(wl).map(m => ({
         slug: m.slug, status: m.status, league: m.league || "",
+        title: m.title || m.question || null,
         last_price: m.last_price || {},
         last_reject: m.last_reject || {},
         first_seen_ts: m.first_seen_ts,
