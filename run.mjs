@@ -80,6 +80,14 @@ let state = null;
 try {
   state = readJsonWithFallback(STATE_PATH) || baseState();
   console.log(`[STATE] Loaded from disk: ${Object.keys(state.watchlist || {}).length} markets, runs=${state.runtime?.runs || 0}`);
+  // Reset per-boot counters (keep lifetime data in state but reset session metrics)
+  if (state.runtime) {
+    state.runtime.runs_since_boot = 0;
+    state.runtime.boot_ts = Date.now();
+    if (state.runtime.health) {
+      state.runtime.health.loop_metrics = null; // Reset histogram + slow loop counters
+    }
+  }
 } catch (e) {
   console.error(`[STATE] Failed to read state, starting fresh: ${e?.message || e}`);
   state = baseState();
@@ -131,6 +139,7 @@ try {
     const loopStartMs = nowMs();
     const now = loopStartMs;
     state.runtime.runs = (state.runtime.runs || 0) + 1;
+    state.runtime.runs_since_boot = (state.runtime.runs_since_boot || 0) + 1;
     state.runtime.last_run_ts = now;
 
     // Initialize loop timing buckets
@@ -318,6 +327,31 @@ try {
           state.runtime.last_resolution_ts = now;
         }
       } catch {}
+      
+      // Reconcile: signaled markets without open paper position → expired
+      // Prevents "stuck signaled" when paper trade closes but watchlist status never updates
+      try {
+        const { loadOpenIndex } = await import("./src/core/journal.mjs");
+        const openIdx = loadOpenIndex();
+        const openSlugs = new Set(Object.values(openIdx.open || {}).map(p => p.slug));
+        const SIGNALED_ORPHAN_GRACE_MS = 120000; // 2min grace after resolve
+        
+        for (const [key, m] of Object.entries(state.watchlist || {})) {
+          if (m.status !== "signaled") continue;
+          if (openSlugs.has(m.slug)) continue; // Still has open position — leave it
+          
+          // Grace period: don't expire immediately (resolution tracker may need a cycle)
+          const resolvedTs = m.tokens?.resolved_ts || 0;
+          if (resolvedTs && (now - resolvedTs) > SIGNALED_ORPHAN_GRACE_MS) {
+            m.status = "expired";
+            m.expired_at_ts = now;
+            m.expired_reason = "signaled_orphan_reconciled";
+            state.runtime.health.signaled_orphan_reconciled = (state.runtime.health.signaled_orphan_reconciled || 0) + 1;
+            console.log(`[RECONCILE] ${m.slug} | signaled without paper position | resolved ${((now - resolvedTs)/60000).toFixed(0)}min ago`);
+          }
+        }
+      } catch {}
+      
       loopTimings.resolution_ms = nowMs() - resolutionStartMs;
 
       state.runtime.last_eval_ts = now;
