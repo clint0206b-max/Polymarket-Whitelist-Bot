@@ -11,7 +11,7 @@
 STOP_AFTER_MS=15000 node run.mjs      # Test run (15s)
 STOP_AFTER_MS=0 node run.mjs          # Run indefinitely (manual)
 node status.mjs                       # Dashboard (reads state, no side effects)
-node --test tests/*.test.mjs          # Run all tests (404 tests)
+node --test tests/*.test.mjs          # Run all tests (437 tests)
 curl -s http://localhost:3210/health | jq  # Health check
 open http://localhost:3210/            # Visual dashboard (auto-refresh 5s)
 ```
@@ -490,4 +490,64 @@ Captures win_prob + ask/bid for in-game markets at ALL price levels for model ca
   "ev_edge": 0.08, "margin_for_yes": 12, "minutes_left": 3.5, "period": 2 }
 ```
 
-*Last updated: 2026-02-16 (commit 3659b6b — WS integration, health monitoring, launchd, loop metrics, audit fixes)*
+## Capture Rate Tracking (commit 61f7195)
+
+Per-market price watermarks in `daily_events.json` → `market_prices`:
+- `max_bid` / `max_bid_ts`: highest bid seen and when
+- `first_cross_ts` / `first_cross_price`: first time bid crossed entry threshold (min_prob)
+- `getSummary()` returns `capture` object: `markets_crossed_threshold`, `markets_entered`, `capture_rate`, `missed_opportunities`
+
+## Pending Timeout Counterfactual (commit d0c3991)
+
+When 6s confirmation window times out, logs `signal_timeout` to signals.jsonl.
+Resolution tracker checks these and writes `timeout_resolved` with:
+- `would_have_won`: did the market resolve in our favor?
+- `hypothetical_pnl_usd`: how much we would have made/lost
+- `verdict`: `filter_saved_us` or `filter_cost_us`
+- `status.mjs` and dashboard show aggregate: saved count vs cost count
+
+## Shadow Runners (commit 3b14325)
+
+A/B test strategy changes without touching prod. Process isolation via `SHADOW_ID` env var.
+
+```bash
+./scripts/shadow-start.sh minprob090 '{"strategy":{"min_prob":0.90}}'
+./scripts/shadow-list.sh              # List active runners
+./scripts/shadow-compare.sh minprob090 # Side-by-side comparison
+./scripts/shadow-stop.sh minprob090
+```
+
+- State isolated to `state-{id}/`, lock inside state dir, auto-assigned port (3211-3260)
+- Kill switch: refuses to start if live trading enabled or state dir = prod
+- Config cascade: defaults → local → shadow override → env vars
+- Config snapshot saved at boot for reproducibility
+- `runner_id` tagged on all signal events and health endpoint
+
+## Visual Dashboard (commit 8d6f26e)
+
+Full command center at `http://localhost:3210/` with Tailwind CSS, dark mode:
+- **Header**: runner_id, build, uptime, semaphores (Loop/WS/Gamma)
+- **Alert banners**: red (loop stale >30s, WS down), yellow (loop slow, Gamma stale)
+- **KPIs**: PnL today, win rate, trades today, open positions, watchlist size
+- **Tables**: open positions, trades today, watchlist live (filterable)
+- **Sidebar**: loop performance, top reject reasons (bar chart), 6s window analysis, daily utilization, config
+
+API endpoints (cached 3s TTL): `/api/health`, `/api/trades`, `/api/positions`, `/api/watchlist`, `/api/config`
+Legacy dashboard at `/legacy`.
+
+## Daily Snapshots (commit d8de816)
+
+Compact daily summary persisted every 5min to `state/snapshots/YYYY-MM-DD.json`:
+- Trades: count, wins, losses, PnL today/total, WR
+- Timeouts: total, resolved, saved_us, cost_us
+- Watchlist status counts, top 10 reject reasons
+- League funnel summary (events → quote → tradeable → signal)
+- Loop performance (runs, slow loops, avg cycle)
+
+Enables day-over-day comparison without parsing JSONL.
+
+## Test Coverage
+
+**Total: 437 tests** (all passing)
+
+*Last updated: 2026-02-16 (commit d8de816 — capture tracking, timeout counterfactual, shadow runners, visual dashboard, daily snapshots)*
