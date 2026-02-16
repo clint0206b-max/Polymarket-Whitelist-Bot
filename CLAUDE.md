@@ -343,7 +343,10 @@ git push
 - `src/context/espn_soccer_scoreboard.mjs` — adapter, matching, score tracking
 - `src/gamma/gamma_parser.mjs` — `isSoccerSlug()`, `isSoccerBannedSlug()`
 
-**Not yet integrated into pipeline** — Phases 1-3 done, Phase 4 (pipeline integration) pending.
+**Fully integrated into pipeline** — Phases 1-4 complete (commit `855bf26`).
+- Soccer gate is BLOQUEANTE in the eval loop (after context snapshot, before Stage 1)
+- ESPN cache: per-league, 15s TTL, fail-closed on fetch errors
+- Needs live games to generate signals (Sunday night = all post-FT)
 
 ## Context Snapshots (win_prob validation)
 
@@ -360,4 +363,4 @@ Captures win_prob + ask/bid for in-game markets at ALL price levels for model ca
   "ev_edge": 0.08, "margin_for_yes": 12, "minutes_left": 3.5, "period": 2 }
 ```
 
-*Last updated: 2026-02-15 (commit 0638421)*
+*Last updated: 2026-02-15 (commit 855bf26)*
