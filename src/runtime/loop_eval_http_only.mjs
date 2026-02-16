@@ -330,6 +330,13 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     return { ok: true, reason: null, bestBid, bestAsk };
   }
 
+  // Cumulative reject counts (never reset, survives across cycles)
+  if (!health.reject_counts_cumulative) health.reject_counts_cumulative = {};
+  function setReject(m, reason, extra) {
+    m.last_reject = { reason, ts: tNow, ...extra };
+    health.reject_counts_cumulative[reason] = (health.reject_counts_cumulative[reason] || 0) + 1;
+  }
+
   // reset per-cycle counters
   health.reject_counts_last_cycle = {};
   health.http_fallback_fail_by_reason_last_cycle = {};
@@ -1380,7 +1387,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         // conservative auto-fix: invalid pending timestamp
         health.pending_integrity_fix_count = (health.pending_integrity_fix_count || 0) + 1;
         bumpBucket("health", "pending_integrity_fix", 1);
-        m.last_reject = { reason: "pending_integrity_fix", ts: tNow };
+        setReject(m, "pending_integrity_fix");
         m.status = "watching";
         delete m.pending_since_ts;
         delete m.pending_deadline_ts;
@@ -1430,7 +1437,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           });
         } catch {}
 
-        m.last_reject = { reason: "pending_timeout", ts: tNow };
+        setReject(m, "pending_timeout");
         m.status = "watching";
         delete m.pending_since_ts;
         delete m.pending_deadline_ts;
@@ -1450,7 +1457,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       health.reject_counts_last_cycle.gamma_metadata_missing = (health.reject_counts_last_cycle.gamma_metadata_missing || 0) + 1;
       bumpBucket("reject", "gamma_metadata_missing", 1);
       bumpBucket("reject", `reject_by_league:${m.league}:gamma_metadata_missing`, 1);
-      m.last_reject = { reason: "gamma_metadata_missing", ts: tNow };
+      setReject(m, "gamma_metadata_missing");
       // integrity: pending should never be missing tokens; don't classify as confirm fail reason
       if (startedPending) health.pending_confirm_integrity_missing_yes_token_count = (health.pending_confirm_integrity_missing_yes_token_count || 0) + 1;
       continue;
@@ -1536,7 +1543,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         bumpBucket("reject", `http_fallback_failed:${r}`, 1);
         bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed:${r}`, 1);
 
-        m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
+        setReject(m, "http_fallback_failed", { detail: r });
         recordPendingConfirmFail("fail_http_fallback_failed");
         continue;
       }
@@ -1558,7 +1565,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         bumpBucket("reject", `http_fallback_failed:${r}`, 1);
         bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed:${r}`, 1);
 
-        m.last_reject = { reason: "http_fallback_failed", detail: r, ts: now };
+        setReject(m, "http_fallback_failed", { detail: r });
         recordPendingConfirmFail("fail_http_fallback_failed");
         continue;
       }
@@ -1636,11 +1643,9 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         bumpBucket("reject", `reject_by_league:${m.league}:quote_incomplete_integrity_both_missing`, 1);
       }
 
-      m.last_reject = {
-        reason: "quote_incomplete_one_sided_book",
-        detail: (bestAsk == null && bestBid == null) ? "missing_best_ask+missing_best_bid" : (bestAsk == null ? "missing_best_ask" : "missing_best_bid"),
-        ts: tNow
-      };
+      setReject(m, "quote_incomplete_one_sided_book", {
+        detail: (bestAsk == null && bestBid == null) ? "missing_best_ask+missing_best_bid" : (bestAsk == null ? "missing_best_ask" : "missing_best_bid")
+      });
       recordPendingConfirmFail("fail_quote_incomplete");
 
       // still persist partial last_price for observability
@@ -1755,7 +1760,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         const reason = m.context_entry?.entry_blocked_reason || "no_soccer_context";
         bumpBucket("reject", `soccer_gate_blocked:${reason}`, 1);
         bumpBucket("reject", `reject_by_league:soccer:soccer_gate_blocked`, 1);
-        m.last_reject = { reason: `soccer_gate:${reason}`, ts: tNow };
+        setReject(m, `soccer_gate:${reason}`);
         if (startedPending) recordPendingConfirmFail(`soccer_gate:${reason}`);
         continue;
       }
@@ -1850,7 +1855,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       health.reject_counts_last_cycle[base.reason] = (health.reject_counts_last_cycle[base.reason] || 0) + 1;
       bumpBucket("reject", base.reason, 1);
       bumpBucket("reject", `reject_by_league:${m.league}:${base.reason}`, 1);
-      m.last_reject = { reason: base.reason, ts: tNow };
+      setReject(m, base.reason);
       if (base.reason === "price_out_of_range") recordPendingConfirmFail("fail_base_price_out_of_range");
       else if (base.reason === "spread_above_max") recordPendingConfirmFail("fail_spread_above_max");
       continue;
@@ -1871,7 +1876,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       health.gray_zone_count = (health.gray_zone_count || 0) + 1;
       health.gray_zone_count_last_cycle = (health.gray_zone_count_last_cycle || 0) + 1;
       // Action 2: terminal outcome of tick
-      m.last_reject = { reason: "fail_near_margin", ts: tNow };
+      setReject(m, "fail_near_margin");
       if (startedPending) recordPendingConfirmFail("fail_near_margin");
       continue;
     }
@@ -1893,7 +1898,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       health.reject_counts_last_cycle[depth.reason] = (health.reject_counts_last_cycle[depth.reason] || 0) + 1;
       bumpBucket("reject", depth.reason, 1);
       bumpBucket("reject", `reject_by_league:${m.league}:${depth.reason}`, 1);
-      m.last_reject = { reason: depth.reason, ts: tNow };
+      setReject(m, depth.reason);
       if (depth.reason === "depth_bid_below_min") recordPendingConfirmFail("fail_depth_bid_below_min");
       else if (depth.reason === "depth_ask_below_min") recordPendingConfirmFail("fail_depth_ask_below_min");
       continue;
@@ -1914,7 +1919,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         health.reject_counts_last_cycle.cooldown_active = (health.reject_counts_last_cycle.cooldown_active || 0) + 1;
         bumpBucket("reject", "cooldown_active", 1);
         bumpBucket("reject", `reject_by_league:${m.league}:cooldown_active`, 1);
-        m.last_reject = { reason: "cooldown_active", ts: tNow };
+        setReject(m, "cooldown_active");
         continue;
       }
     } else if (m.status === "pending_signal") {
@@ -1963,7 +1968,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         pending_deadline_ts: Number(m.pending_deadline_ts)
       };
 
-      m.last_reject = { reason: "pending_entered", ts: tNow };
+      setReject(m, "pending_entered");
       changed = true;
       createdPendingThisTick = true;
 
@@ -2151,7 +2156,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       });
       if (state.runtime.last_signals.length > 20) state.runtime.last_signals = state.runtime.last_signals.slice(-20);
 
-      m.last_reject = { reason: "signaled", ts: tNow };
+      setReject(m, "signaled");
       changed = true;
     }
   }

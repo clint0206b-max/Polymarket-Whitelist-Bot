@@ -47,27 +47,33 @@ describe("buildHealthResponse", () => {
     assert.equal(response.watchlist.by_league.esports, 1);
   });
 
-  it("includes reject reasons top5 + other from watching markets", () => {
-    const wl = {};
-    // Create 7 watching markets with different reject reasons (some repeated)
-    for (let i = 0; i < 5; i++) wl[`m${i}`] = { status: "watching", last_reject: { reason: "reason_a" } };
-    for (let i = 5; i < 8; i++) wl[`m${i}`] = { status: "watching", last_reject: { reason: "reason_b" } };
-    for (let i = 8; i < 10; i++) wl[`m${i}`] = { status: "watching", last_reject: { reason: "reason_c" } };
-    wl.m10 = { status: "watching", last_reject: { reason: "reason_d" } };
-    wl.m11 = { status: "watching", last_reject: { reason: "reason_e" } };
-    wl.m12 = { status: "watching", last_reject: { reason: "reason_f" } };
-    wl.m13 = { status: "watching", last_reject: { reason: "reason_g" } };
-    // signaled markets should NOT count
-    wl.m14 = { status: "signaled", last_reject: { reason: "reason_a" } };
-
-    const state = { watchlist: wl, runtime: { health: {} } };
+  it("includes reject reasons top5 + other from cumulative counts", () => {
+    const state = {
+      watchlist: {},
+      runtime: {
+        health: {
+          reject_counts_cumulative: {
+            price_out_of_range: 100,
+            soccer_gate: 80,
+            fail_near_margin: 50,
+            http_fallback_failed: 30,
+            gamma_metadata_missing: 20,
+            cooldown_active: 10,
+            quote_incomplete: 5,
+            // these should be filtered out
+            signaled: 999,
+            pending_entered: 999,
+          }
+        }
+      }
+    };
     const response = buildHealthResponse(state, Date.now(), "test");
 
     assert.ok(response.reject_reasons.top5);
     assert.equal(response.reject_reasons.top5.length, 5);
-    assert.equal(response.reject_reasons.top5[0].reason, "reason_a");
-    assert.equal(response.reject_reasons.top5[0].count, 5);
-    assert.equal(response.reject_reasons.other_count, 2); // reason_f + reason_g
+    assert.equal(response.reject_reasons.top5[0].reason, "price_out_of_range");
+    assert.equal(response.reject_reasons.top5[0].count, 100);
+    assert.equal(response.reject_reasons.other_count, 15); // cooldown_active + quote_incomplete
   });
 
   it("includes time in status for signaled and pending", () => {

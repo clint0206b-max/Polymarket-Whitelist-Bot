@@ -158,16 +158,12 @@ function computeLeagueBreakdown(state) {
  * @returns {object} - { top5: Array, other_count: number }
  */
 function computeRejectReasons(state) {
-  // Count last_reject reasons from all watching markets (current state, always accurate)
-  const wl = state?.watchlist || {};
-  const counts = {};
-  for (const m of Object.values(wl)) {
-    if (!m || m.status !== "watching") continue;
-    const reason = m.last_reject?.reason;
-    if (reason) counts[reason] = (counts[reason] || 0) + 1;
-  }
+  // Use cumulative reject counts (monotonically increasing, stable for dashboard)
+  const counts = state?.runtime?.health?.reject_counts_cumulative || {};
 
-  const entries = Object.entries(counts).map(([reason, count]) => ({ reason, count }));
+  const entries = Object.entries(counts)
+    .filter(([r]) => r !== "signaled" && r !== "pending_entered") // exclude non-reject statuses
+    .map(([reason, count]) => ({ reason, count }));
   entries.sort((a, b) => b.count - a.count);
 
   const top5 = entries.slice(0, 5);
