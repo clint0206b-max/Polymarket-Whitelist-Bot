@@ -274,6 +274,17 @@ try {
       state.runtime.health.state_write_count = (state.runtime.health.state_write_count || 0) + 1;
       state.runtime.last_state_write_ts = now;
       bumpHealthBucket(state, now, "state_write", 1);
+
+      // Size guardrail: warn if state exceeds 1MB (regression detection)
+      const stateJson = JSON.stringify(state);
+      const stateSizeKB = Math.round(stateJson.length / 1024);
+      if (stateJson.length > 1_000_000) {
+        const runtimeKB = Math.round(JSON.stringify(state.runtime || {}).length / 1024);
+        const cacheKB = Math.round(JSON.stringify(state.runtime?.context_cache || {}).length / 1024);
+        console.warn(`[SIZE_WARN] watchlist.json=${stateSizeKB}KB (runtime=${runtimeKB}KB, cache=${cacheKB}KB) — exceeds 1MB guardrail`);
+        state.runtime.health.state_size_warn_count = (state.runtime.health.state_size_warn_count || 0) + 1;
+        bumpHealthBucket(state, now, "state_size_warn", 1);
+      }
       writeJsonAtomic(STATE_PATH, state);
     } else {
       state.runtime.health.state_write_skipped_count = (state.runtime.health.state_write_skipped_count || 0) + 1;
