@@ -29,7 +29,7 @@ function loadExecutionState() {
   try {
     return JSON.parse(readFileSync(EXECUTION_STATE_PATH, "utf8"));
   } catch {
-    return { trades: {}, daily: {}, last_reconcile_ts: 0 };
+    return { trades: {}, daily: {}, last_reconcile_ts: 0, paused: false, pause_reason: null };
   }
 }
 
@@ -125,6 +125,12 @@ export class TradeBridge {
 
     const tradeId = `buy:${signal.signal_id}`;
     
+    // Pause check (fail closed — no new buys if SL sell failed or manual pause)
+    if (this.execState.paused) {
+      console.log(`[TRADE_BRIDGE] BLOCKED by pause: ${this.execState.pause_reason || "unknown"}`);
+      return { blocked: true, reason: "paused", pause_reason: this.execState.pause_reason };
+    }
+
     // Idempotency check
     if (this.execState.trades[tradeId]) {
       console.log(`[TRADE_BRIDGE] SKIP duplicate buy: ${tradeId} (status=${this.execState.trades[tradeId].status})`);
@@ -203,6 +209,8 @@ export class TradeBridge {
       
       appendJsonl("state/journal/executions.jsonl", {
         type: "shadow_buy",
+        trade_id: tradeId,
+        mode: this.mode,
         ts: Date.now(),
         ...result,
       });
@@ -241,18 +249,30 @@ export class TradeBridge {
 
         appendJsonl("state/journal/executions.jsonl", {
           type: "trade_executed",
+          trade_id: tradeId,
+          mode: this.mode,
           side: "BUY",
           ts: Date.now(),
           signal_id: signal.signal_id,
           slug: signal.slug,
+          tokenId,
           orderID: result.orderID,
           requestedShares: shares,
           filledShares: result.filledShares,
           avgFillPrice: result.avgFillPrice,
           spentUsd: result.spentUsd,
+          entryPrice,
           isPartial: result.isPartial,
           slippage_pct: slippage,
         });
+
+        // Post-execution quick reconcile: verify position exists
+        try {
+          const condBal = await getConditionalBalance(this.client, tokenId);
+          if (condBal < result.filledShares * 0.5) {
+            console.warn(`[POST_FILL_CHECK] ${signal.slug} | conditional balance ${condBal} << filled ${result.filledShares} — possible fill issue`);
+          }
+        } catch {}
 
         return result;
       } else {
@@ -263,11 +283,16 @@ export class TradeBridge {
         console.error(`[FAILED_BUY] ${signal.slug} | ${result.error}`);
         appendJsonl("state/journal/executions.jsonl", {
           type: "trade_failed",
+          trade_id: tradeId,
+          mode: this.mode,
           side: "BUY",
           ts: Date.now(),
           signal_id: signal.signal_id,
           slug: signal.slug,
+          tokenId,
           error: result.error,
+          requestedShares: shares,
+          entryPrice,
         });
 
         return result;
@@ -323,6 +348,8 @@ export class TradeBridge {
       
       appendJsonl("state/journal/executions.jsonl", {
         type: "shadow_sell",
+        trade_id: sellTradeId,
+        mode: this.mode,
         ts: Date.now(),
         ...result,
       });
@@ -360,9 +387,10 @@ export class TradeBridge {
     };
     saveExecutionState(this.execState);
 
-    // Escalating floor: try at trigger price, then lower
+    // Escalating floor: try at trigger price, then lower (absolute min: SL - 0.10)
+    const absoluteMinFloor = Math.max(0.01, triggerPrice - 0.10);
     for (let i = 0; i < this.slFloorSteps.length; i++) {
-      const floor = Math.max(0.01, triggerPrice - this.slFloorSteps[i]);
+      const floor = Math.max(absoluteMinFloor, triggerPrice - this.slFloorSteps[i]);
       
       console.log(`[SL_SELL] ${signal.slug} | attempt ${i + 1}/${this.slFloorSteps.length} | floor=${floor.toFixed(3)} | shares=${shares}`);
       
@@ -403,18 +431,24 @@ export class TradeBridge {
 
           appendJsonl("state/journal/executions.jsonl", {
             type: "trade_executed",
+            trade_id: sellTradeId,
+            mode: this.mode,
             side: "SELL",
             close_reason: "stop_loss",
             ts: Date.now(),
             signal_id: signal.signal_id,
             slug: signal.slug,
+            tokenId,
             orderID: result.orderID,
+            requestedShares: shares,
             filledShares: result.filledShares,
             avgFillPrice: result.avgFillPrice,
             receivedUsd: result.spentUsd,
             pnl_usd: pnl,
             floor_used: floor,
+            absoluteMinFloor,
             attempt: i + 1,
+            total_attempts: this.slFloorSteps.length,
           });
 
           return result;
@@ -428,10 +462,12 @@ export class TradeBridge {
       }
     }
 
-    // All attempts failed — critical safety: pause trading
+    // All attempts failed — critical safety: pause ALL trading (no new buys OR sells)
     this.execState.trades[sellTradeId].status = "failed_all_attempts";
+    this.execState.paused = true;
+    this.execState.pause_reason = `sl_sell_failed:${signal.slug}:${new Date().toISOString()}`;
     saveExecutionState(this.execState);
-    console.error(`[SL_SELL_FAILED] ${signal.slug} | ALL ${this.slFloorSteps.length} attempts failed — PAUSING TRADING`);
+    console.error(`[SL_SELL_FAILED] ${signal.slug} | ALL ${this.slFloorSteps.length} attempts failed — PAUSING ALL TRADING`);
     
     appendJsonl("state/journal/executions.jsonl", {
       type: "sl_sell_failed",
@@ -490,12 +526,16 @@ export class TradeBridge {
 
         appendJsonl("state/journal/executions.jsonl", {
           type: "trade_executed",
+          trade_id: sellTradeId,
+          mode: this.mode,
           side: "SELL",
           close_reason: signal.close_reason,
           ts: Date.now(),
           signal_id: signal.signal_id,
           slug: signal.slug,
+          tokenId,
           orderID: result.orderID,
+          requestedShares: shares,
           filledShares: result.filledShares,
           avgFillPrice: result.avgFillPrice,
           receivedUsd: result.spentUsd,
@@ -567,6 +607,8 @@ export class TradeBridge {
     
     return {
       mode: this.mode,
+      paused: this.execState.paused || false,
+      pause_reason: this.execState.pause_reason || null,
       open_positions: openTrades.length,
       total_exposure_usd: totalExposure,
       daily_trades: this.execState.daily[day] || 0,
