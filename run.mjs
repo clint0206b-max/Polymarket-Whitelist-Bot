@@ -397,13 +397,21 @@ try {
     else if (loopTotalMs < 5000) metrics.histogram["3000-5000ms"]++;
     else metrics.histogram["5000ms+"]++;
     
-    // Slow loop detection & logging
-    if (loopTotalMs >= 5000) {
-      metrics.very_slow_loops++;
-      console.warn(`[VERY_SLOW_LOOP] ${loopTotalMs}ms | gamma=${loopTimings.gamma_ms}ms eval=${loopTimings.eval_ms}ms persist=${loopTimings.persist_ms}ms`);
-    } else if (loopTotalMs >= 3000) {
-      metrics.slow_loops++;
-      console.warn(`[SLOW_LOOP] ${loopTotalMs}ms | gamma=${loopTimings.gamma_ms}ms eval=${loopTimings.eval_ms}ms persist=${loopTimings.persist_ms}ms`);
+    // Slow loop detection & logging (with memory metrics)
+    if (loopTotalMs >= 3000) {
+      const mem = process.memoryUsage();
+      const heapMB = Math.round(mem.heapUsed / 1024 / 1024);
+      const heapTotalMB = Math.round(mem.heapTotal / 1024 / 1024);
+      const externalMB = Math.round(mem.external / 1024 / 1024);
+      const marketCount = Object.keys(state.watchlist || {}).length;
+      
+      if (loopTotalMs >= 5000) {
+        metrics.very_slow_loops++;
+        console.warn(`[VERY_SLOW_LOOP] ${loopTotalMs}ms | gamma=${loopTimings.gamma_ms}ms eval=${loopTimings.eval_ms}ms persist=${loopTimings.persist_ms}ms | markets=${marketCount} heapUsed=${heapMB}MB heapTotal=${heapTotalMB}MB external=${externalMB}MB`);
+      } else {
+        metrics.slow_loops++;
+        console.warn(`[SLOW_LOOP] ${loopTotalMs}ms | gamma=${loopTimings.gamma_ms}ms eval=${loopTimings.eval_ms}ms persist=${loopTimings.persist_ms}ms | markets=${marketCount} heapUsed=${heapMB}MB heapTotal=${heapTotalMB}MB external=${externalMB}MB`);
+      }
     }
 
     if (stopAfterMs > 0 && now - started >= stopAfterMs) {

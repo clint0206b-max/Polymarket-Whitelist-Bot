@@ -267,12 +267,16 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       const healthBuckets = state?.runtime?.health?.buckets?.health;
       let wsUsed = 0;
       let httpUsed = 0;
+      let httpCacheMiss = 0;
+      let httpStale = 0;
       
       if (healthBuckets?.buckets) {
         for (const bucket of healthBuckets.buckets) {
           if (bucket.counts) {
             wsUsed += (bucket.counts.price_source_ws_both || 0) + (bucket.counts.price_source_ws_yes || 0);
             httpUsed += bucket.counts.price_source_http_fallback || 0;
+            httpCacheMiss += bucket.counts.price_source_http_fallback_cache_miss || 0;
+            httpStale += bucket.counts.price_source_http_fallback_stale || 0;
           }
         }
       }
@@ -280,11 +284,19 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       const total = wsUsed + httpUsed;
       const wsRatio = total > 0 ? Math.round((wsUsed / total) * 1000) / 10 : 0; // percent with 1 decimal
       
+      // Validate that cache_miss + stale = total http_fallback
+      const sumBreakdown = httpCacheMiss + httpStale;
+      if (sumBreakdown !== httpUsed && httpUsed > 0) {
+        console.warn(`[HEALTH] HTTP fallback mismatch: cache_miss=${httpCacheMiss} + stale=${httpStale} = ${sumBreakdown} != total=${httpUsed}`);
+      }
+      
       return {
         ...wsMetrics,
         usage: {
           ws_price_fetches: wsUsed,
           http_fallback_fetches: httpUsed,
+          http_fallback_cache_miss: httpCacheMiss,
+          http_fallback_stale: httpStale,
           ws_ratio_percent: wsRatio
         }
       };

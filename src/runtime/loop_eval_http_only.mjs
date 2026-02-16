@@ -1341,6 +1341,14 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       // WS stale or missing: fallback to HTTP
       priceSource = "http_fallback";
       bumpBucket("health", "price_source_http_fallback", 1);
+      
+      // Distinguish cache_miss vs stale for diagnosis
+      if (!wsYes) {
+        bumpBucket("health", "price_source_http_fallback_cache_miss", 1);
+      } else {
+        // wsYes exists but !wsYesFresh
+        bumpBucket("health", "price_source_http_fallback_stale", 1);
+      }
     }
 
     // HTTP fallback if WS didn't provide usable prices
