@@ -1450,7 +1450,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     // Triggered relaxed hot candidate (observability): ignore base range, require spread+near+depth
     const nearOkForRelaxed = (await Promise.resolve(is_near_signal_margin(quote, cfg)));
     if (spreadPass && nearOkForRelaxed) {
-      const metricsRelax = compute_depth_metrics(parsed.book, cfg);
+      const metricsRelax = compute_depth_metrics(parsedYes.book, cfg);
       const depthRelax = is_depth_sufficient(metricsRelax, cfg);
       if (depthRelax.pass) {
         bumpBucket("health", "hot_candidate_relaxed", 1);
@@ -1500,7 +1500,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     bumpBucket("health", "near_margin_pass", 1);
 
     // Stage 2 metrics from the same book (no extra HTTP)
-    const metrics = compute_depth_metrics(parsed.book, cfg);
+    const metrics = compute_depth_metrics(parsedYes.book, cfg);
     m.liquidity = {
       entry_depth_usd_ask: metrics.entry_depth_usd_ask,
       exit_depth_usd_bid: metrics.exit_depth_usd_bid,

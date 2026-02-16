@@ -28,8 +28,8 @@
 
     "only_live_default": true,
     "only_live_by_league": {
-      "cbb": false,
-      "nba": false,
+      "cbb": true,
+      "nba": true,
       "esports": true
     },
 
@@ -40,7 +40,7 @@
       "esports": 30
     },
     "events_max_markets_per_event": 6,
-    "min_vol24h_usd": 2000,
+    "min_vol24h_usd": 200,
 
     "keep_missing_date": false,
     "min_days_delta_keep_by_league": {
@@ -49,9 +49,9 @@
       "esports": -1
     },
     "max_days_delta_keep_by_league": {
-      "cbb": 7,
-      "nba": 7,
-      "esports": 2
+      "cbb": 1,
+      "nba": 1,
+      "esports": 1
     }
   },
   "filters": {
