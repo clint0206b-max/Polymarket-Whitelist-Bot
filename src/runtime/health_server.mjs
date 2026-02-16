@@ -211,17 +211,7 @@ function computeDailyUtilization(state) {
   const signalsPath = statePath("journal", "signals.jsonl");
   const { items: signals } = cachedReadJsonl(signalsPath, 5000);
 
-  const byLeague = {};
-  const ensure = (l) => {
-    if (!byLeague[l]) byLeague[l] = {
-      signaled: 0, signaled_slugs: new Set(),
-      wins: 0, losses: 0, timeouts: 0,
-      pnl: 0, timeout_cost: 0, timeout_saved: 0,
-    };
-    return byLeague[l];
-  };
-
-  // Build signal_id → league lookup from opens (for enriching closes that lack league)
+  // Build signal_id → league lookup from opens
   const leagueBySignalId = {};
   for (const s of signals) {
     if (s.type === "signal_open" && s.signal_id && s.league) {
@@ -229,55 +219,69 @@ function computeDailyUtilization(state) {
     }
   }
 
+  // Per-league accumulators
+  const byLeague = {};
+  const ensure = (l) => {
+    if (!byLeague[l]) byLeague[l] = {
+      discovered_slugs: new Set(),
+      signaled_slugs: new Set(),
+      wins: 0, losses: 0, timeouts: 0,
+      pnl: 0, timeout_cost: 0, timeout_saved: 0,
+    };
+    return byLeague[l];
+  };
+
+  // 1. Discovered from watchlist: markets with first_seen_ts today (still alive)
+  const wl = state?.watchlist || {};
+  for (const m of Object.values(wl)) {
+    if (!m) continue;
+    const l = m.league || "unknown";
+    if (m.first_seen_ts && m.first_seen_ts >= dayStartUtc) {
+      ensure(l).discovered_slugs.add(m.slug);
+    }
+  }
+
+  // 2. From signals.jsonl: events today enrich both discovered and signaled
   for (const s of signals) {
     const ts = s.ts_open || s.ts_close || s.ts || s.resolve_ts || 0;
     if (ts < dayStartUtc) continue;
 
-    // Resolve league: prefer own field, fallback to matching open's league
     const league = s.league || leagueBySignalId[s.signal_id] || "unknown";
+    const d = ensure(league);
 
     if (s.type === "signal_open") {
-      const d = ensure(league);
-      d.signaled++;
       d.signaled_slugs.add(s.slug);
+      d.discovered_slugs.add(s.slug); // signaled ⊂ discovered
     } else if (s.type === "signal_close") {
-      const d = ensure(league);
       if (s.win === true) { d.wins++; d.pnl += (s.pnl_usd || 0); }
       else if (s.win === false) { d.losses++; d.pnl += (s.pnl_usd || 0); }
     } else if (s.type === "signal_timeout") {
-      ensure(league).timeouts++;
+      d.timeouts++;
+      if (s.slug) d.discovered_slugs.add(s.slug); // timed out = was discovered
     } else if (s.type === "timeout_resolved") {
-      const d = ensure(league);
       if (s.verdict === "filter_saved_us") d.timeout_saved++;
       else if (s.verdict === "filter_cost_us") d.timeout_cost++;
     }
   }
 
-  // Active now from watchlist
-  const wl = state?.watchlist || {};
-  for (const m of Object.values(wl)) {
-    if (!m) continue;
-    const l = m.league || "unknown";
-    const d = ensure(l);
-    // Discovered today: first_seen_ts within today
-    if (m.first_seen_ts && m.first_seen_ts >= dayStartUtc) {
-      d.discovered = (d.discovered || 0) + 1;
-    }
-  }
-
-  // Convert Sets to counts for JSON serialization
+  // Build result: passed = discovered - signaled (derived)
   const result = {};
   for (const [league, d] of Object.entries(byLeague)) {
+    const discovered = d.discovered_slugs.size;
+    const signaled = d.signaled_slugs.size;
+    const passed = discovered - signaled;
+    const conversion = discovered > 0 ? Math.round((signaled / discovered) * 1000) / 10 : 0;
     result[league] = {
-      signaled_unique: d.signaled_slugs.size,
-      signaled_total: d.signaled,
+      discovered,
+      signaled,
+      passed,
+      conversion_pct: conversion,
       wins: d.wins,
       losses: d.losses,
+      pnl: Math.round(d.pnl * 100) / 100,
       timeouts: d.timeouts,
       timeout_saved: d.timeout_saved,
       timeout_cost: d.timeout_cost,
-      pnl: Math.round(d.pnl * 100) / 100,
-      discovered: d.discovered || 0,
     };
   }
 
