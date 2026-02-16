@@ -222,7 +222,8 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       runs: state?.runtime?.runs || 0,
       last_cycle_ts: lastCycleTs || null,
       last_cycle_age_seconds: lastCycleAgeSeconds,
-      cycle_duration_ms_avg: computeAvgCycleDuration(state)
+      cycle_duration_ms_avg: computeAvgCycleDuration(state),
+      performance: state?.runtime?.health?.loop_metrics || null
     },
 
     http: {
@@ -258,7 +259,36 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       other_count: rejectReasons.other_count
     },
 
-    websocket: state?.runtime?.wsClient?.getMetrics() || null,
+    websocket: (() => {
+      const wsMetrics = state?.runtime?.wsClient?.getMetrics();
+      if (!wsMetrics) return null;
+      
+      // Sum WS vs HTTP usage from rolling buckets (last 5 minutes)
+      const healthBuckets = state?.runtime?.health?.buckets?.health;
+      let wsUsed = 0;
+      let httpUsed = 0;
+      
+      if (healthBuckets?.buckets) {
+        for (const bucket of healthBuckets.buckets) {
+          if (bucket.counts) {
+            wsUsed += (bucket.counts.price_source_ws_both || 0) + (bucket.counts.price_source_ws_yes || 0);
+            httpUsed += bucket.counts.price_source_http_fallback || 0;
+          }
+        }
+      }
+      
+      const total = wsUsed + httpUsed;
+      const wsRatio = total > 0 ? Math.round((wsUsed / total) * 1000) / 10 : 0; // percent with 1 decimal
+      
+      return {
+        ...wsMetrics,
+        usage: {
+          ws_price_fetches: wsUsed,
+          http_fallback_fetches: httpUsed,
+          ws_ratio_percent: wsRatio
+        }
+      };
+    })(),
 
     time_in_status: {
       signaled_top5: timeInStatus.signaled,

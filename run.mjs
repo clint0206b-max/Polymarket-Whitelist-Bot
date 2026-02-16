@@ -128,9 +128,13 @@ try {
 
 try {
   while (running) {
-    const now = nowMs();
+    const loopStartMs = nowMs();
+    const now = loopStartMs;
     state.runtime.runs = (state.runtime.runs || 0) + 1;
     state.runtime.last_run_ts = now;
+
+    // Initialize loop timing buckets
+    const loopTimings = { gamma_ms: 0, eval_ms: 0, persist_ms: 0 };
 
     // --- Phase 1: Gamma discovery loop ---
     const lastGamma = Number(state.runtime.last_gamma_fetch_ts || 0);
@@ -141,6 +145,7 @@ try {
     const evalEveryMs = Number(cfg.polling?.clob_eval_seconds || 3) * 1000;
 
     if (now - lastGamma >= gammaEveryMs) {
+      const gammaStartMs = nowMs();
       const { loopGamma } = await import("./src/runtime/loop_gamma.mjs");
       const { checkAndFixInvariants } = await import("./src/core/invariants.js");
 
@@ -164,9 +169,12 @@ try {
           dirtyTracker.mark("gamma:markets_updated");
         }
       }
+      
+      loopTimings.gamma_ms = nowMs() - gammaStartMs;
     }
 
     if (now - lastEval >= evalEveryMs) {
+      const evalStartMs = nowMs();
       const { loopEvalHttpOnly } = await import("./src/runtime/loop_eval_http_only.mjs");
       const { checkAndFixInvariants } = await import("./src/core/invariants.js");
       const { loopResolutionTracker } = await import("./src/runtime/loop_resolution_tracker.mjs");
@@ -176,6 +184,8 @@ try {
 
       const r = await loopEvalHttpOnly(state, cfg, now);
       checkAndFixInvariants(state, cfg, now);
+      
+      loopTimings.eval_ms = nowMs() - evalStartMs;
 
       // Journal: paper positions for new signals (append-only) + open_index
       try {
@@ -321,6 +331,7 @@ try {
     const shouldPersist = dirtyTracker.shouldPersist(now, { throttleMs: 5000 });
     
     if (shouldPersist) {
+      const persistStartMs = nowMs();
       state.runtime.health.state_write_count = (state.runtime.health.state_write_count || 0) + 1;
       state.runtime.last_state_write_ts = now;
       bumpHealthBucket(state, now, "state_write", 1);
@@ -353,8 +364,46 @@ try {
       if (reasons.length > 0 && dirtyTracker.isCritical()) {
         console.log(`[PERSIST] Critical write: ${reasons.join(", ")}`);
       }
+      
+      loopTimings.persist_ms = nowMs() - persistStartMs;
     } else {
       state.runtime.health.state_write_skipped_count = (state.runtime.health.state_write_skipped_count || 0) + 1;
+    }
+
+    // === Loop Performance Metrics ===
+    const loopEndMs = nowMs();
+    const loopTotalMs = loopEndMs - loopStartMs;
+    
+    // Initialize loop metrics in health
+    if (!state.runtime.health.loop_metrics) {
+      state.runtime.health.loop_metrics = {
+        histogram: { "0-500ms": 0, "500-1000ms": 0, "1000-2000ms": 0, "2000-3000ms": 0, "3000-5000ms": 0, "5000ms+": 0 },
+        slow_loops: 0,
+        very_slow_loops: 0,
+        last_loop_ms: 0,
+        last_breakdown: {}
+      };
+    }
+    
+    const metrics = state.runtime.health.loop_metrics;
+    metrics.last_loop_ms = loopTotalMs;
+    metrics.last_breakdown = loopTimings;
+    
+    // Update histogram
+    if (loopTotalMs < 500) metrics.histogram["0-500ms"]++;
+    else if (loopTotalMs < 1000) metrics.histogram["500-1000ms"]++;
+    else if (loopTotalMs < 2000) metrics.histogram["1000-2000ms"]++;
+    else if (loopTotalMs < 3000) metrics.histogram["2000-3000ms"]++;
+    else if (loopTotalMs < 5000) metrics.histogram["3000-5000ms"]++;
+    else metrics.histogram["5000ms+"]++;
+    
+    // Slow loop detection & logging
+    if (loopTotalMs >= 5000) {
+      metrics.very_slow_loops++;
+      console.warn(`[VERY_SLOW_LOOP] ${loopTotalMs}ms | gamma=${loopTimings.gamma_ms}ms eval=${loopTimings.eval_ms}ms persist=${loopTimings.persist_ms}ms`);
+    } else if (loopTotalMs >= 3000) {
+      metrics.slow_loops++;
+      console.warn(`[SLOW_LOOP] ${loopTotalMs}ms | gamma=${loopTimings.gamma_ms}ms eval=${loopTimings.eval_ms}ms persist=${loopTimings.persist_ms}ms`);
     }
 
     if (stopAfterMs > 0 && now - started >= stopAfterMs) {
