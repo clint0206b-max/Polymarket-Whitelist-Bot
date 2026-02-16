@@ -26,6 +26,7 @@ export function initClient(credentialsPath, funder) {
   const client = new ClobClient(
     CLOB_URL,
     137, // Polygon chainId
+    wallet, // signer (ethers.Wallet)
     { key: creds.apiKey, secret: creds.secret, passphrase: creds.passphrase },
     SIGNATURE_TYPE,
     funder
