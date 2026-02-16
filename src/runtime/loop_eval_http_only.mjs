@@ -1201,11 +1201,15 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       continue;
     }
 
-    // Reason A: need usable price
-    const resp = await queue.enqueue(() => getBook(yesToken, cfg), { reason: "price" });
-    if (!resp.ok) {
+    // Reason A: need usable price (fetch both YES and NO token books for complementary pricing)
+    const noToken = m.tokens.no_token_id;
+    
+    const respYes = await queue.enqueue(() => getBook(yesToken, cfg), { reason: "price" });
+    const respNo = noToken ? await queue.enqueue(() => getBook(noToken, cfg), { reason: "price" }) : { ok: false };
+    
+    if (!respYes.ok && !respNo.ok) {
       // health
-      if (resp.http_status === 429 || resp.error_code === "http_429") {
+      if (respYes.http_status === 429 || respYes.error_code === "http_429") {
         health.rate_limited_count = (health.rate_limited_count || 0) + 1;
         health.last_rate_limited_ts = now;
       }
@@ -1227,15 +1231,18 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     health.http_fallback_success_count = (health.http_fallback_success_count || 0) + 1;
 
-    const parsed = parseAndNormalizeBook(resp.rawBook, cfg, health);
-    if (!parsed.ok) {
+    // Parse both books
+    const parsedYes = respYes.ok ? parseAndNormalizeBook(respYes.rawBook, cfg, health) : { ok: false, reason: "no_yes_book" };
+    const parsedNo = respNo.ok ? parseAndNormalizeBook(respNo.rawBook, cfg, health) : { ok: false, reason: "no_no_book" };
+
+    if (!parsedYes.ok && !parsedNo.ok) {
       health.http_fallback_fail_count = (health.http_fallback_fail_count || 0) + 1;
       health.reject_counts_last_cycle.http_fallback_failed = (health.reject_counts_last_cycle.http_fallback_failed || 0) + 1;
       bumpBucket("reject", "http_fallback_failed", 1);
       bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed`, 1);
 
       // breakdown (observability)
-      const r = String(parsed.reason || "book_not_usable");
+      const r = String(parsedYes.reason || "book_not_usable");
       health.http_fallback_fail_by_reason_last_cycle[r] = (health.http_fallback_fail_by_reason_last_cycle[r] || 0) + 1;
       bumpBucket("reject", `http_fallback_failed:${r}`, 1);
       bumpBucket("reject", `reject_by_league:${m.league}:http_fallback_failed:${r}`, 1);
@@ -1245,7 +1252,42 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       continue;
     }
 
-    const { bestAsk, bestBid } = parsed.book;
+    // Construct best ask/bid with complementary pricing logic
+    // For binary markets: YES price + NO price = 1.00
+    // yes_best_ask = min(yes_book.asks[0], 1 - no_book.bids[0])  ← cheapest way to buy YES
+    // yes_best_bid = max(yes_book.bids[0], 1 - no_book.asks[0])  ← best way to sell YES
+    
+    const yesBookAsk = parsedYes.ok ? parsedYes.book.bestAsk : null;
+    const yesBookBid = parsedYes.ok ? parsedYes.book.bestBid : null;
+    const noBookBid = parsedNo.ok ? parsedNo.book.bestBid : null;
+    const noBookAsk = parsedNo.ok ? parsedNo.book.bestAsk : null;
+
+    // Synthetic prices from NO book (complement)
+    const yesSyntheticAsk = noBookBid != null ? (1 - noBookBid) : null;
+    const yesSyntheticBid = noBookAsk != null ? (1 - noBookAsk) : null;
+
+    // Choose best prices (min for ask, max for bid)
+    let bestAsk = null;
+    if (yesBookAsk != null && yesSyntheticAsk != null) {
+      bestAsk = Math.min(yesBookAsk, yesSyntheticAsk);
+    } else {
+      bestAsk = yesBookAsk ?? yesSyntheticAsk;
+    }
+
+    let bestBid = null;
+    if (yesBookBid != null && yesSyntheticBid != null) {
+      bestBid = Math.max(yesBookBid, yesSyntheticBid);
+    } else {
+      bestBid = yesBookBid ?? yesSyntheticBid;
+    }
+
+    // Observability: log when synthetic prices are used (sanity check)
+    if (bestAsk != null && yesBookAsk == null && yesSyntheticAsk != null) {
+      bumpBucket("health", "price_synthetic_ask_used", 1);
+    }
+    if (bestBid != null && yesBookBid == null && yesSyntheticBid != null) {
+      bumpBucket("health", "price_synthetic_bid_used", 1);
+    }
 
     // Quote usability gate (v1 strict): need BOTH bestAsk + bestBid to compute spread and evaluate Stage 1.
     if (bestAsk == null || bestBid == null) {
