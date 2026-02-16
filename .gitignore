@@ -12,3 +12,5 @@ state/*.lock
 src/config/local.json
 state-*/
 !state-*/.keep
+state/execution_state.json
+state/journal/executions.jsonl

@@ -7,6 +7,7 @@ import { readJsonWithFallback, writeJsonAtomic, resolvePath } from "./src/core/s
 import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, reconcileIndex } from "./src/core/journal.mjs";
 import { DirtyTracker, detectChanges } from "./src/core/dirty_tracker.mjs";
 import { startHealthServer } from "./src/runtime/health_server.mjs";
+import { TradeBridge, validateBootConfig } from "./src/execution/trade_bridge.mjs";
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -187,6 +188,37 @@ try {
   console.error(`[HEALTH] Failed to start HTTP server: ${e?.message || e}`);
 }
 
+// --- Trade Bridge (paper / shadow_live / live) ---
+let tradeBridge = null;
+{
+  const bootCheck = validateBootConfig(cfg);
+  if (!bootCheck.valid) {
+    const mode = cfg?.trading?.mode || "paper";
+    if (mode !== "paper") {
+      console.error(`[BOOT] FATAL: trading config invalid for mode=${mode}:`);
+      bootCheck.errors.forEach(e => console.error(`  - ${e}`));
+      process.exit(1);
+    }
+    if (bootCheck.errors.length) {
+      console.log(`[BOOT] Trading config warnings (paper mode, ignored): ${bootCheck.errors.join("; ")}`);
+    }
+  }
+  
+  tradeBridge = new TradeBridge(cfg, state);
+  const tradingMode = cfg?.trading?.mode || "paper";
+  console.log(`[BOOT] trading.mode=${tradingMode} | SL=${cfg?.paper?.stop_loss_bid || "none"} | max_pos=$${cfg?.trading?.max_position_usd || "?"}`);
+  
+  if (tradingMode !== "paper") {
+    try {
+      const initResult = await tradeBridge.init();
+      console.log(`[BOOT] Trade bridge initialized | balance=$${initResult?.balance?.toFixed(2) || "?"}`);
+    } catch (e) {
+      console.error(`[BOOT] FATAL: Trade bridge init failed: ${e.message}`);
+      process.exit(1);
+    }
+  }
+}
+
 try {
   while (running) {
     const loopStartMs = nowMs();
@@ -365,6 +397,27 @@ try {
           }
           saveOpenIndex(idx);
 
+          // === TRADE BRIDGE: execute buys for new signals ===
+          if (tradeBridge && tradeBridge.mode !== "paper") {
+            for (const s of newOnes) {
+              const wm = wlBySlug.get(String(s.slug || ""));
+              const yesToken = wm?.tokens?.yes_token_id;
+              const entryPrice = Number(s.probAsk);
+              const signalId = `${s.ts}|${s.slug}`;
+              try {
+                await tradeBridge.handleSignalOpen({
+                  signal_id: signalId,
+                  slug: String(s.slug || ""),
+                  entry_price: entryPrice,
+                  yes_token: yesToken,
+                  league: String(s.league || ""),
+                });
+              } catch (e) {
+                console.error(`[TRADE_BRIDGE] buy error for ${s.slug}: ${e.message}`);
+              }
+            }
+          }
+
           // Mark CRITICAL dirty: new paper positions opened (must persist immediately)
           dirtyTracker.mark(`eval:signals_generated:${newOnes.length}`, true);
         }
@@ -373,12 +426,34 @@ try {
 
       // Resolve paper positions (cheap: only open signals)
       const resolutionStartMs = nowMs();
+      let resolutionClosedSignals = []; // capture closes for trade bridge
       try {
         const lastRes = Number(state.runtime?.last_resolution_ts || 0);
         const everyResMs = Number(cfg?.paper?.resolution_poll_seconds ?? 60) * 1000;
         if (!lastRes || (now - lastRes) >= everyResMs) {
           await loopResolutionTracker(cfg, state);
           state.runtime.last_resolution_ts = now;
+          
+          // === TRADE BRIDGE: execute sells for closed signals ===
+          // Read recent closes from signals.jsonl (last 20 lines) to find new closes
+          if (tradeBridge && tradeBridge.mode !== "paper") {
+            try {
+              const { readFileSync } = await import("node:fs");
+              const raw = readFileSync("state/journal/signals.jsonl", "utf8");
+              const lines = raw.trim().split("\n").slice(-20);
+              for (const line of lines) {
+                try {
+                  const obj = JSON.parse(line);
+                  if (obj.type === "signal_close" && obj.ts_close && (now - obj.ts_close) < 120000) {
+                    await tradeBridge.handleSignalClose(obj);
+                  }
+                } catch {}
+              }
+            } catch {}
+            
+            // Periodic reconciliation
+            await tradeBridge.reconcilePositions();
+          }
         }
       } catch {}
       
@@ -407,6 +482,11 @@ try {
       } catch {}
       
       loopTimings.resolution_ms = nowMs() - resolutionStartMs;
+
+      // Expose trade bridge status on state for health endpoint
+      if (tradeBridge) {
+        state.runtime.trade_bridge = tradeBridge.getStatus();
+      }
 
       state.runtime.last_eval_ts = now;
 

@@ -9,5 +9,9 @@
     "status": "node status.mjs",
     "status:verbose": "node status.mjs --verbose",
     "journal:stats": "node src/tools/journal_stats.mjs"
+  },
+  "dependencies": {
+    "@polymarket/clob-client": "^5.2.3",
+    "ethers": "^5.8.0"
   }
 }
