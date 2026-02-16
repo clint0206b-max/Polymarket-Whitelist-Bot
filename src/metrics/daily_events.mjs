@@ -29,6 +29,29 @@ export function saveDailyEvents(state) {
 }
 
 /**
+ * Purge date keys older than maxDays from daily events state.
+ * @param {object} state - daily_events state
+ * @param {number} maxDays - max age in days (default 7)
+ * @returns {number} number of purged date keys
+ */
+export function purgeStaleDates(state, maxDays = 7) {
+  if (!state || typeof state !== "object") return 0;
+  const now = new Date();
+  const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - maxDays);
+  let purged = 0;
+  for (const dateKey of Object.keys(state)) {
+    // Only purge keys that look like dates (YYYY-MM-DD)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
+    const d = new Date(dateKey + "T00:00:00Z");
+    if (d < cutoff) {
+      delete state[dateKey];
+      purged++;
+    }
+  }
+  return purged;
+}
+
+/**
  * Get or create event entry for today.
  * @param {object} state - daily_events state
  * @param {string} dateKey - YYYY-MM-DD

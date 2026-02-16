@@ -6,9 +6,9 @@ import { createHttpQueue } from "./http_queue.mjs";
 import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWindow3, mergeScoreboardEventsByWindow } from "../context/espn_cbb_scoreboard.mjs";
 import { fetchEspnNbaScoreboardForDate, deriveNbaContextForMarket } from "../context/espn_nba_scoreboard.mjs";
 import { estimateWinProb, checkContextEntryGate, checkSoccerEntryGate, soccerWinProb } from "../strategy/win_prob_table.mjs";
-import { fetchSoccerScoreboard, matchMarketToGame, deriveSoccerContext, ESPN_LEAGUE_IDS, SLUG_PREFIX_TO_LEAGUE, resetScoreHistory } from "../context/espn_soccer_scoreboard.mjs";
+import { fetchSoccerScoreboard, matchMarketToGame, deriveSoccerContext, ESPN_LEAGUE_IDS, SLUG_PREFIX_TO_LEAGUE, resetScoreHistory, purgeStaleScoreHistory } from "../context/espn_soccer_scoreboard.mjs";
 import { isSoccerSlug } from "../gamma/gamma_parser.mjs";
-import { loadDailyEvents, saveDailyEvents, recordMarketTick } from "../metrics/daily_events.mjs";
+import { loadDailyEvents, saveDailyEvents, recordMarketTick, purgeStaleDates } from "../metrics/daily_events.mjs";
 import { appendJsonl } from "../core/journal.mjs";
 
 function ensure(obj, k, v) { if (obj[k] === undefined) obj[k] = v; }
@@ -418,6 +418,19 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       }
     }
   }
+
+  // Purge stale daily_events entries (>7 days) — once per eval cycle, cheap O(n) on date keys
+  {
+    const de = loadDailyEvents();
+    const purged = purgeStaleDates(de, 7);
+    if (purged > 0) {
+      saveDailyEvents(de);
+      bumpBucket("health", "daily_events_purged", purged);
+    }
+  }
+
+  // Purge stale score history entries (>24h)
+  purgeStaleScoreHistory(now);
 
   // Strip ESPN event to only the fields needed for matching/context (saves ~90% of cache size)
   function stripEspnEvent(ev) {

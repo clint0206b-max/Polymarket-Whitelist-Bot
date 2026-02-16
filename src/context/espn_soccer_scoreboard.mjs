@@ -239,19 +239,39 @@ export function trackScoreChange(gameId, homeScore, awayScore, nowMs) {
 
   if (!prev) {
     // First observation: no history, return null (unknown)
-    _scoreHistory.set(gameId, { homeScore, awayScore, lastChangeTs: null });
+    _scoreHistory.set(gameId, { homeScore, awayScore, lastChangeTs: null, _addedTs: nowMs });
     return null;
   }
 
   if (prev.homeScore !== homeScore || prev.awayScore !== awayScore) {
     // Score changed!
-    _scoreHistory.set(gameId, { homeScore, awayScore, lastChangeTs: nowMs });
+    _scoreHistory.set(gameId, { homeScore, awayScore, lastChangeTs: nowMs, _addedTs: prev._addedTs || nowMs });
     return 0; // just changed
   }
 
   // Score unchanged
   if (prev.lastChangeTs == null) return null; // never seen a change
   return Math.round((nowMs - prev.lastChangeTs) / 1000);
+}
+
+/**
+ * Purge stale entries from score history (older than maxAgeMs).
+ * @param {number} nowMs
+ * @param {number} maxAgeMs - default 24h
+ * @returns {number} number of purged entries
+ */
+export function purgeStaleScoreHistory(nowMs, maxAgeMs = 24 * 60 * 60 * 1000) {
+  let purged = 0;
+  for (const [gameId, entry] of _scoreHistory) {
+    // Use lastChangeTs if available, otherwise consider it stale if we haven't
+    // seen a change and it's been in the map a long time. We track an _addedTs.
+    const age = nowMs - (entry._addedTs || entry.lastChangeTs || 0);
+    if (age > maxAgeMs) {
+      _scoreHistory.delete(gameId);
+      purged++;
+    }
+  }
+  return purged;
 }
 
 /**
