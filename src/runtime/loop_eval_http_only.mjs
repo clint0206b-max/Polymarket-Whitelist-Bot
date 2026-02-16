@@ -1175,7 +1175,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   // === PURGE EXPIRED TTL ===
   // For only_live strategy: purge expired/resolved markets older than X hours
   // This keeps the watchlist fresh and prevents accumulation of stale entries
-  const expiredTtlMinutes = Number(cfg?.purge?.expired_ttl_minutes ?? (Number(cfg?.purge?.expired_ttl_hours || 0) * 60) || 30);
+  const expiredTtlMinutes = Number(cfg?.purge?.expired_ttl_minutes) || (Number(cfg?.purge?.expired_ttl_hours || 0) * 60) || 30;
   const expiredTtlMs = expiredTtlMinutes * 60 * 1000;
   const expiredTtlHours = expiredTtlMinutes / 60;
   let expiredPurgedCount = 0;
