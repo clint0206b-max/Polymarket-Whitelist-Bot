@@ -38,7 +38,7 @@ function cachedReadJsonl(path, ttlMs = 3000) {
   const cached = _fileCache.get(path + ":jsonl");
   if (cached && (Date.now() - cached.ts) < ttlMs) return cached.data;
   try {
-    if (!existsSync(path)) return [];
+    if (!existsSync(path)) return { items: [], parse_errors: 0 };
     const lines = readFileSync(path, "utf8").trim().split("\n").filter(Boolean);
     const data = [];
     let parseErrors = 0;
