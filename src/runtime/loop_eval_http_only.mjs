@@ -200,6 +200,20 @@ function getTokenPair(m) {
   return isValidTokenPair(ids) ? ids : null;
 }
 
+// Price update universe: includes signaled for visibility (spec requirement)
+function pickPriceUpdateUniverse(state, cfg) {
+  const wl = state.watchlist || {};
+  const all = Object.values(wl).filter(Boolean);
+  
+  // Include watching, pending_signal, AND signaled for price updates
+  return all.filter(m => 
+    m.status === "watching" || 
+    m.status === "pending_signal" || 
+    m.status === "signaled"
+  );
+}
+
+// Signal pipeline universe: only watching and pending_signal
 function pickEvalUniverse(state, cfg) {
   const maxPer = Number(cfg?.polling?.eval_max_markets_per_cycle || 20);
   const wl = state.watchlist || {};
@@ -1129,11 +1143,17 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   let createdPendingThisTick = false;
   const enteredPendingThisTick = new Set();
 
-  for (const m of pickEvalUniverse(state, cfg)) {
-    // skip non-eligible states
-    if (!(m.status === "watching" || m.status === "pending_signal")) continue;
+  // Universe A: price updates (watching, pending_signal, signaled)
+  // Universe B: signal pipeline (only watching, pending_signal)
+  const priceUpdateUniverse = pickPriceUpdateUniverse(state, cfg);
+  const pipelineUniverse = new Set(pickEvalUniverse(state, cfg).map(m => m.conditionId || m.slug));
 
+  for (const m of priceUpdateUniverse) {
     const tNow = Date.now();
+    
+    // Determine if this market should enter signal pipeline (Universe B)
+    const inPipeline = pipelineUniverse.has(m.conditionId || m.slug) && 
+                       (m.status === "watching" || m.status === "pending_signal");
 
     const startedPending = (m.status === "pending_signal");
     const recordPendingConfirmFail = (reason) => {
@@ -1380,6 +1400,14 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           bumpBucket("health", `context_snapshot_written:${m.league}`, 1);
         }
       }
+    }
+
+    // === PIPELINE GATE ===
+    // Markets with status=signaled stop here: price update done, skip stage1/stage2/state_machine
+    // Spec requirement: "signaled behavior under fluctuations: update last_price/liquidity for visibility"
+    if (!inPipeline) {
+      // Price update completed for signaled market, skip pipeline
+      continue;
     }
 
     // --- Soccer BLOQUEANTE gate ---
