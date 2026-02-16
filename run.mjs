@@ -188,6 +188,12 @@ try {
               }
             }
 
+            // Get market title for readability
+            const marketTitle = (() => {
+              const wm = wlBySlug.get(String(s.slug || ""));
+              return wm?.title || wm?.question || null;
+            })();
+
             appendJsonl("state/journal/signals.jsonl", {
               type: "signal_open",
               schema_version: SCHEMA_VERSION,
@@ -195,6 +201,7 @@ try {
               signal_id: signalId,
               ts_open: Number(s.ts),
               slug: String(s.slug),
+              title: marketTitle,
               conditionId: String(s.conditionId || ""),
               league: String(s.league || ""),
               market_kind: s.market_kind || null,
@@ -227,6 +234,7 @@ try {
 
             addOpen(idx, signalId, {
               slug: String(s.slug),
+              title: marketTitle,
               ts_open: Number(s.ts),
               league: String(s.league || ""),
               market_kind: s.market_kind || null,
@@ -247,6 +255,8 @@ try {
                 ev_edge: s.ctx.entry_gate.ev_edge ?? null,
               } : null
             });
+            // Human-readable log
+            console.log(`[SIGNAL] ${String(s.league || "").toUpperCase()} | ${marketTitle || s.slug} | ${entryOutcome || "?"} @ ${entryPrice.toFixed(2)} | spread=${Number(s.spread).toFixed(3)} | ${String(s.signal_type || "")}`);
           }
           saveOpenIndex(idx);
         }

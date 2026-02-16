@@ -141,6 +141,8 @@ export async function loopResolutionTracker(cfg, state) {
     appendJsonl("state/journal/signals.jsonl", {
       type: "signal_close",
       signal_id: id,
+      slug: row.slug,
+      title: row.title || null,
       ts_close: nowMs(),
       close_reason: "resolved",
       resolve_method: det.method || "unknown",
@@ -152,9 +154,14 @@ export async function loopResolutionTracker(cfg, state) {
       roi
     });
 
+    // Human-readable log
+    const pnlStr = pnl_usd != null ? (pnl_usd >= 0 ? `+$${pnl_usd.toFixed(2)}` : `-$${Math.abs(pnl_usd).toFixed(2)}`) : "?";
+    console.log(`[RESOLVED] ${row.slug} | ${won ? "WIN" : won === false ? "LOSS" : "?"} ${pnlStr} | winner: ${det.winner || "?"}`);
+
     // Move to closed index before removing from open
     addClosed(idx, id, {
       slug: row.slug,
+      title: row.title || null,
       ts_open: row.ts_open,
       ts_close: nowMs(),
       league: row.league || "",

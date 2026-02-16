@@ -1,45 +1,35 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-// We need to override resolvePath before importing journal.mjs
-// Use a temp directory for all state files
-const tmpDir = join(import.meta.dirname || ".", ".test-journal-tmp");
-
-// Monkey-patch state_store resolvePath for this test
-import { resolvePath } from "../src/core/state_store.js";
-
-// Create the journal module functions with our test paths
 import {
-  appendJsonl,
   loadOpenIndex,
-  saveOpenIndex,
   addOpen,
   removeOpen,
   addClosed,
   reconcileIndex,
 } from "../src/core/journal.mjs";
 
-function setupTmpDir() {
-  rmSync(tmpDir, { recursive: true, force: true });
-  mkdirSync(join(tmpDir, "state", "journal"), { recursive: true });
+// Use OS temp dir for all test files — NEVER touch project state/
+const TEST_DIR = join(tmpdir(), `polymarket-journal-test-${process.pid}`);
+
+function testJsonlPath() {
+  return join(TEST_DIR, "signals.jsonl");
 }
 
-function teardownTmpDir() {
-  rmSync(tmpDir, { recursive: true, force: true });
+function ensureTestDir() {
+  mkdirSync(TEST_DIR, { recursive: true });
 }
 
-// Helper: write a signals.jsonl file directly
-function writeSignalsJsonl(lines) {
-  const path = resolvePath("state/journal/signals.jsonl");
-  mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(path, lines.map(l => JSON.stringify(l)).join("\n") + "\n");
+function cleanTestDir() {
+  rmSync(TEST_DIR, { recursive: true, force: true });
 }
 
-function readIndexRaw() {
-  const path = resolvePath("state/journal/open_index.json");
-  return JSON.parse(readFileSync(path, "utf8"));
+function writeTestJsonl(lines) {
+  ensureTestDir();
+  writeFileSync(testJsonlPath(), lines.map(l => JSON.stringify(l)).join("\n") + "\n");
 }
 
 describe("journal.mjs — addClosed", () => {
@@ -79,19 +69,20 @@ describe("journal.mjs — loadOpenIndex", () => {
 });
 
 describe("journal.mjs — reconcileIndex", () => {
+  beforeEach(() => ensureTestDir());
+  afterEach(() => cleanTestDir());
+
   it("returns no change when JSONL does not exist", () => {
     const idx = { v: 1, open: {}, closed: {} };
-    const result = reconcileIndex(idx, "state/journal/nonexistent.jsonl");
+    // Use an absolute path that doesn't exist
+    const result = reconcileIndex(idx, join(TEST_DIR, "nonexistent.jsonl"));
     assert.equal(result.reconciled, false);
   });
 
   it("adds missing open from JSONL to index", () => {
     const idx = { v: 1, open: {}, closed: {} };
 
-    // Write a JSONL with one open, no close
-    const jsonlPath = resolvePath("state/journal/signals.jsonl");
-    mkdirSync(join(jsonlPath, ".."), { recursive: true });
-    writeFileSync(jsonlPath, JSON.stringify({
+    writeTestJsonl([{
       type: "signal_open",
       signal_id: "100|test-slug",
       slug: "test-slug",
@@ -100,9 +91,9 @@ describe("journal.mjs — reconcileIndex", () => {
       entry_price: 0.94,
       paper_notional_usd: 10,
       entry_outcome_name: "Team A",
-    }) + "\n");
+    }]);
 
-    const result = reconcileIndex(idx);
+    const result = reconcileIndex(idx, testJsonlPath());
     assert.equal(result.reconciled, true);
     assert.equal(result.added, 1);
     assert.ok(idx.open["100|test-slug"]);
@@ -117,14 +108,12 @@ describe("journal.mjs — reconcileIndex", () => {
       closed: {},
     };
 
-    const jsonlPath = resolvePath("state/journal/signals.jsonl");
-    mkdirSync(join(jsonlPath, ".."), { recursive: true });
-    writeFileSync(jsonlPath, [
-      JSON.stringify({ type: "signal_open", signal_id: "100|test-slug", slug: "test-slug", ts_open: 100, entry_price: 0.94, paper_notional_usd: 10 }),
-      JSON.stringify({ type: "signal_close", signal_id: "100|test-slug", ts_close: 200, close_reason: "resolved", win: true, pnl_usd: 0.64 }),
-    ].join("\n") + "\n");
+    writeTestJsonl([
+      { type: "signal_open", signal_id: "100|test-slug", slug: "test-slug", ts_open: 100, entry_price: 0.94, paper_notional_usd: 10 },
+      { type: "signal_close", signal_id: "100|test-slug", ts_close: 200, close_reason: "resolved", win: true, pnl_usd: 0.64 },
+    ]);
 
-    const result = reconcileIndex(idx);
+    const result = reconcileIndex(idx, testJsonlPath());
     assert.equal(result.reconciled, true);
     assert.equal(result.removed, 1);
     assert.ok(!idx.open["100|test-slug"]);
@@ -133,20 +122,17 @@ describe("journal.mjs — reconcileIndex", () => {
   });
 
   it("populates closed map from JSONL for already-removed entries", () => {
-    // Index has no open, no closed — but JSONL has open+close pair
     const idx = { v: 1, open: {}, closed: {} };
 
-    const jsonlPath = resolvePath("state/journal/signals.jsonl");
-    mkdirSync(join(jsonlPath, ".."), { recursive: true });
-    writeFileSync(jsonlPath, [
-      JSON.stringify({ type: "signal_open", signal_id: "200|slug-2", slug: "slug-2", ts_open: 200, league: "nba", entry_price: 0.93, paper_notional_usd: 10, entry_outcome_name: "Lakers" }),
-      JSON.stringify({ type: "signal_close", signal_id: "200|slug-2", ts_close: 300, close_reason: "resolved", resolve_method: "terminal_price", resolved_outcome_name: "Lakers", win: true, pnl_usd: 0.75, roi: 0.075 }),
-    ].join("\n") + "\n");
+    writeTestJsonl([
+      { type: "signal_open", signal_id: "200|slug-2", slug: "slug-2", ts_open: 200, league: "nba", entry_price: 0.93, paper_notional_usd: 10, entry_outcome_name: "Lakers" },
+      { type: "signal_close", signal_id: "200|slug-2", ts_close: 300, close_reason: "resolved", resolve_method: "terminal_price", resolved_outcome_name: "Lakers", win: true, pnl_usd: 0.75, roi: 0.075 },
+    ]);
 
-    const result = reconcileIndex(idx);
+    const result = reconcileIndex(idx, testJsonlPath());
     assert.equal(result.reconciled, true);
     assert.equal(result.closedAdded, 1);
-    assert.equal(result.added, 0); // not added to open (already closed)
+    assert.equal(result.added, 0);
     assert.ok(idx.closed["200|slug-2"]);
     assert.equal(idx.closed["200|slug-2"].slug, "slug-2");
     assert.equal(idx.closed["200|slug-2"].win, true);
@@ -161,15 +147,13 @@ describe("journal.mjs — reconcileIndex", () => {
       closed: { "50|old": { slug: "old", win: false, pnl_usd: -9.3 } },
     };
 
-    const jsonlPath = resolvePath("state/journal/signals.jsonl");
-    mkdirSync(join(jsonlPath, ".."), { recursive: true });
-    writeFileSync(jsonlPath, [
-      JSON.stringify({ type: "signal_open", signal_id: "50|old", slug: "old", ts_open: 50, entry_price: 0.93, paper_notional_usd: 10 }),
-      JSON.stringify({ type: "signal_close", signal_id: "50|old", ts_close: 60, win: false, pnl_usd: -9.3 }),
-      JSON.stringify({ type: "signal_open", signal_id: "100|slug", slug: "slug", ts_open: 100, entry_price: 0.94, paper_notional_usd: 10 }),
-    ].join("\n") + "\n");
+    writeTestJsonl([
+      { type: "signal_open", signal_id: "50|old", slug: "old", ts_open: 50, entry_price: 0.93, paper_notional_usd: 10 },
+      { type: "signal_close", signal_id: "50|old", ts_close: 60, win: false, pnl_usd: -9.3 },
+      { type: "signal_open", signal_id: "100|slug", slug: "slug", ts_open: 100, entry_price: 0.94, paper_notional_usd: 10 },
+    ]);
 
-    const result = reconcileIndex(idx);
+    const result = reconcileIndex(idx, testJsonlPath());
     assert.equal(result.reconciled, false);
     assert.equal(result.added, 0);
     assert.equal(result.removed, 0);
@@ -179,15 +163,14 @@ describe("journal.mjs — reconcileIndex", () => {
   it("handles malformed JSONL lines gracefully", () => {
     const idx = { v: 1, open: {}, closed: {} };
 
-    const jsonlPath = resolvePath("state/journal/signals.jsonl");
-    mkdirSync(join(jsonlPath, ".."), { recursive: true });
-    writeFileSync(jsonlPath, [
+    ensureTestDir();
+    writeFileSync(testJsonlPath(), [
       "not-json",
       JSON.stringify({ type: "signal_open", signal_id: "300|ok", slug: "ok", ts_open: 300, entry_price: 0.95, paper_notional_usd: 10 }),
       "{broken json",
     ].join("\n") + "\n");
 
-    const result = reconcileIndex(idx);
+    const result = reconcileIndex(idx, testJsonlPath());
     assert.equal(result.reconciled, true);
     assert.equal(result.added, 1);
     assert.ok(idx.open["300|ok"]);
@@ -196,31 +179,28 @@ describe("journal.mjs — reconcileIndex", () => {
   it("handles empty JSONL", () => {
     const idx = { v: 1, open: {}, closed: {} };
 
-    const jsonlPath = resolvePath("state/journal/signals.jsonl");
-    mkdirSync(join(jsonlPath, ".."), { recursive: true });
-    writeFileSync(jsonlPath, "\n");
+    ensureTestDir();
+    writeFileSync(testJsonlPath(), "\n");
 
-    const result = reconcileIndex(idx);
+    const result = reconcileIndex(idx, testJsonlPath());
     assert.equal(result.reconciled, false);
   });
 
   it("mixed scenario: 3 opens, 2 closed, 1 still open", () => {
     const idx = { v: 1, open: {}, closed: {} };
 
-    const jsonlPath = resolvePath("state/journal/signals.jsonl");
-    mkdirSync(join(jsonlPath, ".."), { recursive: true });
-    writeFileSync(jsonlPath, [
-      JSON.stringify({ type: "signal_open", signal_id: "1|a", slug: "a", ts_open: 1, entry_price: 0.94, paper_notional_usd: 10, league: "cbb", entry_outcome_name: "Team A" }),
-      JSON.stringify({ type: "signal_close", signal_id: "1|a", ts_close: 10, close_reason: "resolved", win: true, pnl_usd: 0.64 }),
-      JSON.stringify({ type: "signal_open", signal_id: "2|b", slug: "b", ts_open: 2, entry_price: 0.93, paper_notional_usd: 10, league: "nba", entry_outcome_name: "Team B" }),
-      JSON.stringify({ type: "signal_close", signal_id: "2|b", ts_close: 20, close_reason: "resolved", win: false, pnl_usd: -9.3, roi: -0.93 }),
-      JSON.stringify({ type: "signal_open", signal_id: "3|c", slug: "c", ts_open: 3, entry_price: 0.95, paper_notional_usd: 10, league: "soccer", entry_outcome_name: "Team C" }),
-    ].join("\n") + "\n");
+    writeTestJsonl([
+      { type: "signal_open", signal_id: "1|a", slug: "a", ts_open: 1, entry_price: 0.94, paper_notional_usd: 10, league: "cbb", entry_outcome_name: "Team A" },
+      { type: "signal_close", signal_id: "1|a", ts_close: 10, close_reason: "resolved", win: true, pnl_usd: 0.64 },
+      { type: "signal_open", signal_id: "2|b", slug: "b", ts_open: 2, entry_price: 0.93, paper_notional_usd: 10, league: "nba", entry_outcome_name: "Team B" },
+      { type: "signal_close", signal_id: "2|b", ts_close: 20, close_reason: "resolved", win: false, pnl_usd: -9.3, roi: -0.93 },
+      { type: "signal_open", signal_id: "3|c", slug: "c", ts_open: 3, entry_price: 0.95, paper_notional_usd: 10, league: "soccer", entry_outcome_name: "Team C" },
+    ]);
 
-    const result = reconcileIndex(idx);
+    const result = reconcileIndex(idx, testJsonlPath());
     assert.equal(result.reconciled, true);
-    assert.equal(result.added, 1); // only 3|c
-    assert.equal(result.closedAdded, 2); // 1|a and 2|b
+    assert.equal(result.added, 1);
+    assert.equal(result.closedAdded, 2);
     assert.equal(Object.keys(idx.open).length, 1);
     assert.ok(idx.open["3|c"]);
     assert.equal(idx.open["3|c"].league, "soccer");
