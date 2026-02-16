@@ -4,7 +4,7 @@ import { loadConfig } from "./src/core/config.js";
 import { acquireLock, releaseLock } from "./src/core/lockfile.js";
 import { nowMs, sleepMs } from "./src/core/time.js";
 import { readJson, writeJsonAtomic, resolvePath } from "./src/core/state_store.js";
-import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen } from "./src/core/journal.mjs";
+import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, reconcileIndex } from "./src/core/journal.mjs";
 
 import { execSync } from "node:child_process";
 
@@ -92,6 +92,18 @@ process.on("SIGTERM", shutdown);
 
 const started = nowMs();
 const stopAfterMs = Number(process.env.STOP_AFTER_MS || 60000); // Phase 0: run 60s
+
+// --- Reconcile open_index from signals.jsonl (crash recovery) ---
+{
+  const idx = loadOpenIndex();
+  const result = reconcileIndex(idx);
+  if (result.reconciled) {
+    saveOpenIndex(idx);
+    console.log(`[RECONCILE] Synced open_index from signals.jsonl: added=${result.added} removed=${result.removed} closedAdded=${result.closedAdded} open=${Object.keys(idx.open).length} closed=${Object.keys(idx.closed).length}`);
+  } else {
+    console.log(`[RECONCILE] open_index in sync (open=${Object.keys(idx.open).length} closed=${Object.keys(idx.closed).length})`);
+  }
+}
 
 try {
   while (running) {

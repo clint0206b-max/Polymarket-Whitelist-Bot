@@ -1,7 +1,7 @@
 // Paper positions resolution tracker (B0.2)
 // Resolves open paper signals by polling Gamma market endpoint (by slug).
 
-import { appendJsonl, loadOpenIndex, saveOpenIndex, removeOpen } from "../core/journal.mjs";
+import { appendJsonl, loadOpenIndex, saveOpenIndex, removeOpen, addClosed } from "../core/journal.mjs";
 
 function nowMs() { return Date.now(); }
 
@@ -152,6 +152,22 @@ export async function loopResolutionTracker(cfg, state) {
       roi
     });
 
+    // Move to closed index before removing from open
+    addClosed(idx, id, {
+      slug: row.slug,
+      ts_open: row.ts_open,
+      ts_close: nowMs(),
+      league: row.league || "",
+      entry_price: row.entry_price,
+      paper_notional_usd: row.paper_notional_usd,
+      entry_outcome_name: entryOutcome,
+      close_reason: "resolved",
+      resolve_method: det.method || "unknown",
+      resolved_outcome_name: det.winner,
+      win: won,
+      pnl_usd,
+      roi,
+    });
     removeOpen(idx, id);
     resolvedCount++;
   }
