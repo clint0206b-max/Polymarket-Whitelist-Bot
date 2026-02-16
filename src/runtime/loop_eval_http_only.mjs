@@ -1102,6 +1102,48 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   const enteredPendingThisTick = new Set();
 
   // Universe A: price updates (watching, pending_signal, signaled)
+  // === PURGE EXPIRED TTL ===
+  // For only_live strategy: purge expired/resolved markets older than X hours
+  // This keeps the watchlist fresh and prevents accumulation of stale entries
+  const expiredTtlHours = Number(cfg?.purge?.expired_ttl_hours || 5);
+  const expiredTtlMs = expiredTtlHours * 60 * 60 * 1000;
+  let expiredPurgedCount = 0;
+  
+  for (const [key, m] of Object.entries(state.watchlist || {})) {
+    const isExpiredOrResolved = (m.status === "expired" || m.status === "resolved");
+    if (!isExpiredOrResolved) continue;
+
+    // Determine age timestamp (use expired_at_ts, resolved_at, or fallback to last_update)
+    const ageTs = m.expired_at_ts || m.resolved_at || m.last_price?.updated_ts || null;
+    
+    if (ageTs == null) {
+      // Missing timestamp: don't purge by default, record metric
+      bumpBucket("health", "expired_ttl_missing_timestamp", 1);
+      continue;
+    }
+
+    // Sanity: future timestamp (clock skew/bad data) → don't purge
+    if (ageTs > now) {
+      bumpBucket("health", "expired_ttl_future_timestamp", 1);
+      continue;
+    }
+
+    const ageHours = (now - ageTs) / (1000 * 60 * 60);
+    
+    if (ageHours > expiredTtlHours) {
+      delete state.watchlist[key];
+      expiredPurgedCount++;
+      bumpBucket("health", "expired_purged_ttl", 1);
+      bumpBucket("health", `expired_purged_ttl:${m.league}`, 1);
+      console.log(`[PURGE_EXPIRED] ${m.slug} | age=${ageHours.toFixed(1)}h | status=${m.status}`);
+    }
+  }
+
+  if (expiredPurgedCount > 0) {
+    state.runtime.health.expired_purged_ttl_count = (state.runtime.health.expired_purged_ttl_count || 0) + expiredPurgedCount;
+    state.runtime.health.expired_purged_ttl_last_cycle = expiredPurgedCount;
+  }
+
   // Universe B: signal pipeline (only watching, pending_signal)
   const priceUpdateUniverse = selectPriceUpdateUniverse(state, cfg);
   const pipelineUniverse = new Set(selectPipelineUniverse(state, cfg).map(m => m.conditionId || m.slug));

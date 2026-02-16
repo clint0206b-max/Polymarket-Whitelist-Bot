@@ -97,7 +97,8 @@
   "purge": {
     "stale_book_minutes": 15,
     "stale_quote_incomplete_minutes": 10,
-    "stale_tradeability_minutes": 12
+    "stale_tradeability_minutes": 12,
+    "expired_ttl_hours": 5
   },
   "context": {
     "enabled": false,
