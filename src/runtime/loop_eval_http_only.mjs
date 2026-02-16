@@ -10,6 +10,7 @@ import { fetchSoccerScoreboard, matchMarketToGame, deriveSoccerContext, ESPN_LEA
 import { isSoccerSlug } from "../gamma/gamma_parser.mjs";
 import { loadDailyEvents, saveDailyEvents, recordMarketTick, purgeStaleDates } from "../metrics/daily_events.mjs";
 import { appendJsonl } from "../core/journal.mjs";
+import { selectPriceUpdateUniverse, selectPipelineUniverse } from "./universe.mjs";
 
 function ensure(obj, k, v) { if (obj[k] === undefined) obj[k] = v; }
 
@@ -198,49 +199,6 @@ function getTokenPair(m) {
   const t = m?.tokens;
   const ids = t?.clobTokenIds;
   return isValidTokenPair(ids) ? ids : null;
-}
-
-// Price update universe: includes signaled for visibility (spec requirement)
-function pickPriceUpdateUniverse(state, cfg) {
-  const wl = state.watchlist || {};
-  const all = Object.values(wl).filter(Boolean);
-  
-  // Include watching, pending_signal, AND signaled for price updates
-  return all.filter(m => 
-    m.status === "watching" || 
-    m.status === "pending_signal" || 
-    m.status === "signaled"
-  );
-}
-
-// Signal pipeline universe: only watching and pending_signal
-function pickEvalUniverse(state, cfg) {
-  const maxPer = Number(cfg?.polling?.eval_max_markets_per_cycle || 20);
-  const wl = state.watchlist || {};
-  const all = Object.values(wl).filter(Boolean);
-
-  // v1 rule: ALWAYS include pending_signal first (to make 2 hits in-window possible)
-  const pending = all
-    .filter(m => m.status === "pending_signal")
-    .map(m => ({ m, ps: Number(m.pending_since_ts || 0) }));
-
-  // Deterministic order: oldest pending first (closest to expiry)
-  pending.sort((a, b) => (a.ps - b.ps) || String(a.m.slug || "").localeCompare(String(b.m.slug || "")));
-
-  // Scheduling fix: if there is ANY pending, evaluate ONLY pending this tick.
-  if (pending.length > 0) return pending.map(x => x.m);
-
-  const watching = all
-    .filter(m => m.status === "watching")
-    .map(m => ({
-      m,
-      vol: Number(m.gamma_vol24h_usd || 0),
-      lastSeen: Number(m.last_seen_ts || 0)
-    }));
-
-  watching.sort((a, b) => (b.vol - a.vol) || (b.lastSeen - a.lastSeen));
-
-  return watching.slice(0, maxPer).map(x => x.m);
 }
 
 export async function loopEvalHttpOnly(state, cfg, now) {
@@ -1145,15 +1103,15 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
   // Universe A: price updates (watching, pending_signal, signaled)
   // Universe B: signal pipeline (only watching, pending_signal)
-  const priceUpdateUniverse = pickPriceUpdateUniverse(state, cfg);
-  const pipelineUniverse = new Set(pickEvalUniverse(state, cfg).map(m => m.conditionId || m.slug));
+  const priceUpdateUniverse = selectPriceUpdateUniverse(state, cfg);
+  const pipelineUniverse = new Set(selectPipelineUniverse(state, cfg).map(m => m.conditionId || m.slug));
 
   for (const m of priceUpdateUniverse) {
     const tNow = Date.now();
     
     // Determine if this market should enter signal pipeline (Universe B)
-    const inPipeline = pipelineUniverse.has(m.conditionId || m.slug) && 
-                       (m.status === "watching" || m.status === "pending_signal");
+    // Note: pipelineUniverse already filters by status (watching, pending_signal only)
+    const inPipeline = pipelineUniverse.has(m.conditionId || m.slug);
 
     const startedPending = (m.status === "pending_signal");
     const recordPendingConfirmFail = (reason) => {
