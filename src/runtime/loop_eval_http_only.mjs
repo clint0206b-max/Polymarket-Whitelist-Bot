@@ -1175,8 +1175,9 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   // === PURGE EXPIRED TTL ===
   // For only_live strategy: purge expired/resolved markets older than X hours
   // This keeps the watchlist fresh and prevents accumulation of stale entries
-  const expiredTtlHours = Number(cfg?.purge?.expired_ttl_hours || 5);
-  const expiredTtlMs = expiredTtlHours * 60 * 60 * 1000;
+  const expiredTtlMinutes = Number(cfg?.purge?.expired_ttl_minutes ?? (Number(cfg?.purge?.expired_ttl_hours || 0) * 60) || 30);
+  const expiredTtlMs = expiredTtlMinutes * 60 * 1000;
+  const expiredTtlHours = expiredTtlMinutes / 60;
   let expiredPurgedCount = 0;
   
   for (const [key, m] of Object.entries(state.watchlist || {})) {
@@ -1187,8 +1188,9 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     const ageTs = m.expired_at_ts || m.resolved_at || m.last_price?.updated_ts || null;
     
     if (ageTs == null) {
-      // Missing timestamp: don't purge by default, record metric
-      bumpBucket("health", "expired_ttl_missing_timestamp", 1);
+      // Missing timestamp: backfill with now so it purges after TTL
+      m.expired_at_ts = now;
+      bumpBucket("health", "expired_ttl_backfilled_timestamp", 1);
       continue;
     }
 
@@ -1695,6 +1697,16 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         source: "http"
       };
       if (!prevTs || prevTs !== now) bumpBucket("health", "quote_update", 1);
+
+      // Terminal price check via HTTP (catches markets without WS data)
+      if (bestBid >= 0.995 && m.status === "watching") {
+        m.status = "expired";
+        m.expired_at_ts = tNow;
+        m.expired_reason = "terminal_price_http";
+        bumpBucket("health", "expired_terminal_http", 1);
+        console.log(`[TERMINAL_HTTP] ${m.slug} | bid=${bestBid.toFixed(3)} → expired`);
+        continue;
+      }
     }
 
     // --- Context snapshot for win_prob validation (throttled) ---
