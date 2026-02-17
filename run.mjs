@@ -191,12 +191,14 @@ try {
 // --- Trade Bridge (paper / shadow_live / live) ---
 let tradeBridge = null;
 {
-  // Kill switch: non-paper trading requires blocking context gate
+  // Kill switch: non-paper trading requires NBA gate to be blocking.
+  // Per-league overrides (gate_mode_nba, gate_mode_cbb) take precedence over global gate_mode.
   const tradingMode = cfg?.trading?.mode || "paper";
-  const gateMode = String(cfg?.context?.entry_rules?.gate_mode || "tag_only");
-  if (tradingMode !== "paper" && gateMode !== "blocking") {
-    console.error(`[BOOT] FATAL: trading.mode=${tradingMode} requires context.entry_rules.gate_mode="blocking" (current: "${gateMode}")`);
-    console.error(`[BOOT] Fix: set "gate_mode": "blocking" in src/config/local.json under context.entry_rules`);
+  const globalGateMode = String(cfg?.context?.entry_rules?.gate_mode || "tag_only");
+  const nbaGateMode = String(cfg?.context?.entry_rules?.gate_mode_nba ?? globalGateMode);
+  if (tradingMode !== "paper" && nbaGateMode !== "blocking") {
+    console.error(`[BOOT] FATAL: trading.mode=${tradingMode} requires NBA gate to be blocking (current: "${nbaGateMode}")`);
+    console.error(`[BOOT] Fix: set "gate_mode_nba": "blocking" in src/config/local.json under context.entry_rules`);
     process.exit(1);
   }
 
@@ -214,7 +216,8 @@ let tradeBridge = null;
   }
   
   tradeBridge = new TradeBridge(cfg, state);
-  console.log(`[BOOT] trading.mode=${tradingMode} | gate_mode=${gateMode} | SL=${cfg?.paper?.stop_loss_bid || "none"} | max_pos=$${cfg?.trading?.max_position_usd || "?"}`);
+  const cbbGateMode = String(cfg?.context?.entry_rules?.gate_mode_cbb ?? globalGateMode);
+  console.log(`[BOOT] trading.mode=${tradingMode} | gates: nba=${nbaGateMode} cbb=${cbbGateMode} soccer=always | SL=${cfg?.paper?.stop_loss_bid || "none"} | max_pos=$${cfg?.trading?.max_position_usd || "?"}`);
   
   if (tradingMode !== "paper") {
     try {

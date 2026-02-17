@@ -1765,11 +1765,17 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     // --- Context entry gate (BLOQUEANTE when gate_mode=blocking) ---
     // Soccer: always bloqueante (hardcoded, regardless of gate_mode).
-    // NBA/CBB: bloqueante only when gate_mode=blocking (default: tag_only).
-    // gate_mode=blocking is REQUIRED when trading.mode !== paper (enforced at boot).
+    // NBA/CBB: per-league gate_mode override supported (gate_mode_nba, gate_mode_cbb).
+    // Falls back to global gate_mode if no per-league override.
+    // At least one league must be blocking when trading.mode !== paper (enforced at boot).
     {
-      const gateMode = String(cfg?.context?.entry_rules?.gate_mode || "tag_only");
+      const globalGateMode = String(cfg?.context?.entry_rules?.gate_mode || "tag_only");
       const league = m.league;
+
+      // Resolve effective gate mode: per-league override > global
+      const effectiveGateMode = (league === "nba" || league === "cbb")
+        ? String(cfg?.context?.entry_rules?.[`gate_mode_${league}`] ?? globalGateMode)
+        : globalGateMode;
 
       if (league === "soccer") {
         // Soccer: always bloqueante
@@ -1783,8 +1789,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           continue;
         }
         bumpBucket("health", "soccer_gate_passed", 1);
-      } else if ((league === "nba" || league === "cbb") && gateMode === "blocking") {
-        // NBA/CBB: bloqueante only in blocking mode
+      } else if ((league === "nba" || league === "cbb") && effectiveGateMode === "blocking") {
+        // NBA/CBB: bloqueante only in blocking mode (per-league or global)
         const ctxAllowed = m.context_entry?.entry_allowed === true;
         if (!ctxAllowed) {
           const reason = m.context_entry?.entry_blocked_reason || "no_context";
