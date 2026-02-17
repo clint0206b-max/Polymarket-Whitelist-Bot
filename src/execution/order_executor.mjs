@@ -39,12 +39,17 @@ export function initClient(credentialsPath, funder) {
  * Execute a BUY market order (Fill-And-Kill).
  * Returns fill details or error.
  */
-export async function executeBuy(client, tokenId, shares) {
+export async function executeBuy(client, tokenId, shares, maxPrice = null) {
   const amount = roundDown(shares, 2);
   if (!(amount >= 0.01)) return { ok: false, error: "amount_too_small", amount };
 
+  const orderParams = { tokenID: tokenId, amount, side: "BUY" };
+  if (maxPrice != null && Number.isFinite(maxPrice) && maxPrice > 0 && maxPrice < 1) {
+    orderParams.price = maxPrice;
+  }
+
   const res = await client.createAndPostMarketOrder(
-    { tokenID: tokenId, amount, side: "BUY" },
+    orderParams,
     {},
     "FAK"
   );

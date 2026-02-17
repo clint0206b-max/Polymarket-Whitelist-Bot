@@ -230,7 +230,11 @@ export class TradeBridge {
       this.execState.trades[tradeId].status = "sent";
       saveExecutionState(this.execState);
 
-      const result = await executeBuy(this.client, tokenId, shares);
+      // Slippage cap: max 2% above signal price (e.g. signal=0.93 → max=0.95)
+      const maxSlippagePct = Number(this.cfg?.trading?.max_slippage_pct ?? 2);
+      const maxPrice = Math.min(0.99, entryPrice * (1 + maxSlippagePct / 100));
+      console.log(`[LIVE_BUY] slippage cap: maxPrice=${maxPrice.toFixed(4)} (${maxSlippagePct}% above ${entryPrice.toFixed(4)})`);
+      const result = await executeBuy(this.client, tokenId, shares, maxPrice);
       
       if (result.ok) {
         // entryPrice = actual fill price, not signal price (signal price is pre-execution estimate)
