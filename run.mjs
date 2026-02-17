@@ -191,9 +191,18 @@ try {
 // --- Trade Bridge (paper / shadow_live / live) ---
 let tradeBridge = null;
 {
+  // Kill switch: non-paper trading requires blocking context gate
+  const tradingMode = cfg?.trading?.mode || "paper";
+  const gateMode = String(cfg?.context?.entry_rules?.gate_mode || "tag_only");
+  if (tradingMode !== "paper" && gateMode !== "blocking") {
+    console.error(`[BOOT] FATAL: trading.mode=${tradingMode} requires context.entry_rules.gate_mode="blocking" (current: "${gateMode}")`);
+    console.error(`[BOOT] Fix: set "gate_mode": "blocking" in src/config/local.json under context.entry_rules`);
+    process.exit(1);
+  }
+
   const bootCheck = validateBootConfig(cfg);
   if (!bootCheck.valid) {
-    const mode = cfg?.trading?.mode || "paper";
+    const mode = tradingMode;
     if (mode !== "paper") {
       console.error(`[BOOT] FATAL: trading config invalid for mode=${mode}:`);
       bootCheck.errors.forEach(e => console.error(`  - ${e}`));
@@ -205,8 +214,7 @@ let tradeBridge = null;
   }
   
   tradeBridge = new TradeBridge(cfg, state);
-  const tradingMode = cfg?.trading?.mode || "paper";
-  console.log(`[BOOT] trading.mode=${tradingMode} | SL=${cfg?.paper?.stop_loss_bid || "none"} | max_pos=$${cfg?.trading?.max_position_usd || "?"}`);
+  console.log(`[BOOT] trading.mode=${tradingMode} | gate_mode=${gateMode} | SL=${cfg?.paper?.stop_loss_bid || "none"} | max_pos=$${cfg?.trading?.max_position_usd || "?"}`);
   
   if (tradingMode !== "paper") {
     try {

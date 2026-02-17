@@ -1763,20 +1763,39 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       continue;
     }
 
-    // --- Soccer BLOQUEANTE gate ---
-    // For soccer markets, the context entry gate is MANDATORY (not tag-only).
-    // If the gate hasn't explicitly allowed entry, skip the entire eval pipeline.
-    if (m.league === "soccer") {
-      const soccerAllowed = m.context_entry?.entry_allowed === true;
-      if (!soccerAllowed) {
-        const reason = m.context_entry?.entry_blocked_reason || "no_soccer_context";
-        bumpBucket("reject", `soccer_gate_blocked:${reason}`, 1);
-        bumpBucket("reject", `reject_by_league:soccer:soccer_gate_blocked`, 1);
-        setReject(m, `soccer_gate:${reason}`);
-        if (startedPending) recordPendingConfirmFail(`soccer_gate:${reason}`);
-        continue;
+    // --- Context entry gate (BLOQUEANTE when gate_mode=blocking) ---
+    // Soccer: always bloqueante (hardcoded, regardless of gate_mode).
+    // NBA/CBB: bloqueante only when gate_mode=blocking (default: tag_only).
+    // gate_mode=blocking is REQUIRED when trading.mode !== paper (enforced at boot).
+    {
+      const gateMode = String(cfg?.context?.entry_rules?.gate_mode || "tag_only");
+      const league = m.league;
+
+      if (league === "soccer") {
+        // Soccer: always bloqueante
+        const soccerAllowed = m.context_entry?.entry_allowed === true;
+        if (!soccerAllowed) {
+          const reason = m.context_entry?.entry_blocked_reason || "no_soccer_context";
+          bumpBucket("reject", `soccer_gate_blocked:${reason}`, 1);
+          bumpBucket("reject", `reject_by_league:soccer:soccer_gate_blocked`, 1);
+          setReject(m, `soccer_gate:${reason}`);
+          if (startedPending) recordPendingConfirmFail(`soccer_gate:${reason}`);
+          continue;
+        }
+        bumpBucket("health", "soccer_gate_passed", 1);
+      } else if ((league === "nba" || league === "cbb") && gateMode === "blocking") {
+        // NBA/CBB: bloqueante only in blocking mode
+        const ctxAllowed = m.context_entry?.entry_allowed === true;
+        if (!ctxAllowed) {
+          const reason = m.context_entry?.entry_blocked_reason || "no_context";
+          bumpBucket("reject", `${league}_gate_blocked:${reason}`, 1);
+          bumpBucket("reject", `reject_by_league:${league}:context_gate_blocked`, 1);
+          setReject(m, `${league}_gate:${reason}`);
+          if (startedPending) recordPendingConfirmFail(`${league}_gate:${reason}`);
+          continue;
+        }
+        bumpBucket("health", `${league}_gate_passed`, 1);
       }
-      bumpBucket("health", "soccer_gate_passed", 1);
     }
 
     // Stage 1 evaluated counter (only when quote complete and we actually run Stage 1)

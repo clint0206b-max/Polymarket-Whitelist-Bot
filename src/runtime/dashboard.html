@@ -83,10 +83,6 @@
           <div id="kpi-trades-all" class="text-2xl font-bold mono mt-1">—</div>
         </div>
         <div class="bg-card rounded-lg p-4 border border-slate-700">
-          <div class="text-xs text-slate-400 uppercase tracking-wide">Timeouts</div>
-          <div id="kpi-timeouts" class="text-2xl font-bold mono mt-1">—</div>
-        </div>
-        <div class="bg-card rounded-lg p-4 border border-slate-700">
           <div class="text-xs text-slate-400 uppercase tracking-wide">Since</div>
           <div id="kpi-since" class="text-lg font-bold mono mt-1">—</div>
         </div>
@@ -536,12 +532,6 @@
       $('kpi-pnl-all').className = 'text-2xl font-bold mono mt-1 ' + pnlColor(s.pnl_total);
       $('kpi-wr-all').textContent = s.wr_total || '—';
       $('kpi-trades-all').textContent = s.trades_total ?? '—';
-      const toTotal = s.timeouts_total || 0;
-      const toCost = s.timeouts_cost || 0;
-      const toSaved = s.timeouts_saved || 0;
-      const pwCost = (s.timeouts_price_window || {}).cost || 0;
-      const cfCost = (s.timeouts_confirmation || {}).cost || 0;
-      $('kpi-timeouts').textContent = toTotal > 0 ? `${toTotal} (pw:${pwCost} cf:${cfCost} 💸)` : '0';
       if (s.first_trade_ts) {
         const d = new Date(s.first_trade_ts);
         $('kpi-since').textContent = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
