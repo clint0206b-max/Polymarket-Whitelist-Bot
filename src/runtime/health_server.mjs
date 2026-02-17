@@ -869,27 +869,50 @@ export function startHealthServer(state, opts = {}) {
     const todayStr = new Date().toISOString().slice(0, 10);
     const todayStart = new Date(todayStr + "T00:00:00Z").getTime();
 
-    const closes = signals.filter(s => s.type === "signal_close");
+    // Deduplicate closes: only first close per signal_id (TP then resolved = count once)
+    const seenCloseIds = new Set();
+    const closes = signals.filter(s => {
+      if (s.type !== "signal_close") return false;
+      const key = s.signal_id || s.slug || "";
+      if (seenCloseIds.has(key)) return false;
+      seenCloseIds.add(key);
+      return true;
+    });
     const closesToday = closes.filter(s => (s.ts_close || 0) >= todayStart);
     const wins = closesToday.filter(s => s.win === true);
     const losses = closesToday.filter(s => s.win === false);
     const winsAll = closes.filter(s => s.win === true);
     const lossesAll = closes.filter(s => s.win === false);
 
-    // PnL: prefer real fill data from execution_state over signal journal estimates
-    const execStateForPnl = cachedReadJson(statePath("execution_state.json"), 3000);
-    const tradesForPnl = execStateForPnl?.trades || {};
-    function getRealPnl(closeSignal) {
-      const sigId = closeSignal.signal_id || "";
-      const buy = tradesForPnl[`buy:${sigId}`];
-      const sell = tradesForPnl[`sell:${sigId}`];
-      if (buy?.spentUsd != null && sell?.receivedUsd != null) {
-        return sell.receivedUsd - buy.spentUsd;
+    // PnL: calculate from executions.jsonl (actual fills), NOT signal journal estimates
+    const execJournalPath = statePath("journal", "executions.jsonl");
+    const { items: execEntries } = cachedReadJsonl(execJournalPath, 5000);
+    const execBuys = {};  // slug -> { spentUsd }
+    const execSells = {}; // slug -> [{ receivedUsd, ts }]
+    for (const e of execEntries) {
+      if (e.type !== "trade_executed") continue;
+      const slug = e.slug || "";
+      if (e.side === "BUY") {
+        execBuys[slug] = { spentUsd: e.spentUsd || 0, ts: e.ts || 0 };
+      } else if (e.side === "SELL") {
+        if (!execSells[slug]) execSells[slug] = [];
+        execSells[slug].push({ receivedUsd: e.spentUsd || e.receivedUsd || 0, ts: e.ts || 0 });
       }
-      return closeSignal.pnl_usd || 0;
     }
-    const pnlToday = closesToday.reduce((sum, s) => sum + getRealPnl(s), 0);
-    const pnlTotal = closes.reduce((sum, s) => sum + getRealPnl(s), 0);
+    // Calculate PnL per slug from real fills
+    let pnlToday = 0;
+    let pnlTotal = 0;
+    for (const slug of Object.keys(execBuys)) {
+      const buy = execBuys[slug];
+      const sellList = execSells[slug] || [];
+      if (sellList.length === 0) continue; // open position
+      const totalReceived = sellList.reduce((s, sell) => s + (sell.receivedUsd || 0), 0);
+      const pnl = totalReceived - (buy.spentUsd || 0);
+      pnlTotal += pnl;
+      // Check if any sell was today
+      const lastSellTs = Math.max(...sellList.map(s => s.ts || 0));
+      if (lastSellTs >= todayStart) pnlToday += pnl;
+    }
     const wrToday = (wins.length + losses.length) > 0
       ? ((wins.length / (wins.length + losses.length)) * 100).toFixed(1) + "%"
       : "n/a";
@@ -992,26 +1015,27 @@ export function startHealthServer(state, opts = {}) {
             exitPrice = shares > 0 ? Math.round(((c.pnl_usd / shares) + ep) * 1000) / 1000 : null;
           }
         }
-        // In live mode, use actual fill prices from execution_state
+        // In live mode, use actual fill prices from executions.jsonl
+        const cSlug = c.slug || "";
+        const buyExec = execBuys[cSlug];
+        const sellExecs = execSells[cSlug] || [];
         let actualEntryPrice = c.entry_price || openMatch?.entry_price || null;
         let actualExitPrice = exitPrice;
         let actualPnl = c.pnl_usd;
         let actualRoi = c.roi;
-        const execState2 = cachedReadJson(statePath("execution_state.json"), 3000);
-        const trades2 = execState2?.trades || {};
-        const sigId = c.signal_id || "";
-        const buyTrade2 = trades2[`buy:${sigId}`];
-        const sellTrade2 = trades2[`sell:${sigId}`];
-        if (buyTrade2?.avgFillPrice) {
-          actualEntryPrice = buyTrade2.avgFillPrice;
-        }
-        if (sellTrade2?.avgFillPrice) {
-          actualExitPrice = sellTrade2.avgFillPrice;
-        }
-        // Recalculate PnL from real fill prices if we have both
-        if (buyTrade2 && sellTrade2?.receivedUsd != null && buyTrade2.spentUsd != null) {
-          actualPnl = (sellTrade2.receivedUsd || 0) - (buyTrade2.spentUsd || 0);
-          actualRoi = buyTrade2.spentUsd > 0 ? actualPnl / buyTrade2.spentUsd : 0;
+        if (buyExec) {
+          // Find BUY fill price from journal
+          const buyEntry = execEntries.find(e => e.type === "trade_executed" && e.side === "BUY" && e.slug === cSlug);
+          if (buyEntry?.avgFillPrice) actualEntryPrice = buyEntry.avgFillPrice;
+          // Find SELL fill price
+          const sellEntry = execEntries.find(e => e.type === "trade_executed" && e.side === "SELL" && e.slug === cSlug);
+          if (sellEntry?.avgFillPrice) actualExitPrice = sellEntry.avgFillPrice;
+          // Recalculate PnL from real fills
+          if (sellExecs.length > 0) {
+            const totalReceived = sellExecs.reduce((s, sell) => s + (sell.receivedUsd || 0), 0);
+            actualPnl = totalReceived - (buyExec.spentUsd || 0);
+            actualRoi = buyExec.spentUsd > 0 ? actualPnl / buyExec.spentUsd : 0;
+          }
         }
         return {
           slug: c.slug, title: c.title || openMatch?.title || null,
@@ -1032,29 +1056,28 @@ export function startHealthServer(state, opts = {}) {
   // API: build positions response
   function buildPositionsResponse() {
     const idx = cachedReadJson(statePath("journal", "open_index.json"), 3000);
-    const execState = cachedReadJson(statePath("execution_state.json"), 3000);
     const open = idx?.open || {};
-    const trades = execState?.trades || {};
+    // Use executions.jsonl for real fill data
+    const { items: execItems } = cachedReadJsonl(statePath("journal", "executions.jsonl"), 5000);
+    const execBySlug = {};
+    for (const e of execItems) {
+      if (e.type === "trade_executed" && e.side === "BUY") execBySlug[e.slug] = e;
+    }
     return {
       as_of_ts: Date.now(),
       items: Object.values(open).map(p => {
-        // In live mode, use actual fill price from execution_state (not signal price)
-        let actualEntryPrice = p.entry_price;
-        const buyTrade = trades[`buy:${p.signal_id || ""}`];
-        if (buyTrade?.avgFillPrice) {
-          actualEntryPrice = buyTrade.avgFillPrice;
-        }
+        const buyExec = execBySlug[p.slug];
         return {
           slug: p.slug, title: p.title || null,
           league: p.league || "", market_kind: p.market_kind || null,
           ts_open: p.ts_open,
-          entry_price: actualEntryPrice,
-          signal_price: p.entry_price, // original signal price for reference
+          entry_price: buyExec?.avgFillPrice || p.entry_price,
+          signal_price: p.entry_price,
           paper_notional_usd: p.paper_notional_usd,
           entry_outcome_name: p.entry_outcome_name,
           price_tracking: p.price_tracking || null,
-          actual_spent_usd: buyTrade?.spentUsd || null,
-          filled_shares: buyTrade?.filledShares || null,
+          actual_spent_usd: buyExec?.spentUsd || null,
+          filled_shares: buyExec?.filledShares || null,
         };
       }),
     };
