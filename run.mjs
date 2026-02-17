@@ -436,6 +436,38 @@ try {
           dirtyTracker.mark(`eval:signals_generated:${newOnes.length}`, true);
         }
       } catch {}
+
+      // === LIVE SL CHECK: use CLOB/WS prices (every eval cycle) ===
+      if (tradeBridge && tradeBridge.mode !== "paper") {
+        try {
+          // Build price map from watchlist state (updated by WS/HTTP in eval loop)
+          const pricesBySlug = new Map();
+          for (const m of Object.values(state.watchlist || {})) {
+            if (m?.slug && m?.last_price) {
+              pricesBySlug.set(m.slug, m.last_price);
+            }
+          }
+          const slSignals = tradeBridge.checkStopLossFromCLOB(pricesBySlug);
+          for (const sig of slSignals) {
+            try {
+              // Write signal_close to journal (for audit trail)
+              const { appendJsonl } = await import("./src/core/journal.mjs");
+              appendJsonl("state/journal/signals.jsonl", {
+                ...sig,
+                runner_id: process.env.SHADOW_ID || "prod",
+                source: "clob_sl_check",
+              });
+              // Execute the sell
+              await tradeBridge.handleSignalClose(sig);
+            } catch (e) {
+              console.error(`[SL_CLOB] sell error for ${sig.slug}: ${e.message}`);
+            }
+          }
+        } catch (e) {
+          console.error(`[SL_CLOB] check error: ${e.message}`);
+        }
+      }
+
       loopTimings.journal_ms = nowMs() - journalStartMs;
 
       // Resolve paper positions (cheap: only open signals)
