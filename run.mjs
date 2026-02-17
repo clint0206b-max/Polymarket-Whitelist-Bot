@@ -159,7 +159,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 const started = nowMs();
-const stopAfterMs = Number(process.env.STOP_AFTER_MS || 60000); // Default: 60s test/debug, 0 = run indefinitely
+const stopAfterMs = Number(process.env.STOP_AFTER_MS ?? 0); // Default: 0 = run indefinitely. Set >0 for test/debug
 
 // --- Reconcile open_index from signals.jsonl (crash recovery) ---
 {
