@@ -1,5 +1,0 @@
-{"type":"signal_open","signal_id":"401|closed","slug":"closed-ok","ts_open":1000,"entry_price":0.93,"paper_notional_usd":10,"league":"cs2"}
-{"type":"signal_close","signal_id":"401|closed","slug":"closed-ok","ts_close":2000,"close_reason":"resolved","win":true,"pnl_usd":0.75}
-{"type":"signal_open","signal_id":"402|stuck","slug":"stuck-pos","ts_open":1000,"entry_price":0.94,"paper_notional_usd":10,"league":"cs2"}
-{"type":"signal_close","signal_id":"402|stuck","slug":"stuck-pos","ts_close":2000,"close_reason":"resolved","win":true,"pnl_usd":0.65}
-{"type":"signal_open","signal_id":"403|still-open","slug":"still-open","ts_open":1000,"entry_price":0.95,"paper_notional_usd":10,"league":"cs2"}

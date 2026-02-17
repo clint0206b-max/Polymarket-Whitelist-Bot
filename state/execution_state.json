@@ -1,1 +1,0 @@
-{"trades":{"buy:401|closed":{"status":"filled","closed":true,"signal_id":"401|closed","side":"BUY"},"buy:402|stuck":{"status":"filled","closed":false,"signal_id":"402|stuck","side":"BUY"}}}
