@@ -1020,9 +1020,9 @@ export function startHealthServer(state, opts = {}) {
     const todayStart = new Date(todayStr + "T00:00:00Z").getTime();
 
     const todayExecs = execs.filter(e => (e.ts || 0) >= todayStart);
-    const buys = todayExecs.filter(e => e.side === "buy" && e.status === "filled");
-    const sells = todayExecs.filter(e => e.side === "sell" && e.status === "filled");
-    const failed = todayExecs.filter(e => e.status === "error" || e.status === "failed");
+    const buys = todayExecs.filter(e => String(e.side).toUpperCase() === "BUY");
+    const sells = todayExecs.filter(e => String(e.side).toUpperCase() === "SELL");
+    const failed = todayExecs.filter(e => e.type === "trade_error" || e.type === "trade_failed");
 
     // Cross-check: signals today vs executions today
     const signalsPath = statePath("journal", "signals.jsonl");
