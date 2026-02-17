@@ -124,6 +124,12 @@ export function upsertMarket(state, market, now) {
     if (k) merged.market_kind = k;
   }
 
+  // Skip if this market was purged as terminal (bid >= 0.995 confirmed)
+  // _terminal_purged_slugs is a Set maintained by the purge logic in loop_eval
+  if (state._terminal_purged_slugs?.has(market.slug)) {
+    return { changed: false, reason: "terminal_purged" };
+  }
+
   if (!merged.status) merged.status = "watching";
   if (!merged.first_seen_ts) merged.first_seen_ts = now;
   merged.last_seen_ts = Math.max(Number(merged.last_seen_ts || 0), now);

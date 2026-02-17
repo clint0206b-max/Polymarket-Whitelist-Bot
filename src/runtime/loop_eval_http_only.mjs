@@ -1229,6 +1229,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   const TERMINAL_THRESHOLD = 0.995;
   const TERMINAL_CONFIRM_MS = 30000; // 30s anti-flicker window
   let terminalPurgedCount = 0;
+  // Track purged slugs so Gamma doesn't re-add them
+  if (!state._terminal_purged_slugs) state._terminal_purged_slugs = new Set();
 
   // Load open paper positions to check exclusion
   let openPaperSlugs;
@@ -1271,6 +1273,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     if (terminalAge < TERMINAL_CONFIRM_MS) continue; // Not confirmed yet
 
     // Confirmed terminal for ≥30s → purge
+    state._terminal_purged_slugs.add(m.slug);
     delete state.watchlist[key];
     terminalPurgedCount++;
     bumpBucket("health", "purged_terminal_price", 1);
@@ -1702,6 +1705,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
       // Terminal price check via HTTP (catches markets without WS data)
       if (bestBid >= 0.995 && m.status === "watching") {
+        if (!state._terminal_purged_slugs) state._terminal_purged_slugs = new Set();
+        state._terminal_purged_slugs.add(m.slug);
         bumpBucket("health", "expired_terminal_http", 1);
         console.log(`[TERMINAL_HTTP] ${m.slug} | bid=${bestBid.toFixed(3)} → deleted`);
         delete state.watchlist[m.slug];
