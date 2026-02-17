@@ -15,13 +15,16 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { appendJsonl } from "../core/journal.mjs";
+import { resolvePath } from "../core/state_store.js";
 import {
   initClient, executeBuy, executeSell,
   getBalance, getConditionalBalance, getPositions,
 } from "./order_executor.mjs";
 
-const EXECUTION_STATE_PATH = "state/execution_state.json";
+// Resolves to state/execution_state.json (prod) or state-{SHADOW_ID}/execution_state.json (shadow)
+const EXECUTION_STATE_PATH = resolvePath("state", "execution_state.json");
 
 // --- Execution State (idempotency) ---
 
@@ -34,7 +37,7 @@ function loadExecutionState() {
 }
 
 function saveExecutionState(st) {
-  mkdirSync("state", { recursive: true });
+  mkdirSync(dirname(EXECUTION_STATE_PATH), { recursive: true });
   writeFileSync(EXECUTION_STATE_PATH, JSON.stringify(st, null, 2));
 }
 

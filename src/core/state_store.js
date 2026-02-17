@@ -128,3 +128,22 @@ export function resolvePath(...parts) {
   }
   return resolve(process.cwd(), ...parts);
 }
+
+/**
+ * Shadow write guardrail: verifies an absolute path does NOT write to prod state dir.
+ * Call this before any write operation in modules that bypass resolvePath.
+ * Throws immediately if a shadow runner attempts to write under the prod state/ directory.
+ */
+export function assertNotProdState(absPath) {
+  const shadowId = process.env.SHADOW_ID || "";
+  if (!shadowId) return; // prod runner — no restriction
+  const prodStateDir = resolve(process.cwd(), "state");
+  const shadowStateDir = resolve(process.cwd(), `state-${shadowId}`);
+  if (absPath.startsWith(prodStateDir) && !absPath.startsWith(shadowStateDir)) {
+    throw new Error(
+      `[SHADOW GUARDRAIL] Runner "${shadowId}" attempted write to prod state: ${absPath}\n` +
+      `Expected writes under: ${shadowStateDir}\n` +
+      `This is a bug — all state writes must use resolvePath() or pass stateDir explicitly.`
+    );
+  }
+}
