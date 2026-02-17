@@ -515,7 +515,7 @@
         const pnl = curPrice != null ? ((curPrice - p.entry_price) / p.entry_price * p.paper_notional_usd) : null;
         const ageMs = now - (p.ts_open || now);
         return `<tr class="hover:bg-slate-800/50">
-          <td class="px-4 py-2 text-left"><span class="text-xs" title="${p.slug}">${p.title || truncSlug(p.slug)}</span></td>
+          <td class="px-4 py-2 text-left"><span class="text-xs" title="${p.slug}">${formatMarketTitle(p)}</span></td>
           <td class="px-4 py-2 text-left">${leagueBadge(p.league)}</td>
           <td class="px-4 py-2 text-right mono text-xs">${(p.entry_price||0).toFixed(3)}</td>
           <td class="px-4 py-2 text-right mono text-xs">${curPrice != null ? curPrice.toFixed(3) : '<span class="text-slate-500">—</span>'}</td>

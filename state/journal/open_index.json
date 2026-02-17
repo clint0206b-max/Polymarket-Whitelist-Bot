@@ -1,6 +1,55 @@
 {
   "v": 1,
-  "open": {},
+  "open": {
+    "1771353340401|lol-kc-gx-2026-02-17": {
+      "slug": "lol-kc-gx-2026-02-17",
+      "title": "LoL: Karmine Corp vs GIANTX (BO3) - LEC Versus Playoffs",
+      "ts_open": 1771353340401,
+      "league": "esports",
+      "market_kind": "match_series",
+      "entry_price": 0.94,
+      "paper_notional_usd": 10,
+      "entry_outcome_name": "Karmine Corp",
+      "would_gate_apply": true,
+      "would_gate_block": true,
+      "would_gate_reason": "tie",
+      "tp_math_allowed": true,
+      "tp_math_reason": "ok",
+      "context_entry": null,
+      "price_tracking": {
+        "price_min": 0.89,
+        "price_max": 0.95,
+        "price_last": 0.89,
+        "samples": 14,
+        "first_seen_ts": 1771353378606,
+        "last_seen_ts": 1771354191266
+      }
+    },
+    "1771354011837|lol-kc-gx-2026-02-17-game2": {
+      "slug": "lol-kc-gx-2026-02-17-game2",
+      "title": "LoL: Karmine Corp vs GIANTX (BO3) - LEC Versus Playoffs",
+      "ts_open": 1771354011837,
+      "league": "esports",
+      "market_kind": "map_specific",
+      "entry_price": 0.94,
+      "paper_notional_usd": 10,
+      "entry_outcome_name": "Karmine Corp",
+      "would_gate_apply": false,
+      "would_gate_block": false,
+      "would_gate_reason": "not_applicable",
+      "tp_math_allowed": true,
+      "tp_math_reason": "ok",
+      "context_entry": null,
+      "price_tracking": {
+        "price_min": 0.695,
+        "price_max": 0.695,
+        "price_last": 0.695,
+        "samples": 3,
+        "first_seen_ts": 1771354066332,
+        "last_seen_ts": 1771354191419
+      }
+    }
+  },
   "closed": {
     "1771324953000|cs2-faze-ast10-2026-02-17-game1": {
       "slug": "cs2-faze-ast10-2026-02-17-game1",
