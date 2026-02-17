@@ -394,43 +394,49 @@ export class TradeBridge {
     const absoluteMinFloor = Math.max(0.01, triggerPrice - 0.10);
     for (let i = 0; i < this.slFloorSteps.length; i++) {
       const floor = Math.max(absoluteMinFloor, triggerPrice - this.slFloorSteps[i]);
+      const remainingShares = shares - (this.execState.trades[sellTradeId]?.filledShares || 0);
+      if (remainingShares < 0.01) break; // all sold
       
-      console.log(`[SL_SELL] ${signal.slug} | attempt ${i + 1}/${this.slFloorSteps.length} | floor=${floor.toFixed(3)} | shares=${shares}`);
+      console.log(`[SL_SELL] ${signal.slug} | attempt ${i + 1}/${this.slFloorSteps.length} | floor=${floor.toFixed(3)} | remaining=${remainingShares.toFixed(2)}/${shares}`);
       
       try {
         this.execState.trades[sellTradeId].status = "sent";
         saveExecutionState(this.execState);
 
         // Get actual conditional balance to avoid selling more than we have
-        let actualShares = shares;
+        let actualShares = remainingShares;
         try {
           const condBal = await getConditionalBalance(this.client, tokenId);
-          if (condBal < shares * 0.99) {
-            console.warn(`[SL_SELL] conditional balance ${condBal} < expected ${shares}, using balance`);
-            actualShares = Math.min(shares, condBal);
+          if (condBal < remainingShares * 0.99) {
+            console.warn(`[SL_SELL] conditional balance ${condBal} < expected ${remainingShares}, using balance`);
+            actualShares = Math.min(remainingShares, condBal);
           }
         } catch {}
 
         const result = await executeSell(this.client, tokenId, actualShares, floor);
         
         if (result.ok && result.filledShares > 0) {
+          const totalFilledSoFar = (this.execState.trades[sellTradeId].filledShares || 0) + result.filledShares;
+          const totalReceivedSoFar = (this.execState.trades[sellTradeId].receivedUsd || 0) + (result.spentUsd || 0);
+          const allFilled = totalFilledSoFar >= shares * 0.99; // 1% tolerance for rounding
+
           this.execState.trades[sellTradeId] = {
             ...this.execState.trades[sellTradeId],
-            status: "filled",
-            filledShares: result.filledShares,
-            avgFillPrice: result.avgFillPrice,
-            receivedUsd: result.spentUsd,
-            isPartial: result.isPartial,
+            status: allFilled ? "filled" : "partial",
+            filledShares: totalFilledSoFar,
+            avgFillPrice: totalReceivedSoFar / totalFilledSoFar,
+            receivedUsd: totalReceivedSoFar,
+            isPartial: !allFilled,
             orderID: result.orderID,
             floor_used: floor,
             attempt: i + 1,
             ts_filled: Date.now(),
           };
-          buyTrade.closed = true;
+          if (allFilled) buyTrade.closed = true;
           saveExecutionState(this.execState);
 
-          const pnl = (result.spentUsd || 0) - (buyTrade.spentUsd || 0);
-          console.log(`[FILLED_SL_SELL] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4)} | PnL=$${pnl.toFixed(2)} | attempt=${i + 1}`);
+          const pnl = totalReceivedSoFar - (buyTrade.spentUsd || 0);
+          console.log(`[FILLED_SL_SELL] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4)} | total=${totalFilledSoFar}/${shares} | PnL=$${pnl.toFixed(2)} | attempt=${i + 1}${allFilled ? "" : " PARTIAL"}`);
 
           appendJsonl("state/journal/executions.jsonl", {
             type: "trade_executed",
@@ -445,6 +451,7 @@ export class TradeBridge {
             orderID: result.orderID,
             requestedShares: shares,
             filledShares: result.filledShares,
+            totalFilledShares: totalFilledSoFar,
             avgFillPrice: result.avgFillPrice,
             receivedUsd: result.spentUsd,
             pnl_usd: pnl,
@@ -452,9 +459,14 @@ export class TradeBridge {
             absoluteMinFloor,
             attempt: i + 1,
             total_attempts: this.slFloorSteps.length,
+            isPartial: !allFilled,
           });
 
-          return result;
+          if (allFilled) return result;
+
+          // Partial fill — continue escalating to sell remainder
+          console.log(`[SL_SELL] ${signal.slug} | partial fill ${totalFilledSoFar}/${shares}, continuing escalation for remainder...`);
+          continue;
         }
         
         // No fill at this floor, try lower
