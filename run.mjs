@@ -458,6 +458,10 @@ try {
                 source: "clob_position_check",
               });
               await tradeBridge.handleSignalClose(sig);
+              // Sync open_index with journal after close
+              const idx = loadOpenIndex();
+              reconcileIndex(idx);
+              saveOpenIndex(idx);
             } catch (e) {
               console.error(`[POSITION_CHECK] sell error for ${sig.slug}: ${e.message}`);
             }
