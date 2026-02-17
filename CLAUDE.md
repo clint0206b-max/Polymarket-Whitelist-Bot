@@ -1,627 +1,1435 @@
-# CLAUDE.md — Polymarket Watchlist Bot v1
+# CLAUDE.md — AI Coding Assistant Guide
 
-> Signal generator + trade executor for Polymarket sports/esports prediction markets.
-> Supports **paper**, **shadow_live** (dry-run with real API), and **live** trading modes.
+**For: AI coding assistants working on polymarket-watchlist-v1**
 
-## Quick Reference
-
-```
-# Bot runs 24/7 via launchd (see Process Management below)
-# Manual run for testing:
-STOP_AFTER_MS=15000 node run.mjs      # Test run (15s)
-STOP_AFTER_MS=0 node run.mjs          # Run indefinitely (manual)
-node status.mjs                       # Dashboard (reads state, no side effects)
-node --test tests/*.test.mjs          # Run all tests (437 tests)
-curl -s http://localhost:3210/health | jq  # Health check
-open http://localhost:3210/            # Visual dashboard (auto-refresh 5s)
-```
-
-## Process Management (launchd — 24/7)
-
-The bot runs as a macOS launchd service that auto-starts at login and auto-restarts on crash.
-
-**Plist**: `~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist`
-**Logs**: `logs/launchd-stdout.log`, `logs/launchd-stderr.log`
-
-```bash
-# Check status
-launchctl list | grep polymarket
-
-# Stop (for maintenance/deploy)
-launchctl unload ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist
-
-# Start
-launchctl load ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist
-
-# Restart (after code changes)
-launchctl unload ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist && \
-  sleep 2 && rm -f state/watchlist.lock && \
-  launchctl load ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist
-```
-
-**Behavior:**
-- `RunAtLoad: true` — starts at login
-- `KeepAlive.SuccessfulExit: false` — restarts on crash (exit code != 0)
-- `ThrottleInterval: 10` — waits 10s between restarts (anti-spin)
-- `STOP_AFTER_MS=0` — runs indefinitely
-
-## Directory Structure
-
-```
-polymarket-watchlist-v1/
-├── run.mjs                    # Main loop: gamma → eval → journal → resolution
-├── status.mjs                 # Read-only dashboard (prints to stdout)
-├── CLAUDE.md                  # THIS FILE — project map
-├── TODO-ANALYSIS.md           # Analysis checklist for first signal closes
-│
-├── src/
-│   ├── config/
-│   │   ├── defaults.json      # Full config with all defaults
-│   │   └── local.json         # Overrides (merged on top of defaults)
-│   │
-│   ├── core/                  # Utilities (no business logic)
-│   │   ├── config.js          # loadConfig() — merges defaults + local
-│   │   ├── state_store.js     # readJson / writeJsonAtomic / resolvePath
-│   │   ├── journal.mjs        # appendJsonl / loadOpenIndex / saveOpenIndex / addOpen / removeOpen
-│   │   ├── lockfile.js        # acquireLock / releaseLock (PID-based)
-│   │   ├── invariants.js      # checkAndFixInvariants (state self-healing)
-│   │   ├── time.js            # nowMs / sleepMs
-│   │   └── dirty_tracker.mjs # Dirty tracking for intelligent persistence (skip writes when no changes)
-│   │
-│   ├── gamma/                 # Gamma API (market discovery)
-│   │   ├── gamma_client.mjs   # fetchLiveEvents(tag, cfg) → raw JSON
-│   │   └── gamma_parser.mjs   # parseEventsToMarkets(tag, events, cfg) → market candidates
-│   │                          #   Filters: spread/total slugs, vol24h, per-league market selection
-│   │
-│   ├── clob/                  # CLOB API (order book data)
-│   │   ├── book_http_client.mjs  # getBook(tokenId, cfg) → raw book
-│   │   ├── book_parser.mjs       # parseAndNormalizeBook(raw) → { bids[], asks[], bestBid, bestAsk }
-│   │   └── ws_client.mjs         # WebSocket client (real-time price feed, singleton)
-│   │
-│   ├── context/               # ESPN live game context
-│   │   ├── espn_cbb_scoreboard.mjs  # fetchEspnCbbScoreboardForDate / deriveCbbContextForMarket
-│   │   └── espn_nba_scoreboard.mjs  # fetchEspnNbaScoreboardForDate / deriveNbaContextForMarket
-│   │                                # Context: { state, period, minutes_left, margin, teams, scores }
-│   │
-│   ├── runtime/               # Main loops
-│   │   ├── loop_gamma.mjs     # Phase 1: Gamma discovery → watchlist upsert/evict/ttl
-│   │   ├── loop_eval_http_only.mjs  # Phase 2: CLOB eval pipeline (THE BIG FILE — 2200 lines)
-│   │   │                            # WS primary → HTTP fallback → stage1 → near → depth → pending → signal
-│   │   │                            # Also: ESPN context, purge gates, TTL cleanup, opportunity classification
-│   │   ├── loop_resolution_tracker.mjs  # Closes paper signals via Gamma polling
-│   │   ├── health_server.mjs  # HTTP health endpoint + HTML dashboard (port 3210)
-│   │   ├── universe.mjs       # Centralized universe selection (which markets to evaluate)
-│   │   └── http_queue.mjs     # Rate-limited HTTP queue (concurrency + queue size limits)
-│   │
-│   ├── strategy/              # Pure strategy functions
-│   │   ├── stage1.mjs         # is_base_signal_candidate (price range + spread check)
-│   │   ├── stage2.mjs         # compute_depth_metrics / is_depth_sufficient (order book depth)
-│   │   ├── win_prob_table.mjs # estimateWinProb (normal CDF) + checkContextEntryGate
-│   │   ├── watchlist_upsert.mjs  # upsertMarket — merges Gamma data into watchlist entry
-│   │   ├── eviction.mjs       # evictIfNeeded — drops lowest-priority when at max_watchlist
-│   │   ├── ttl_cleanup.mjs    # markExpired — TTL-based cleanup of stale markets
-│   │   └── purge_gates.mjs   # Intelligent purge rules (stale book, incomplete quote, tradeability)
-│   │
-│   ├── metrics/
-│   │   └── daily_events.mjs   # Daily event utilization tracker (per-league per-day watermarks)
-│   │
-│   └── tools/
-│       └── journal_stats.mjs  # (Placeholder — not yet implemented, waiting for closed signals)
-│
-├── tools/
-│   └── esports-monitor.mjs    # Standalone esports book monitor
-│
-├── tests/                            # 404 tests total (node --test tests/*.test.mjs)
-│   ├── ws_client.test.mjs            # 12 tests — WS client, cache, reconnect, shutdown
-│   ├── health_server.test.mjs        # 18 tests — health endpoint, dashboard, metrics
-│   ├── universe_selection.test.mjs   # 20 tests — centralized universe selection
-│   ├── persistence.test.mjs          # 24 tests — crash-safe persistence, dirty tracking
-│   ├── purge_gates.test.mjs          # 25 tests — intelligent purge rules
-│   ├── ttl_purge.test.mjs            # 14 tests — expired market TTL cleanup
-│   ├── signaled_price_update.test.mjs # 12 tests — signaled markets price refresh
-│   ├── win_prob_table.test.mjs       # 31 tests — win prob model + entry gate
-│   ├── resolution_tracker.test.mjs   # 26 tests — detectResolved + computePnl
-│   └── ... (+ strategy, context, invariants, etc.)
-│
-├── state/                     # Runtime state (gitignored)
-│   ├── watchlist.json         # Main state: { version, watchlist, runtime, polling, filters, events_index }
-│   ├── daily_events.json      # Daily event utilization (keyed by date → league → event_id)
-│   ├── journal/
-│   │   ├── signals.jsonl      # Append-only: signal_open + signal_close entries
-│   │   ├── open_index.json    # { open: { id: {...} }, closed: { id: {...} } }
-│   │   └── context_snapshots.jsonl  # Win prob snapshots for ALL price levels (0.80-0.98)
-│   ├── watchlist.lock         # PID-based lock (prevents concurrent runs)
-│   └── runner.pid             # PID of nohup background process
-│
-└── docs/
-    ├── IMPLEMENTATION-PLAN.md
-    └── WATCHLIST-SPEC.md
-```
-
-## Data Flow (Pipeline)
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│ run.mjs main loop (every 2s)                                        │
-│                                                                     │
-│  Phase 1: Gamma Discovery (every 30s)                               │
-│  ┌──────────────────────────────────────┐                           │
-│  │ gamma_client → gamma_parser          │                           │
-│  │ → watchlist_upsert → eviction/ttl    │                           │
-│  │ Result: state.watchlist updated      │                           │
-│  └──────────────────────────────────────┘                           │
-│                                                                     │
-│  Phase 2: Eval Loop (every 2s)                                      │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │ For each market (max 20/cycle):                              │   │
-│  │                                                              │   │
-│  │  Token Resolve (if yes_token_id unknown)                     │   │
-│  │  → getBook(tokenA) + getBook(tokenB)                         │   │
-│  │  → compare to determine yes/no token                         │   │
-│  │                                                              │   │
-│  │  Price Fetch (WS primary, HTTP fallback)                     │   │
-│  │  → WS: real-time via wss://ws-subscriptions-clob.polymarket  │   │
-│  │  → HTTP fallback: if WS cache stale (>10s) or missing        │   │
-│  │  → Complementary pricing: min(yes_ask, 1-no_bid)            │   │
-│  │                                                              │   │
-│  │  Stage 1: is_base_signal_candidate                           │   │
-│  │  → ask ∈ [0.93, 0.98]? spread ≤ 0.02?                       │   │
-│  │                                                              │   │
-│  │  Near Margin: is_near_signal_margin                          │   │
-│  │  → ask ≥ 0.945 OR spread ≤ 0.015?                           │   │
-│  │                                                              │   │
-│  │  Stage 2: is_depth_sufficient                                │   │
-│  │  → exit depth ≥ $2000? entry depth ≥ $1000?                  │   │
-│  │                                                              │   │
-│  │  TP Math: tp_math_margin ≥ min_profit_per_share?             │   │
-│  │                                                              │   │
-│  │  State machine: watching → pending_signal → signaled         │   │
-│  │  (pending_window_seconds = 6s confirmation)                  │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-│  ESPN Context (CBB/NBA, every 15s)                                  │
-│  ┌──────────────────────────────────────┐                           │
-│  │ Fetch scoreboard → derive per-market │                           │
-│  │ context: state, period, minutes_left │                           │
-│  │ margin, teams, scores               │                           │
-│  │                                      │                           │
-│  │ Win Prob: estimateWinProb()          │                           │
-│  │ Entry Gate: checkContextEntryGate()  │                           │
-│  │ (tag-only, does NOT block signals)   │                           │
-│  └──────────────────────────────────────┘                           │
-│                                                                     │
-│  Journal: new signals → signals.jsonl + open_index.json             │
-│                                                                     │
-│  Resolution Tracker (every 60s)                                     │
-│  ┌──────────────────────────────────────┐                           │
-│  │ For each open signal:                │                           │
-│  │ → fetch Gamma by slug               │                           │
-│  │ → detectResolved:                    │                           │
-│  │   official (closed=true, px≥0.99)    │                           │
-│  │   terminal_price (px≥0.995)          │                           │
-│  │ → compute PnL → signal_close         │                           │
-│  └──────────────────────────────────────┘                           │
-│                                                                     │
-│  Metrics: opportunity classification + daily_events                 │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-## Market State Machine
-
-```
-watching → pending_signal → signaled
-    │           │
-    │           └── (timeout after 6s) → watching + cooldown
-    │
-    └── (cooldown_active) → skip eval until cooldown expires
-```
-
-- **watching**: default state, evaluating every cycle
-- **pending_signal**: passed all filters, waiting 6s confirmation
-- **signaled**: confirmed signal, written to journal, enters cooldown
-
-## Config
-
-Two files merged: `defaults.json` (committed) + `local.json` (overrides, committed).
-
-**Active overrides (local.json):**
-| Key | Default | Local | Effect |
-|-----|---------|-------|--------|
-| `filters.min_prob` | 0.94 | **0.93** | Lower entry floor |
-| `filters.max_entry_price` | 0.97 | **0.98** | Higher entry ceiling |
-| `polling.gamma_discovery_seconds` | 60 | **30** | Faster discovery |
-| `polling.max_watchlist` | 200 | **50** | Smaller watchlist |
-| `context.enabled` | false | **true** | ESPN context active |
-
-**Key config sections:**
-- `polling.*` — timing, rate limits, concurrency
-- `filters.*` — Stage 1/2 thresholds (min_prob, max_spread, depth)
-- `gamma.*` — Gamma API settings, tags, vol filters
-- `tp.*` — Take-profit math (bid_target=0.998, min_profit=0.002)
-- `context.*` — ESPN integration + entry rules (tag-only)
-- `paper.*` — Paper trading (notional=$10, resolution_poll=60s)
-- `esports.*` — Series guard threshold
-
-## Glossary
-
-| Term | Meaning |
-|------|---------|
-| **Stage 1** | Price range check: ask ∈ [min_prob, max_entry_price] + spread ≤ max_spread |
-| **Stage 2** | Order book depth check: bid-side ≥ $2000, ask-side ≥ $1000 |
-| **near_margin** | Tighter filter: ask ≥ 0.945 OR spread ≤ 0.015. Required after Stage 1 |
-| **near_by** | How near_margin passed: "ask", "spread", or "both" |
-| **tp_math** | Take-profit math: can we exit at 0.998 bid with ≥0.002 profit after spread? |
-| **pending_signal** | Market passed all filters, in 6s confirmation window |
-| **signaled** | Confirmed paper signal, written to journal |
-| **cooldown** | After signal/timeout, market is blocked from re-entering pending for N seconds |
-| **token resolve** | Determining which CLOB token is "Yes" vs "No" (by comparing book prices) |
-| **win_prob** | Local win probability estimate from ESPN score + time (normal CDF model) |
-| **entry_gate** | Context-based entry filter: final period, ≤5min, margin≥1, win_prob≥0.90. Tag-only |
-| **ev_edge** | win_prob - ask_price. Positive = our model thinks market underprices the team |
-| **terminal_price** | Gamma outcomePrices ≥0.995 on one side — game effectively decided |
-| **opportunity classification** | Per-league market health: two-sided, one-sided, spread, tradeable counts |
-| **daily_events** | Per-day per-league event utilization: total events, quote/tradeable/signal counts |
-
-## Strategy Hierarchy (v1)
-
-Agreed strategy — market price is primary, win_prob is confirmation:
-
-1. **ask ∈ [0.93, 0.98]** — market says high probability (primary signal)
-2. **spread ≤ 0.02 + depth passes** — liquid and executable
-3. **tp_math_allowed** — economic filter (margin to TP at 0.998)
-4. **Near margin** — ask ≥ 0.945 OR spread ≤ 0.015
-5. **6s pending confirmation** — not a single-tick fluke
-6. **win_prob ≥ 0.90** (tag-only) — ESPN sanity check, doesn't block
-
-## Leagues
-
-| League | Gamma tag | Markets/event | Context | Notes |
-|--------|-----------|---------------|---------|-------|
-| CBB | ncaa-basketball | 1 (main) | ESPN CBB | Only fetches events within ±7 days |
-| NBA | nba | 1 (main) | ESPN NBA | Same window, All-Star has no clock data |
-| Esports | esports | Up to 6 (game/map sub-markets) | None | Series guard for BO3/BO5 |
-| Soccer | soccer | 2 per event (team A wins, team B wins) | ESPN Soccer | 11 leagues, Poisson model, gate BLOQUEANTE |
-
-## Signal Journal Schema (v2)
-
-**signal_open:**
-```json
-{
-  "type": "signal_open",
-  "schema_version": 2,
-  "build_commit": "a798f34",
-  "signal_id": "1771195263179|lol-c9-fly-2026-02-15",
-  "ts_open": 1771195263179,
-  "slug": "lol-c9-fly-2026-02-15",
-  "league": "esports",
-  "entry_price": 0.96,
-  "spread": 0.01,
-  "entry_outcome_name": "Cloud9",
-  "tp_math_allowed": true,
-  "tp_math_margin": 0.028,
-  "ctx": { "entry_gate": { "win_prob": 0.95, "ev_edge": -0.01, "entry_allowed": true } }
-}
-```
-
-**signal_close:**
-```json
-{
-  "type": "signal_close",
-  "signal_id": "...",
-  "ts_close": 1771200000000,
-  "close_reason": "resolved",
-  "resolve_method": "terminal_price",
-  "resolved_outcome_name": "Cloud9",
-  "win": true,
-  "pnl_usd": 0.42,
-  "roi": 0.042
-}
-```
-
-## Status Dashboard Sections
-
-`node status.mjs` outputs (in order):
-1. **Config summary** — active filters, polling intervals
-2. **Watchlist** — market count by league, by status
-3. **Hot candidates** — markets close to signaling
-4. **Opportunity classification** — CBB/NBA/Esports market health
-5. **Context Entry Gate** — win_prob evaluated/allowed/blocked
-6. **Paper Positions** — open/closed/W-L/PnL/resolution tracker health
-7. **Daily Event Utilization** — events per league, utilization %, miss reasons
-8. **Funnel by League** — rolling 5min: eval→quote→base→spread→depth→pending→signaled
-
-## Git Workflow
-
-```bash
-# After every change:
-git add -A
-git commit -m "type: description"  # feat/fix/test/metrics/tune/chore/docs
-git push
-```
-
-- **All tests must pass before commit**
-- **One change per commit** with descriptive message
-- **Never modify bot parameters without explicit approval from Andres**
-
-## Common Tasks
-
-| Task | How |
-|------|-----|
-| Check bot alive | `launchctl list \| grep polymarket` or `curl -s http://localhost:3210/health \| jq .status` |
-| View dashboard | `open http://localhost:3210/` |
-| View health JSON | `curl -s http://localhost:3210/health \| jq` |
-| View status | `node status.mjs` |
-| View signals | `cat state/journal/signals.jsonl \| jq` |
-| Run tests | `node --test tests/*.test.mjs` |
-| Start bot (launchd) | `launchctl load ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist` |
-| Stop bot (launchd) | `launchctl unload ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist` |
-| Restart bot | See "Process Management" section above |
-| Test run (15s) | `STOP_AFTER_MS=15000 node run.mjs` |
-| Check Gamma market | `curl -s "https://gamma-api.polymarket.com/markets?slug=SLUG" \| jq '.[0]'` |
-| Check WS ratio | `curl -s http://localhost:3210/health \| jq .websocket.usage` |
-| Check loop perf | `curl -s http://localhost:3210/health \| jq .loop.performance` |
-
-## Known Issues / Gotchas
-
-- **loop_eval_http_only.mjs is ~2200 lines** — the monolith. Most changes happen here.
-- **Gamma `closed` flag can lag** — markets show terminal prices (0.9995) but `closed: false` for hours. Resolution tracker handles this with `terminal_price` method (≥0.995).
-- **ESPN All-Star game** has no clock/period data → win_prob returns null → entry_gate blocks as `no_context`.
-- **Esports context** is from Gamma only (no ESPN). Win prob does NOT apply to esports.
-- **`state/watchlist.json`** is the single source of truth for runtime state. Written only when dirty (dirty tracker + 5s throttle).
-- **Lock file** (`state/watchlist.lock`) prevents concurrent runs. If bot dies ungracefully, delete manually (`rm -f state/watchlist.lock`).
-- **Mac sleep** will pause launchd service. Bot resumes when machine wakes.
-- **WS reconnect** uses exponential backoff (1s → 60s). On intentional shutdown, reconnect is suppressed (`_closing` flag).
-- **Health endpoint histogram** is lifetime (not rolling). Counters grow with uptime. Design debt — use `histogram_since_ts` or rolling window for rates.
-
-## WebSocket Integration
-
-**Primary price source** — eliminates most HTTP /book requests.
-
-```
-Endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/market
-Protocol:
-  1. Initial subscribe: { assets_ids: [...], type: "market" }  (once per connection)
-  2. Dynamic subscribe: { assets_ids: [...], operation: "subscribe" }  (for new tokens)
-Messages received:
-  - price_change: { event_type: "price_change", price_changes: [{asset_id, best_bid, best_ask}] }
-  - book: { event_type: "book", asset_id, bids: [...], asks: [...] }
-  - last_trade_price: fallback if no book data yet
-```
-
-**Key design decisions:**
-- `type: "market"` (lowercase, not `"MARKET"`)
-- ONE initial message per connection, then `operation: "subscribe"` for new assets
-- Lazy connect (on first `subscribe()` call, not on import)
-- `_closing` flag prevents reconnect loop during shutdown
-- WS client is singleton on `state.runtime.wsClient` — excluded from JSON persist
-- Stale threshold: `cfg.ws.max_stale_seconds` (default 10)
-- Complementary pricing: `bestAsk = min(yes_ask, 1 - no_bid)` when both tokens fresh
-
-**Health metrics** (in `/health` → `.websocket`):
-- `ws_ratio_percent`: % of price fetches from WS (target: >95%, typical: 99%+)
-- `http_fallback_cache_miss`: WS had no data for token
-- `http_fallback_stale`: WS data existed but too old
-- `http_fallback_mismatch`: true if cache_miss + stale ≠ total (indicates untracked path)
-
-## Health Monitoring
-
-**Endpoint**: `GET http://localhost:3210/health` → JSON
-**Dashboard**: `GET http://localhost:3210/` → auto-refresh HTML
-
-**Key sections in /health response:**
-| Section | What it shows |
-|---------|--------------|
-| `loop.performance` | histogram, slow_loops, very_slow_loops, last_breakdown |
-| `websocket.usage` | ws_ratio, cache_miss, stale counts |
-| `staleness` | % of signaled markets with stale prices |
-| `http` | success rate, rate limited count |
-| `persistence` | last write age, write/skip counts |
-| `watchlist` | total, by_status, by_league |
-| `reject_reasons` | top 5 reject reasons (last cycle) |
-
-**Loop timing breakdown** (logged on slow loops, exposed in health):
-```
-[SLOW_LOOP] 3548ms | gamma=1932ms eval=1616ms journal=0ms resolution=1ms persist=0ms | markets=32 heapUsed=12MB heapTotal=17MB external=4MB
-```
-
-**Thresholds:**
-- `>= 3000ms` → `[SLOW_LOOP]` (counter: `slow_loops`)
-- `>= 5000ms` → `[VERY_SLOW_LOOP]` (counter: `very_slow_loops`)
-
-## Persistence
-
-**Strategy**: Dirty tracking with fsync + atomic write + backup.
-- Only writes when state actually changed (`DirtyTracker`)
-- Throttled to max 1 write per 5s (unless critical: new signals)
-- `writeJsonAtomic`: tmp file → fsync → rename (crash-safe)
-- Size guardrail: warns if state > 1MB
-
-## Purge Gates
-
-**3 rules for removing watching markets** (require double conditions to avoid false purges):
-1. Book stale >15min
-2. Quote incomplete >10min
-3. Tradeability degraded >12min (BOTH spread + depth failing)
-
-**Expired TTL**: Markets with `status=expired` + `resolved_ts` older than 5h are auto-deleted each cycle.
+This file contains everything you need to understand and modify the codebase safely. Read this BEFORE making any changes.
 
 ---
-## Soccer Integration
 
-**Model**: Poisson (discrete goals, ~0.015 goals/min/team)
-**Gate**: BLOQUEANTE (not tag-only like CBB/NBA)
+## Project Overview
 
-| Rule | Value | Why |
-|------|-------|-----|
-| Min margin | **2 goals** | 1-goal leads vulnerable to late equalizer |
-| Max minutes (margin=2) | **15** | With win_prob ≥ 0.97 threshold |
-| Max minutes (margin=3+) | **20** | With win_prob ≥ 0.95 threshold |
-| Score change cooldown | **90s** | VAR / goal reversal protection |
-| Confidence required | **high** | Only 2nd half, clock 45-90 min |
-| Banned slugs | draw, total, spread, btts, over, under | Only team-win markets |
-| Period | **must be 2** | Blocks 1st half, halftime, extra time |
+**What it does:** High-frequency signal generation for Polymarket prediction markets. Discovers live sports/esports markets, evaluates them through a multi-stage pipeline with context-aware gates (ESPN scoreboards), and executes trades.
 
-**11 ESPN leagues**: eng.1, esp.1, ita.1, fra.1, ger.1, uefa.champions, uefa.europa, mex.1, arg.1, ned.1, por.1
+**Current status:** Running LIVE with real money ($128.75 balance, commit `540451f`)
 
-**Matching**: normalized team names + aliases (20+), unique match required, ±6h time window, fail-closed on any ambiguity.
+**Key constraint:** This bot trades real money. **Every change must be tested extensively before deploy.**
 
-**Key files**:
-- `src/strategy/win_prob_table.mjs` — `soccerWinProb()`, `checkSoccerEntryGate()`
-- `src/context/espn_soccer_scoreboard.mjs` — adapter, matching, score tracking
-- `src/gamma/gamma_parser.mjs` — `isSoccerSlug()`, `isSoccerBannedSlug()`
+---
 
-**Fully integrated into pipeline** — Phases 1-4 complete (commit `855bf26`).
-- Soccer gate is BLOQUEANTE in the eval loop (after context snapshot, before Stage 1)
-- ESPN cache: per-league, 15s TTL, fail-closed on fetch errors
-- Needs live games to generate signals (Sunday night = all post-FT)
+## Project Structure
 
-## Context Snapshots (win_prob validation)
+### Source Layout
 
-File: `state/journal/context_snapshots.jsonl`
-
-Captures win_prob + ask/bid for in-game markets at ALL price levels for model calibration:
-- **Conditions**: game "in" state, minutes_left ≤ 8, ask ∈ [0.80, 0.98]
-- **Throttle**: max 1 snapshot per market per 30 seconds
-- **Purpose**: validate win_prob calibration AND detect mispricing at lower ask levels
-- **Future analysis**: join with resolution outcomes → "when win_prob said 0.96 and ask was 0.88, did the team win?"
-
-```json
-{ "ts": ..., "league": "cbb", "slug": "...", "ask": 0.88, "bid": 0.86, "win_prob": 0.96,
-  "ev_edge": 0.08, "margin_for_yes": 12, "minutes_left": 3.5, "period": 2 }
+```
+src/
+├── config/
+│   ├── defaults.json          # Default config (never edit in prod)
+│   └── local.json              # Prod overrides (edit with extreme care)
+│
+├── core/                       # Foundation modules (crash-safe, tested)
+│   ├── config.js               # Config cascade (defaults → local → shadow → env)
+│   ├── state_store.js          # Persistence (atomic+fsync+backup)
+│   ├── journal.mjs             # Append-only JSONL (signals, positions)
+│   ├── dirty_tracker.mjs       # Intelligent persistence (critical vs throttled)
+│   ├── lockfile.js             # Single-runner lock
+│   ├── time.js                 # Time utilities (nowMs, sleepMs)
+│   └── invariants.js           # State consistency checks
+│
+├── gamma/                      # Gamma API discovery
+│   ├── gamma_client.mjs        # Fetch events by tag (esports, nba, cbb, soccer)
+│   └── gamma_parser.mjs        # Parse events→markets, detect leagues
+│
+├── clob/                       # CLOB API (price, depth, execution)
+│   ├── book_http_client.mjs    # GET /book endpoint
+│   ├── book_parser.mjs         # Parse and normalize book data
+│   └── ws_client.mjs           # WebSocket price feed (auto-reconnect)
+│
+├── context/                    # External data feeds (ESPN scoreboards)
+│   ├── espn_cbb_scoreboard.mjs # NCAA basketball
+│   ├── espn_nba_scoreboard.mjs # NBA
+│   └── espn_soccer_scoreboard.mjs # Soccer (multi-league)
+│
+├── strategy/                   # Signal pipeline logic (pure functions)
+│   ├── stage1.mjs              # Base filters (price+spread+near)
+│   ├── stage2.mjs              # Depth check
+│   ├── win_prob_table.mjs      # Context entry gate (win probability)
+│   ├── watchlist_upsert.mjs    # Market insertion/update
+│   ├── ttl_cleanup.mjs         # Expire stale markets
+│   └── eviction.mjs            # Watchlist size limit (FIFO)
+│
+├── runtime/                    # Main loops
+│   ├── loop_gamma.mjs          # Gamma discovery (30s)
+│   ├── loop_eval_http_only.mjs # Signal pipeline + price updates (2s)
+│   ├── loop_resolution_tracker.mjs # Paper position resolution (60s)
+│   ├── universe.mjs            # Universe selection (SINGLE SOURCE OF TRUTH)
+│   ├── health_server.mjs       # HTTP monitoring (:3210)
+│   ├── http_queue.mjs          # Concurrent HTTP queue
+│   └── dashboard.html          # Visual dashboard
+│
+├── execution/                  # Trade execution layer
+│   ├── trade_bridge.mjs        # Execution modes (paper/shadow_live/live)
+│   └── order_executor.mjs      # CLOB client wrapper
+│
+├── metrics/                    # Observability
+│   ├── daily_events.mjs        # Per-league funnel tracking
+│   └── daily_snapshot.mjs      # Daily state snapshots
+│
+└── tools/                      # CLI utilities
+    └── journal_stats.mjs       # Paper position analysis
 ```
 
-## Capture Rate Tracking (commit 61f7195)
+### Key Entry Points
 
-Per-market price watermarks in `daily_events.json` → `market_prices`:
-- `max_bid` / `max_bid_ts`: highest bid seen and when
-- `first_cross_ts` / `first_cross_price`: first time bid crossed entry threshold (min_prob)
-- `getSummary()` returns `capture` object: `markets_crossed_threshold`, `markets_entered`, `capture_rate`, `missed_opportunities`
+- **`run.mjs`**: Main entry point (loads config, acquires lock, starts loops)
+- **`status.mjs`**: CLI dashboard (current state snapshot)
+- **`src/runtime/loop_eval_http_only.mjs`**: Signal pipeline (most complex file, 2500 lines)
+- **`src/runtime/loop_gamma.mjs`**: Gamma discovery loop
+- **`src/core/config.js`**: Config loading (precedence chain)
+- **`src/runtime/universe.mjs`**: Universe selection (centralized logic)
 
-## Pending Timeout Counterfactual (commit d0c3991)
+---
 
-When 6s confirmation window times out, logs `signal_timeout` to signals.jsonl.
-Resolution tracker checks these and writes `timeout_resolved` with:
-- `would_have_won`: did the market resolve in our favor?
-- `hypothetical_pnl_usd`: how much we would have made/lost
-- `verdict`: `filter_saved_us` or `filter_cost_us`
-- `status.mjs` and dashboard show aggregate: saved count vs cost count
+## Architecture: How Data Flows
 
-## Shadow Runners (commit 3b14325)
+### 1. Gamma Discovery Loop (30s)
 
-A/B test strategy changes without touching prod. Process isolation via `SHADOW_ID` env var.
-
-```bash
-./scripts/shadow-start.sh minprob090 '{"strategy":{"min_prob":0.90}}'
-./scripts/shadow-list.sh              # List active runners
-./scripts/shadow-compare.sh minprob090 # Side-by-side comparison
-./scripts/shadow-stop.sh minprob090
+```
+fetchLiveEvents(tags) → parseEventsToMarkets() → upsertMarket() → watchlist
+                                                              ↓
+                                                      markExpired()
+                                                              ↓
+                                                      evictIfNeeded()
 ```
 
-- State isolated to `state-{id}/`, lock inside state dir, auto-assigned port (3211-3260)
-- Kill switch: refuses to start if live trading enabled or state dir = prod
-- Config cascade: defaults → local → shadow override → env vars
-- Config snapshot saved at boot for reproducibility
-- `runner_id` tagged on all signal events and health endpoint
+**Input:** Gamma API (`/events` by tag)
+**Output:** Candidate markets in watchlist (status=watching)
+**State mutation:** `state.watchlist[conditionId]` created/updated
+**Filters:**
+- min vol24h ($200)
+- date window (endDateIso ±1 day from now, per-league configurable)
+- ban: spreads, totals, draws, over/under
 
-## Visual Dashboard (commit 8d6f26e)
+**Key files:**
+- `src/gamma/gamma_client.mjs` — HTTP fetch
+- `src/gamma/gamma_parser.mjs` — event→market transformation
+- `src/strategy/watchlist_upsert.mjs` — insert/update logic
+- `src/strategy/ttl_cleanup.mjs` — expire old markets
+- `src/strategy/eviction.mjs` — FIFO eviction if watchlist >max
 
-Full command center at `http://localhost:3210/` with Tailwind CSS, dark mode:
-- **Header**: runner_id, build, uptime, semaphores (Loop/WS/Gamma)
-- **Alert banners**: red (loop stale >30s, WS down), yellow (loop slow, Gamma stale)
-- **KPIs**: PnL today, win rate, trades today, open positions, watchlist size
-- **Tables**: open positions, trades today, watchlist live (filterable)
-- **Sidebar**: loop performance, top reject reasons (bar chart), 6s window analysis, daily utilization, config
+### 2. Price Update + Signal Pipeline (2s)
 
-API endpoints (cached 3s TTL): `/api/health`, `/api/trades`, `/api/positions`, `/api/watchlist`, `/api/config`
-Legacy dashboard at `/legacy`.
+```
+selectPriceUpdateUniverse() → WS/HTTP fetch → update last_price
+                                                      ↓
+selectPipelineUniverse() → ESPN context tagging → stage1 → stage2 → pending → signaled
+```
 
-## Daily Snapshots (commit d8de816)
+**Universe A (price updates):** watching + pending_signal + **signaled**
+**Universe B (signal pipeline):** watching + pending_signal (NO signaled)
 
-Compact daily summary persisted every 5min to `state/snapshots/YYYY-MM-DD.json`:
-- Trades: count, wins, losses, PnL today/total, WR
-- Timeouts: total, resolved, saved_us, cost_us
-- Watchlist status counts, top 10 reject reasons
-- League funnel summary (events → quote → tradeable → signal)
-- Loop performance (runs, slow loops, avg cycle)
+**Critical invariant:** signaled markets MUST receive price updates (visibility) but MUST NOT re-enter pipeline (prevents duplicate signals).
 
-Enables day-over-day comparison without parsing JSONL.
+**Price Update Path:**
+1. Get token IDs (resolve YES/NO if needed via book score comparison)
+2. Check WS cache (instant, <50ms)
+3. If miss/stale → HTTP fallback (/book endpoint, 300-800ms)
+4. Parse book → complementary pricing: `best_ask = min(yes_ask, 1 - no_bid)`
+5. Update `market.last_price = { yes_best_ask, yes_best_bid, spread, updated_ts }`
+6. Cache depth metrics (15s TTL, bust on 3¢ price move)
 
-## Test Coverage
+**Signal Pipeline Path (watching markets only):**
 
-**Total: 437 tests** (all passing)
+1. **ESPN Context Tagging** (if enabled)
+   - Fetch scoreboard by dateKey (UTC day from market.endDateIso)
+   - Match market → live game (team name normalization)
+   - Derive context: period, score, minutes left
+   - Compute win probability (Poisson for soccer, margin-based for basketball)
+   - Store in `market.context` and `market.context_entry`
 
-*Last updated: 2026-02-16 (commit d8de816 — capture tracking, timeout counterfactual, shadow runners, visual dashboard, daily snapshots)*
+2. **Stage 1: Base Filters** (pure functions)
+   - Price range: 0.93 ≤ ask ≤ 0.98
+   - Max spread: 0.02
+   - Near margin: ask ≥ 0.945 OR spread ≤ 0.015
+   - EPS tolerance: 1e-6 (floating-point safety)
 
-## Trade Execution Layer
+3. **Stage 2: Depth Check** (pure functions)
+   - Entry depth (ask side): ≥ $1,000 below max_entry_price (0.98)
+   - Exit depth (bid side): ≥ $2,000 above floor (0.70)
+   - Iterates book levels until threshold met
 
-### Modes (`trading.mode` in local.json)
-- `"paper"` (default): Signals only, no CLOB connection
-- `"shadow_live"`: Connects to CLOB, checks balance/book, logs what WOULD trade, doesn't execute
-- `"live"`: Executes real trades via FAK market orders
+4. **Pending Confirmation (6s window)**
+   - Enter pending: set `status = pending_signal`, `pending_since_ts = now`
+   - Cooldown: 20s per slug (prevents churning same market)
+   - Timeout after 6s: log to signals.jsonl (`signal_timeout`)
+   - Promote to signaled: if still passes Stage1+Stage2 after 6s
 
-### Go-Live Runbook
+5. **Signal Generation**
+   - Set `status = signaled`
+   - Append to `journal/signals.jsonl` (`signal_open` event)
+   - Update `journal/open_index.json` (open paper positions)
+   - Include context snapshot (win prob, margin, time left, TP math)
 
-**Preflight (shadow_live):**
-1. Set `trading.mode: "shadow_live"` in `src/config/local.json`
-2. Restart: `launchctl unload/load`
-3. Verify in logs:
-   - `[BOOT] trading.mode=shadow_live | SL=0.7 | max_pos=$10`
-   - `[TRADE_BRIDGE] mode=shadow_live | funder=0xddb6... | balance=$XX.XX`
-4. Wait for a signal → confirm `[SHADOW_BUY]` log appears with valid balance/tokenId
-5. Run for 1-2 hours minimum
+6. **Trade Execution** (if mode != paper)
+   - Load trade bridge (src/execution/trade_bridge.mjs)
+   - Check guards (max position, exposure, concurrent, daily limit)
+   - Execute buy (idempotent by signal_id)
+   - Log to `journal/executions.jsonl`
 
-**Go live:**
-1. Set `trading.mode: "live"` in `src/config/local.json`
-2. Restart
-3. Watch first trade: `[LIVE_BUY]` → `[FILLED_BUY]` with slippage
-4. Monitor `state/journal/executions.jsonl`
+**Key files:**
+- `src/runtime/universe.mjs` — universe selection (SINGLE SOURCE OF TRUTH)
+- `src/runtime/loop_eval_http_only.mjs` — main eval loop (2500 lines)
+- `src/clob/ws_client.mjs` — WebSocket price feed
+- `src/clob/book_http_client.mjs` — HTTP fallback
+- `src/clob/book_parser.mjs` — parse and normalize book data
+- `src/strategy/stage1.mjs` — base filters (pure)
+- `src/strategy/stage2.mjs` — depth check (pure)
+- `src/context/espn_*_scoreboard.mjs` — ESPN adapters
+- `src/strategy/win_prob_table.mjs` — context entry gate
 
-**Emergency stop:**
-1. Set `trading.mode: "paper"` and restart — instant, no position impact
-2. Or: `launchctl unload` to stop entirely
-3. Open positions stay on Polymarket — manual close via UI if needed
+### 3. Resolution Tracker (60s)
 
-### Safety Guards
-- **Boot guard**: Fails if SL, credentials, or limits not configured for non-paper modes
-- **Idempotency**: `trade_id = buy:{signal_id}` / `sell:{signal_id}` — no double execution
-- **Pause fail-closed**: If SL sell fails all attempts, ALL trading pauses (buys + sells)
-- **SL floor minimum**: Never sells below `triggerPrice - 0.10`
-- **Post-fill check**: Verifies conditional balance after each buy
-- **Reconciliation**: Every 5min against real positions (orphan detection)
+```
+loadOpenIndex() → for each open position → fetchGammaMarketBySlug()
+                                                      ↓
+                                           detectResolved() → signal_close
+                                                      ↓
+                                            addClosed(), removeOpen()
+```
 
-### Config Reference
-```json
+**Paper Stop Loss:**
+- If current price ≤ 0.70 → close immediately (log `close_reason: stop_loss`)
+
+**Resolution Detection:**
+- Official: `market.closed = true` AND price ≥ 0.99
+- Terminal: price ≥ 0.995 (safe for paper, real PnL identical)
+
+**Timeout Resolution (counterfactual):**
+- Reads `signal_timeout` events without matching `timeout_resolved`
+- Polls Gamma for each unresolved timeout
+- If resolved → compute hypothetical PnL
+- Log verdict: `filter_saved_us` (would have lost) or `filter_cost_us` (would have won)
+
+**Price Extremes Tracking:**
+- Records min/max price during position lifetime
+- Used for offline SL analysis (did we hold through dips?)
+
+**Key files:**
+- `src/runtime/loop_resolution_tracker.mjs` — resolution logic
+- `src/core/journal.mjs` — open_index management
+
+---
+
+## Config System
+
+### Cascade Order (highest to lowest precedence)
+
+1. **Environment variables**: `WATCHLIST_CONFIG_JSON` (JSON string)
+2. **Shadow config**: `state-{SHADOW_ID}/config-override.json` (if shadow runner)
+3. **Local config**: `src/config/local.json` (prod overrides)
+4. **Defaults**: `src/config/defaults.json` (baseline)
+
+**Important:** `local.json` is gitignored. Never commit secrets or prod-specific settings to defaults.json.
+
+### Config Structure
+
+```javascript
 {
-  "paper": { "stop_loss_bid": 0.70 },
-  "trading": {
-    "mode": "paper",
-    "credentials_path": "/path/to/.polymarket-credentials.json",
-    "funder_address": "0xddb60e6980B311997F75CDA0028080E46fACeBFA",
-    "max_position_usd": 10,
-    "max_total_exposure_usd": 50,
-    "max_concurrent_positions": 5,
-    "max_trades_per_day": 50,
-    "allowlist": null
+  polling: {
+    gamma_discovery_seconds: 30,
+    clob_eval_seconds: 2,
+    pending_window_seconds: 6,
+    max_watchlist: 50,
+    http_max_concurrency: 5,
+    eval_max_markets_per_cycle: 20,
+    max_token_resolves_per_cycle: 5
+  },
+  filters: {
+    EPS: 1e-6,               // Floating-point tolerance
+    min_prob: 0.93,          // Entry range lower bound
+    max_entry_price: 0.98,   // Entry range upper bound
+    max_spread: 0.02,        // 2¢ max
+    near_prob_min: 0.945,    // Near margin (ask)
+    near_spread_max: 0.015,  // Near margin (spread)
+    min_exit_depth_usd_bid: 2000,
+    min_entry_depth_usd_ask: 1000,
+    exit_depth_floor_price: 0.70
+  },
+  gamma: {
+    gamma_base_url: "https://gamma-api.polymarket.com",
+    gamma_tags: ["esports", "nba", "ncaa-basketball", "soccer"],
+    only_live_by_league: { cbb: true, nba: true, esports: true },
+    min_vol24h_usd: 200,
+    max_days_delta_keep_by_league: { cbb: 1, nba: 1, esports: 1 }
+  },
+  context: {
+    enabled: true,
+    entry_rules: {
+      gate_mode: "tag_only",      // Default: observe, don't block
+      gate_mode_nba: "blocking",  // Live trading guard (REQUIRED for mode!=paper)
+      gate_mode_cbb: "blocking",  // Live trading guard
+      min_win_prob: 0.90,
+      max_minutes_left: 5,
+      min_margin: 1
+    },
+    cbb: { provider: "espn", fetch_seconds: 15, max_ctx_age_ms: 120000 },
+    nba: { provider: "espn", fetch_seconds: 15, max_ctx_age_ms: 120000 },
+    soccer: { provider: "espn", fetch_seconds: 15 }
+  },
+  paper: {
+    notional_usd: 10,
+    stop_loss_bid: 0.70,   // Paper SL trigger (null = disabled)
+    resolution_poll_seconds: 60
+  },
+  trading: {
+    mode: "paper",  // or "shadow_live" or "live"
+    credentials_path: "/path/to/.polymarket-credentials.json",
+    funder_address: "0x...",
+    max_position_usd: 10,
+    max_total_exposure_usd: 50,
+    max_concurrent_positions: 5,
+    max_trades_per_day: 50,
+    allowlist: null  // null = allow all, or ["slug1", "slug2"]
+  },
+  purge: {
+    stale_book_minutes: 15,
+    stale_quote_incomplete_minutes: 10,
+    stale_tradeability_minutes: 12,
+    expired_ttl_minutes: 30
+  },
+  health: {
+    enabled: true,
+    port: 3210,
+    host: "127.0.0.1"
   }
 }
 ```
 
-### Key Files
-- `src/execution/order_executor.mjs` — Low-level CLOB API (buy/sell/balance)
-- `src/execution/trade_bridge.mjs` — Idempotent bridge (signals → trades)
-- `state/execution_state.json` — Trade state (idempotency, pause, daily counts)
-- `state/journal/executions.jsonl` — Execution audit log
+### Reading Config in Code
 
-### signal_id Definition
-Format: `{ts_open}|{slug}` — deterministic, stable across buy→sell lifecycle.
-Same ID used for signal_open, signal_close, buy trade_id, sell trade_id.
+```javascript
+import { loadConfig } from "./src/core/config.js";
+const cfg = loadConfig();
+const minProb = Number(cfg?.filters?.min_prob ?? 0.94);
+```
 
-### SL Ladder (stop_loss sell)
-When bid ≤ 0.70: try to sell with escalating floor discount:
-1. floor = triggerPrice (0.70)
-2. floor = triggerPrice - 0.01
-3. floor = triggerPrice - 0.02
-4. floor = triggerPrice - 0.03
-5. floor = triggerPrice - 0.05
-Absolute minimum: triggerPrice - 0.10 (never below 0.60).
-If all 5 attempts fail → pause ALL trading.
+**Always use `??` or `||` with fallback defaults.** Never assume a key exists.
+
+---
+
+## State Management
+
+### What's Persisted, How, and Why
+
+**Primary state file:** `state/watchlist.json`
+
+**Schema:**
+```javascript
+{
+  version: 1,
+  watchlist: {
+    conditionId1: {
+      slug: "epl-manchester-city-arsenal",
+      league: "soccer",
+      status: "watching",
+      last_price: { yes_best_ask: 0.95, yes_best_bid: 0.93, spread: 0.02, updated_ts: 1234567890 },
+      liquidity: { entry_depth_usd_ask: 1200, exit_depth_usd_bid: 2500 },
+      context: { provider: "espn", sport: "soccer", period: 2, minutes_left: 12, ... },
+      tokens: { clobTokenIds: ["id1", "id2"], yes_token_id: "id1", no_token_id: "id2" },
+      first_seen_ts: 1234567890,
+      last_seen_ts: 1234567890,
+      // ... more fields
+    },
+    conditionId2: { ... }
+  },
+  runtime: {
+    last_run_ts: 1234567890,
+    runs: 42,
+    health: { ... },
+    context_cache: { ... },
+    wsClient: null,  // NOT serialized (runtime only)
+    // ... more runtime data
+  }
+}
+```
+
+**Persistence strategy:**
+- **Dirty tracking**: marks important changes (status transitions, signals) vs cosmetic (health counters)
+- **Critical changes**: persist immediately (new signals, resolutions)
+- **Non-critical changes**: throttled to 5s (cache updates, health counters)
+- **Atomic writes**: tmp file + rename + fsync (file + parent dir)
+- **Backup rotation**: `.bak` file before every write
+
+**Crash recovery:**
+1. Try read `watchlist.json`
+2. If corrupted → fallback to `watchlist.json.bak`
+3. If both corrupted → start fresh (baseState())
+
+**Code:**
+```javascript
+import { writeJsonAtomic, readJsonWithFallback } from "./src/core/state_store.js";
+
+// Read (with automatic fallback)
+const state = readJsonWithFallback(STATE_PATH) || baseState();
+
+// Write (atomic + fsync + backup)
+writeJsonAtomic(STATE_PATH, state);
+```
+
+### Journal (Append-Only)
+
+**Files:**
+- `state/journal/signals.jsonl` — source of truth for paper positions
+- `state/journal/open_index.json` — fast lookup (rebuilt from JSONL on crash)
+- `state/journal/executions.jsonl` — real trade execution log
+
+**Schema (signals.jsonl):**
+```javascript
+// signal_open event
+{
+  type: "signal_open",
+  runner_id: "prod",
+  schema_version: 2,
+  build_commit: "540451f",
+  signal_id: "1234567890|epl-manchester-city-arsenal",
+  ts_open: 1234567890,
+  slug: "epl-manchester-city-arsenal",
+  title: "Manchester City vs Arsenal",
+  conditionId: "...",
+  league: "soccer",
+  entry_price: 0.95,
+  spread: 0.02,
+  paper_notional_usd: 10,
+  entry_outcome_name: "Manchester City",
+  would_gate_apply: true,
+  would_gate_block: false,
+  would_gate_reason: "allowed",
+  tp_math_allowed: true,
+  ctx: { ... },
+  esports: null,
+  status: "open"
+}
+
+// signal_close event
+{
+  type: "signal_close",
+  signal_id: "1234567890|epl-manchester-city-arsenal",
+  ts_close: 1234567890,
+  close_reason: "resolved",  // or "stop_loss"
+  resolve_method: "official",  // or "terminal_price"
+  resolved_outcome_name: "Manchester City",
+  win: true,
+  paper_shares: 10.53,
+  pnl_usd: 0.59,
+  roi: 0.059,
+  price_min_seen: 0.92,
+  price_max_seen: 0.98
+}
+
+// signal_timeout event
+{
+  type: "signal_timeout",
+  signal_id: "...",
+  slug: "...",
+  ts: 1234567890,
+  timeout_reason: "fail_spread_above_max",
+  entry_bid_at_pending: 0.94,
+  bid_at_timeout: 0.91
+}
+
+// timeout_resolved event
+{
+  type: "timeout_resolved",
+  slug: "...",
+  timeout_ts: 1234567890,
+  resolve_ts: 1234567891,
+  resolved_winner: "Manchester City",
+  would_have_won: false,
+  hypothetical_pnl_usd: -10.0,
+  verdict: "filter_saved_us"
+}
+```
+
+**Reconciliation (crash recovery):**
+```javascript
+import { loadOpenIndex, reconcileIndex, saveOpenIndex } from "./src/core/journal.mjs";
+
+const idx = loadOpenIndex();
+const result = reconcileIndex(idx);  // Rebuilds from signals.jsonl
+if (result.reconciled) {
+  saveOpenIndex(idx);
+  console.log(`Synced: added=${result.added} removed=${result.removed}`);
+}
+```
+
+**Key property:** JSONL is append-only. Never edit existing lines. Only append new events.
+
+---
+
+## Trade Bridge Modes
+
+### Paper (default)
+- Signals logged to JSONL
+- No real trades, no credentials needed
+- Resolution via Gamma poll (60s)
+- Safe for: strategy validation, testing new leagues
+
+### Shadow Live
+- Builds real orders (checks balance, depth, slippage)
+- Logs what WOULD execute
+- Does NOT send to CLOB
+- Safe for: execution layer testing, pre-live validation
+
+### Live
+- **Real trades with real money**
+- Idempotent by signal_id
+- Pause fail-closed on SL exhaustion
+- Guards: max position, exposure, concurrent, daily limit
+- **ONLY use after extensive paper/shadow validation**
+
+**Code:**
+```javascript
+// src/execution/trade_bridge.mjs
+export class TradeBridge {
+  constructor(cfg, state) {
+    this.mode = cfg?.trading?.mode || "paper";
+    // ...
+  }
+
+  async handleSignalOpen(signal) {
+    if (this.mode === "paper") return null;
+    
+    // Idempotency
+    const tradeId = `buy:${signal.signal_id}`;
+    if (this.execState.trades[tradeId]) return;
+    
+    // Guards (pause, allowlist, daily limit, exposure, etc.)
+    // ...
+    
+    if (this.mode === "shadow_live") {
+      // Log what would happen, don't send
+      console.log(`[SHADOW_BUY] ${signal.slug} ...`);
+      return { status: "shadow", ... };
+    }
+    
+    // LIVE execution
+    const result = await executeBuy(this.client, tokenId, shares);
+    // ...
+  }
+}
+```
+
+---
+
+## Testing
+
+**Test count:** 437 tests across 18 files (all passing)
+
+**How to run:**
+```bash
+npm test                                  # All tests
+npm test -- --test-name-pattern="purge"  # Specific pattern
+```
+
+**Test categories:**
+- **Universe selection** (20 tests) — invariants for price updates vs pipeline
+- **Persistence** (24 tests) — crash-safe writes, dirty tracking
+- **Health server** (18 tests) — HTTP endpoint, metrics
+- **Complementary pricing** (10 tests) — binary market pricing
+- **Purge gates** (15 tests) — stale market detection
+- **ESPN context** (40+ tests) — scoreboard parsing, team matching
+- **Signal pipeline** (60+ tests) — stage1, stage2, pending, timeout
+- **Resolution tracker** (20 tests) — Gamma poll, SL triggers
+- **Journal** (15 tests) — JSONL reconciliation, open_index
+
+**Test structure:**
+```javascript
+import { describe, test } from "node:test";
+import assert from "node:assert";
+
+describe("Stage1 Filters", () => {
+  test("base price range check", () => {
+    const cfg = { filters: { min_prob: 0.94, max_entry_price: 0.97, EPS: 1e-6 } };
+    const quote = { probAsk: 0.95, spread: 0.01 };
+    const result = is_base_signal_candidate(quote, cfg);
+    assert.strictEqual(result.pass, true);
+  });
+});
+```
+
+**Common patterns:**
+- Mock config: `mockConfig({ filters: { min_prob: 0.90 } })`
+- Mock market: `mockMarket({ slug: "test", status: "watching" })`
+- Time mocking: pass explicit timestamps, don't use Date.now() in tests
+- State snapshots: clone state before mutation, assert changes
+
+---
+
+## Common Patterns
+
+### 1. bumpBucket(kind, key, count)
+
+Rolling 5-minute buckets for health counters.
+
+```javascript
+function bumpBucket(kind, key, by = 1) {
+  const nowMs = now;
+  const minuteStart = Math.floor(nowMs / 60000) * 60000;
+  health.buckets = health.buckets || { reject: { idx: 0, buckets: [] }, token: { idx: 0, buckets: [] } };
+  const node = health.buckets[kind] || (health.buckets[kind] = { idx: 0, buckets: [] });
+  if (!Array.isArray(node.buckets) || node.buckets.length !== 5) {
+    node.buckets = Array.from({ length: 5 }, () => ({ start_ts: 0, counts: {} }));
+    node.idx = 0;
+  }
+  const cur = node.buckets[node.idx];
+  if (cur.start_ts !== minuteStart) {
+    node.idx = (node.idx + 1) % 5;
+    node.buckets[node.idx] = { start_ts: minuteStart, counts: {} };
+  }
+  const b = node.buckets[node.idx];
+  b.counts[key] = (b.counts[key] || 0) + by;
+}
+
+// Usage:
+bumpBucket("health", "quote_update", 1);
+bumpBucket("reject", "spread_above_max", 1);
+bumpBucket("token", "success:esports", 1);
+```
+
+**Purpose:** Track metrics over last 5 minutes (used in status.mjs verbose mode, health endpoint).
+
+### 2. setReject(market, reason, extra)
+
+Primary reject tracking (cumulative + per-cycle).
+
+```javascript
+function setReject(m, reason, extra) {
+  m.last_reject = { reason, ts: Date.now(), ...extra };
+  health.reject_counts_cumulative[reason] = (health.reject_counts_cumulative[reason] || 0) + 1;
+}
+
+// Usage:
+setReject(m, "spread_above_max", { spread: 0.025 });
+```
+
+**Purpose:** Track why markets don't signal. Used for top reject reasons in dashboard.
+
+### 3. Dirty Tracking
+
+```javascript
+import { DirtyTracker } from "./src/core/dirty_tracker.mjs";
+
+const dirtyTracker = new DirtyTracker();
+
+// Mark changes
+dirtyTracker.mark("gamma:markets_added:5", false);  // Non-critical, throttled
+dirtyTracker.mark("eval:signals_generated:2", true); // Critical, immediate
+
+// Decide whether to persist
+if (dirtyTracker.shouldPersist(now, { throttleMs: 5000 })) {
+  writeJsonAtomic(STATE_PATH, state);
+  dirtyTracker.clear(now);
+}
+```
+
+**Purpose:** Reduce I/O (67% fewer writes) without sacrificing durability. Critical changes persist immediately, cosmetic changes throttled.
+
+### 4. resolvePath(...parts)
+
+Resolves paths relative to correct state directory (prod or shadow).
+
+```javascript
+import { resolvePath } from "./src/core/state_store.js";
+
+const p = resolvePath("state", "watchlist.json");
+// prod:   /path/to/polymarket-watchlist-v1/state/watchlist.json
+// shadow: /path/to/polymarket-watchlist-v1/state-test01/watchlist.json
+```
+
+**Purpose:** Shadow runners use isolated state dirs. Always use resolvePath() for state files.
+
+### 5. Universe Selection (SINGLE SOURCE OF TRUTH)
+
+```javascript
+import { selectPriceUpdateUniverse, selectPipelineUniverse } from "./src/runtime/universe.mjs";
+
+// Price updates: watching + pending + signaled
+const priceUpdateUniverse = selectPriceUpdateUniverse(state, cfg);
+
+// Signal pipeline: watching + pending (NO signaled)
+const pipelineUniverse = selectPipelineUniverse(state, cfg);
+```
+
+**Critical invariant:** signaled markets MUST receive price updates (visibility) but MUST NOT re-enter pipeline (prevents duplicate signals).
+
+**Tests:** `tests/universe_selection.test.mjs` (20 tests)
+
+### 6. Complementary Pricing (Binary Markets)
+
+```javascript
+// YES price + NO price = 1.00 (always)
+// If one side missing → compute from complement
+
+const bestAskYes = (() => {
+  const yesAsk = parsePrice(rawBookYes?.asks?.[0]?.price);
+  const noBid = parsePrice(rawBookNo?.bids?.[0]?.price);
+  if (yesAsk != null && noBid != null) return Math.min(yesAsk, 1 - noBid);
+  if (yesAsk != null) return yesAsk;
+  if (noBid != null) return 1 - noBid;
+  return null;
+})();
+```
+
+**Purpose:** One-sided books don't mean no liquidity. Compute synthetic price from complement.
+
+**Tests:** `tests/complementary_pricing.test.mjs` (10 tests)
+
+---
+
+## Shadow Runner Architecture
+
+**Purpose:** Test changes with isolated state, separate from production.
+
+### Isolation Rules
+
+1. **State dir:** `state-{SHADOW_ID}/` (not `state/`)
+2. **Lock file:** `state-{SHADOW_ID}/watchlist.lock`
+3. **Port:** auto-assigned (3211-3260, deterministic from hash)
+4. **Config:** defaults → local → `state-{SHADOW_ID}/config-override.json` → env
+5. **Kill switches:**
+   - MUST NOT have trading enabled (boot guard)
+   - MUST NOT resolve to prod state dir (path validation)
+
+### Example
+
+```bash
+# Start shadow with custom config
+SHADOW_ID=test01 node run.mjs &
+
+# Or use script
+./scripts/shadow-start.sh test01 --maxwl 10
+
+# Check status
+./scripts/shadow-list.sh
+
+# Compare metrics
+./scripts/shadow-compare.sh test01 prod
+
+# Stop
+./scripts/shadow-stop.sh test01
+```
+
+**Config override** (`state-test01/config-override.json`):
+```json
+{
+  "polling": {
+    "max_watchlist": 10
+  },
+  "filters": {
+    "min_prob": 0.90
+  }
+}
+```
+
+**Code checks:**
+```javascript
+// run.mjs
+const IS_SHADOW = !runner.isProd;
+
+if (IS_SHADOW) {
+  // Kill switch: shadow must NEVER have live trading
+  if (cfg.trading?.enabled || cfg.trading?.live) {
+    console.error(`[SHADOW] FATAL: Shadow has live trading enabled`);
+    process.exit(1);
+  }
+  
+  // Verify state dir isolation
+  if (stateDir.endsWith("/state") || stateDir === "state") {
+    console.error(`[SHADOW] FATAL: State dir = prod directory`);
+    process.exit(1);
+  }
+}
+```
+
+---
+
+## Known Gotchas and Lessons Learned
+
+### 1. Always Run Boot Check Before Deploy
+
+**Lesson (2026-02-16):** Syntax error in nested `??` and `||` expression crashed prod. Tests passed because they import modules individually, not full boot sequence.
+
+**Checklist BEFORE every deploy:**
+```bash
+npm test                                      # All tests pass
+node -e "import('./src/runtime/loop_eval_http_only.mjs')"  # Parse check
+STOP_AFTER_MS=5000 node run.mjs              # 5s boot test
+# Verify config in first 50 lines (min_prob, max_spread, trading.mode)
+```
+
+### 2. Token Resolution Requires BOTH Books
+
+**Lesson (2026-02-16):** One-sided YES books (ask missing) reported wrong prices. Only fetched YES, computed from NO complement.
+
+**Fix:** Always fetch YES and NO books, use complementary pricing.
+
+**Code:**
+```javascript
+const yesAsk = parsePrice(bookYes?.asks?.[0]?.price);
+const noBid = parsePrice(bookNo?.bids?.[0]?.price);
+const bestAsk = (yesAsk != null && noBid != null) ? Math.min(yesAsk, 1 - noBid) : (yesAsk ?? (noBid != null ? 1 - noBid : null));
+```
+
+### 3. Universe Selection Must Be Centralized
+
+**Lesson (2026-02-16):** Duplicate logic in loop_gamma and loop_eval caused divergence when adding new statuses.
+
+**Fix:** Single source of truth in `src/runtime/universe.mjs`.
+
+**Tests:** `tests/universe_selection.test.mjs` enforces invariants.
+
+### 4. Dirty Tracking Reduces I/O Without Sacrificing Durability
+
+**Lesson (2026-02-16):** Writing state every cycle (30/min) caused unnecessary disk I/O. But skipping writes risked losing signals on crash.
+
+**Fix:** Mark critical changes (signals, status transitions) for immediate persist. Throttle cosmetic changes (health counters) to 5s.
+
+**Code:**
+```javascript
+if (newSignalsCount > 0) {
+  dirtyTracker.mark(`eval:signals_generated:${newSignalsCount}`, true);  // critical
+}
+if (cache updated) {
+  dirtyTracker.mark("gamma:cache_updated", false);  // throttled
+}
+```
+
+### 5. Fsync Matters for Crash Safety
+
+**Lesson (2026-02-16):** Atomic writes (tmp + rename) aren't enough. Power loss can leave data in buffer, file appears empty after boot.
+
+**Fix:** fsync both file and parent directory.
+
+**Code:**
+```javascript
+// src/core/state_store.js
+writeFileSync(tmp, raw + "\n", "utf8");
+
+const fd = openSync(tmp, "r+");
+fsyncSync(fd);  // Force flush to disk
+closeSync(fd);
+
+renameSync(tmp, path);  // Atomic rename
+
+const dirFd = openSync(dir, "r");
+fsyncSync(dirFd);  // Ensure rename is durable
+closeSync(dirFd);
+```
+
+### 6. Purge Gates Prevent Watchlist Pollution
+
+**Lesson (2026-02-16):** Markets with sustained tradeability issues accumulate in watchlist, waste eval cycles.
+
+**Fix:** Track first occurrence of degradation (book stale, quote incomplete, bad tradeability). Purge after threshold.
+
+**Gates:**
+- Book stale: 15 min without successful /book fetch
+- Quote incomplete: 10 min of one-sided quotes
+- Tradeability degraded: 12 min of spread + depth both failing
+
+**Tests:** `tests/purge_gates.test.mjs` (15 tests)
+
+### 7. Gamma Live Protection with WS Activity Check
+
+**Lesson (2026-02-17):** Markets marked "live" by Gamma but with no WS activity for >10 min are actually dead. Purge gates were blocked forever.
+
+**Fix:** Check WS activity age. If >10 min without update AND WS is healthy → unprotect and allow purge.
+
+**Code:**
+```javascript
+const wsHealthy = wsClient?.isConnected === true;
+const yesToken = m.tokens?.yes_token_id;
+if (wsHealthy && yesToken) {
+  const wsPrice = wsClient.getPrice(yesToken);
+  if (wsPrice && (now - wsPrice.lastUpdate) > 600000) {
+    // No WS activity for 10 min → dead market
+    return false;  // Don't protect from purge
+  }
+}
+```
+
+**Tests:** `tests/gamma_live_protection.test.mjs` (8 tests)
+
+---
+
+## How to Add a New League/Sport
+
+### Example: Adding MMA
+
+**Step 1: Update Gamma Config**
+
+`src/config/local.json`:
+```json
+{
+  "gamma": {
+    "gamma_tags": ["esports", "nba", "ncaa-basketball", "soccer", "mma"]
+  }
+}
+```
+
+**Step 2: Add Parser Logic**
+
+`src/gamma/gamma_parser.mjs`:
+```javascript
+function leagueFromTag(tag) {
+  if (tag === "mma") return "mma";
+  // ...
+}
+
+function pickMarketsForEvent(tag, e, cfg) {
+  if (tag === "mma") {
+    // MMA-specific logic: ban method/round bets, keep fight winners
+    const winners = active.filter(m => !m.slug.includes("-method-") && !m.slug.includes("-round-"));
+    return winners.slice(0, 2);  // top 2 by volume
+  }
+  // ...
+}
+```
+
+**Step 3: Add Context Provider (Optional)**
+
+If you want ESPN/external data:
+
+`src/context/espn_mma_scoreboard.mjs`:
+```javascript
+export async function fetchEspnMmaScoreboard(cfg, date) {
+  // Similar to espn_nba_scoreboard.mjs
+}
+
+export function deriveMmaContextForMarket(market, events, cfg, now) {
+  // Match market to live fight, derive round/time left
+}
+```
+
+Then integrate in `src/runtime/loop_eval_http_only.mjs`:
+```javascript
+// In context tagging section
+for (const m of wl) {
+  if (m.league !== "mma") continue;
+  // Fetch scoreboard, match, derive context
+}
+```
+
+**Step 4: Add Tests**
+
+`tests/mma_pipeline.test.mjs`:
+```javascript
+import { describe, test } from "node:test";
+import assert from "node:assert";
+
+describe("MMA Pipeline", () => {
+  test("bans method/round markets", () => {
+    const markets = [
+      { slug: "ufc-jones-miocic", active: true },
+      { slug: "ufc-jones-miocic-method-ko", active: true },
+      { slug: "ufc-jones-miocic-round-1", active: true }
+    ];
+    const picked = pickMarketsForEvent("mma", { markets }, {});
+    assert.strictEqual(picked.length, 1);
+    assert.strictEqual(picked[0].slug, "ufc-jones-miocic");
+  });
+});
+```
+
+**Step 5: Dry-Run Validation**
+
+```bash
+# Start shadow runner with MMA tag
+./scripts/shadow-start.sh mma-test --tags '["mma"]'
+
+# Monitor for 1-2h
+./scripts/shadow-list.sh
+
+# Check metrics
+curl http://localhost:3XXX/api/health | jq '.league_summary.mma'
+```
+
+**Step 6: Deploy to Prod**
+
+If capture rate and signal quality look good:
+```bash
+# Update local.json
+vim src/config/local.json  # add "mma" to gamma_tags
+
+# Boot check
+STOP_AFTER_MS=5000 node run.mjs  # verify config
+
+# Deploy
+git add -A && git commit -m "feat: add MMA support" && git push
+# Restart prod runner
+```
+
+---
+
+## How to Add a New Strategy Filter
+
+### Example: Ban Markets with <5 Minutes to Close
+
+**Step 1: Add to Stage1**
+
+`src/strategy/stage1.mjs`:
+```javascript
+export function is_base_signal_candidate(quote, cfg) {
+  const EPS = Number(cfg?.filters?.EPS || 1e-6);
+  const minProb = Number(cfg?.filters?.min_prob);
+  const maxEntry = Number(cfg?.filters?.max_entry_price);
+  const maxSpread = Number(cfg?.filters?.max_spread);
+  
+  // NEW: Check minutes to close
+  const minMinutesToClose = Number(cfg?.filters?.min_minutes_to_close ?? 5);
+  if (quote?.minutesToClose != null && quote.minutesToClose < minMinutesToClose) {
+    return { pass: false, reason: "too_close_to_resolution" };
+  }
+
+  const probAsk = Number(quote?.probAsk);
+  const spread = Number(quote?.spread);
+
+  if (!gte(probAsk, minProb, EPS) || !lte(probAsk, maxEntry, EPS)) {
+    return { pass: false, reason: "price_out_of_range" };
+  }
+  if (!lte(spread, maxSpread, EPS)) {
+    return { pass: false, reason: "spread_above_max" };
+  }
+  return { pass: true, reason: null };
+}
+```
+
+**Step 2: Add Config**
+
+`src/config/defaults.json`:
+```json
+{
+  "filters": {
+    "min_minutes_to_close": 5
+  }
+}
+```
+
+**Step 3: Integrate in Eval Loop**
+
+`src/runtime/loop_eval_http_only.mjs`:
+```javascript
+// In Stage1 check
+const quote = {
+  probAsk: Number(m.last_price.yes_best_ask),
+  probBid: Number(m.last_price.yes_best_bid),
+  spread: Number(m.last_price.spread),
+  minutesToClose: computeMinutesToClose(m)  // NEW
+};
+
+const stage1 = is_base_signal_candidate(quote, cfg);
+if (!stage1.pass) {
+  setReject(m, stage1.reason);
+  continue;
+}
+```
+
+**Step 4: Add Tests**
+
+`tests/stage1_minutes_to_close.test.mjs`:
+```javascript
+import { describe, test } from "node:test";
+import assert from "node:assert";
+import { is_base_signal_candidate } from "../src/strategy/stage1.mjs";
+
+describe("Stage1: Minutes to Close Filter", () => {
+  test("rejects if <5 minutes to close", () => {
+    const cfg = { filters: { min_prob: 0.94, max_entry_price: 0.97, max_spread: 0.02, min_minutes_to_close: 5 } };
+    const quote = { probAsk: 0.95, spread: 0.01, minutesToClose: 3 };
+    const result = is_base_signal_candidate(quote, cfg);
+    assert.strictEqual(result.pass, false);
+    assert.strictEqual(result.reason, "too_close_to_resolution");
+  });
+
+  test("allows if >=5 minutes to close", () => {
+    const cfg = { filters: { min_prob: 0.94, max_entry_price: 0.97, max_spread: 0.02, min_minutes_to_close: 5 } };
+    const quote = { probAsk: 0.95, spread: 0.01, minutesToClose: 6 };
+    const result = is_base_signal_candidate(quote, cfg);
+    assert.strictEqual(result.pass, true);
+  });
+
+  test("allows if minutesToClose not provided (no data)", () => {
+    const cfg = { filters: { min_prob: 0.94, max_entry_price: 0.97, max_spread: 0.02, min_minutes_to_close: 5 } };
+    const quote = { probAsk: 0.95, spread: 0.01, minutesToClose: null };
+    const result = is_base_signal_candidate(quote, cfg);
+    assert.strictEqual(result.pass, true);  // No data = don't reject
+  });
+});
+```
+
+**Step 5: Dry-Run Validation**
+
+```bash
+# Shadow runner with new filter
+./scripts/shadow-start.sh minutes-test --min_minutes 5
+
+# Monitor reject reasons
+npm run status:verbose  # Check top rejects for "too_close_to_resolution"
+```
+
+**Step 6: Deploy**
+
+If reject count matches expectations:
+```bash
+npm test  # All tests pass
+git add -A && git commit -m "feat: add min_minutes_to_close filter" && git push
+# Deploy to prod
+```
+
+---
+
+## Critical Rules
+
+### 1. Always Run Tests Before Commit
+
+```bash
+npm test  # ALL tests must pass
+```
+
+If a change breaks existing tests, fix them in the same commit.
+
+### 2. Boot Check Before Deploy (MANDATORY)
+
+```bash
+npm test
+node -e "import('./src/runtime/loop_eval_http_only.mjs')"
+STOP_AFTER_MS=5000 node run.mjs
+```
+
+Verify config in first 50 lines matches expectations.
+
+### 3. Never Modify Trading Params Without Confirmation
+
+- Changing env vars (vol, margin, prob)
+- Adding trading logic (GTC, websocket, new execution modes)
+- Modifying filters, gates, strategy
+
+**Always:** propose → wait for approval → dry-run → wait for approval → deploy
+
+### 4. Shadow Validation for Risky Changes
+
+Changes that affect signal generation:
+- New leagues (might have unknown data quality)
+- New filters (might block all signals or allow bad ones)
+- Config changes (min_prob, max_spread, depth thresholds)
+
+**Always:** run shadow for 1-2h, compare metrics before prod deploy.
+
+### 5. Commit Messages Must Be Descriptive
+
+```bash
+# Good
+git commit -m "feat: add MMA support with method/round ban logic"
+git commit -m "fix: complementary pricing for one-sided books"
+
+# Bad
+git commit -m "update"
+git commit -m "changes"
+```
+
+### 6. Document What Changed and Why
+
+```javascript
+// GOOD: Explains intent
+// Complementary pricing: YES price + NO price = 1.00 (binary markets)
+// If YES ask missing → compute from NO bid (1 - noBid)
+const bestAsk = yesAsk ?? (noBid != null ? 1 - noBid : null);
+
+// BAD: No context
+const bestAsk = yesAsk ?? (noBid != null ? 1 - noBid : null);
+```
+
+### 7. Never Skip JSONL Reconciliation on Boot
+
+`run.mjs` always calls:
+```javascript
+const idx = loadOpenIndex();
+const result = reconcileIndex(idx);
+if (result.reconciled) saveOpenIndex(idx);
+```
+
+**Purpose:** Crash recovery. Rebuilds open_index from signals.jsonl if desync detected.
+
+### 8. Use resolvePath() for All State File Operations
+
+```javascript
+// GOOD
+const p = resolvePath("state", "watchlist.json");
+
+// BAD
+const p = "state/watchlist.json";  // Breaks shadow runners
+```
+
+### 9. Handle Missing Config Keys Defensively
+
+```javascript
+// GOOD
+const minProb = Number(cfg?.filters?.min_prob ?? 0.94);
+
+// BAD
+const minProb = cfg.filters.min_prob;  // Crashes if key missing
+```
+
+### 10. Never Assume Data Exists
+
+```javascript
+// GOOD
+const outcomes = Array.isArray(m?.outcomes) ? m.outcomes : null;
+
+// BAD
+const outcomes = m.outcomes;  // Crashes if m is null or outcomes is not an array
+```
+
+---
+
+## Debugging Tips
+
+### 1. Check First 50 Lines of run.mjs Output
+
+Contains full config dump. Verify:
+- `min_prob`, `max_spread`, `trading.mode`
+- `gamma_tags`, `max_watchlist`
+- Boot checks passed (shadow isolation, lock acquired)
+
+### 2. Use Status Dashboard for Quick Diagnostics
+
+```bash
+npm run status          # Quick snapshot
+npm run status:verbose  # Full metrics + top candidates
+```
+
+Look for:
+- Top reject reasons (why markets don't signal)
+- Gamma fetch health (are we getting markets?)
+- WS connection status (are price updates working?)
+- Open positions (are signals generating?)
+
+### 3. Health Endpoint for External Monitoring
+
+```bash
+curl http://localhost:3210/api/health | jq
+```
+
+Check:
+- `.loop.last_cycle_age_seconds` (should be <10s)
+- `.staleness.percent_stale_signaled` (should be 0%)
+- `.http.success_rate_percent` (should be >98%)
+- `.websocket.connected` (should be true)
+
+### 4. Journal Stats for Paper Position Analysis
+
+```bash
+npm run journal:stats -- --since_hours 24 --only_esports true
+```
+
+Shows:
+- Win rate, PnL, ROI
+- Timeout effectiveness (filter_saved_us vs filter_cost_us)
+- Price extremes (did we hold through dips?)
+
+### 5. Inspect State File Directly
+
+```bash
+cat state/watchlist.json | jq '.watchlist | to_entries | .[0:5]'
+```
+
+Look for:
+- `.status` (watching, pending_signal, signaled, expired)
+- `.last_price` (updated_ts should be recent)
+- `.last_reject.reason` (why didn't it signal?)
+
+### 6. Tail JSONL for Recent Events
+
+```bash
+tail -20 state/journal/signals.jsonl | jq -c
+```
+
+See:
+- `signal_open` events (new signals)
+- `signal_close` events (resolutions)
+- `signal_timeout` events (pending confirmations that failed)
+
+### 7. Compare Shadow vs Prod Metrics
+
+```bash
+./scripts/shadow-compare.sh test01 prod
+```
+
+If shadow performs worse:
+- Check config differences
+- Look at reject reasons (are filters too strict?)
+- Verify Gamma fetch (are we missing markets?)
+
+### 8. Check Log Timing Breakdown
+
+Dashboard → Loop Performance → last_breakdown
+
+Shows ms spent in:
+- `gamma_ms` (discovery)
+- `eval_ms` (signal pipeline)
+- `journal_ms` (JSONL writes)
+- `resolution_ms` (position tracking)
+- `persist_ms` (state write)
+
+If any >1000ms → bottleneck identified.
+
+---
+
+## Emergency Procedures
+
+### Bot Crashed, Won't Restart
+
+1. **Check lock file**
+   ```bash
+   cat state/watchlist.lock
+   # If PID doesn't exist → rm state/watchlist.lock
+   ```
+
+2. **Check state file**
+   ```bash
+   cat state/watchlist.json | jq .version
+   # If corrupted → cp state/watchlist.json.bak state/watchlist.json
+   ```
+
+3. **Reconcile journal**
+   ```bash
+   STOP_AFTER_MS=1000 node run.mjs
+   # Check logs for reconciliation output
+   ```
+
+### All Signals Stopped
+
+1. **Check watchlist size**
+   ```bash
+   npm run status
+   # If 0 markets → Gamma fetch failing
+   ```
+
+2. **Check Gamma health**
+   ```bash
+   curl http://localhost:3210/api/health | jq '.loop.gamma_fetch_count'
+   ```
+
+3. **Check reject reasons**
+   ```bash
+   npm run status:verbose
+   # Top reject = bottleneck
+   ```
+
+4. **Verify filters**
+   ```bash
+   cat state/config-snapshot.json | jq '.filters'
+   # Are thresholds too strict?
+   ```
+
+### WebSocket Disconnected
+
+1. **Check connection**
+   ```bash
+   curl http://localhost:3210/api/health | jq '.websocket'
+   ```
+
+2. **Verify HTTP fallback**
+   ```bash
+   # Should show >0 HTTP fallback usage
+   ```
+
+3. **Restart bot**
+   ```bash
+   # WS client has auto-reconnect, but restart if stuck
+   ```
+
+### High Loop Time (>3s)
+
+1. **Check depth cache hit rate**
+   ```bash
+   curl http://localhost:3210/api/health | jq '.depth_cache.hit_rate'
+   # Should be >80%
+   ```
+
+2. **Check HTTP concurrency**
+   ```bash
+   cat state/config-snapshot.json | jq '.polling.http_max_concurrency'
+   # Increase if needed (default 5)
+   ```
+
+3. **Check watchlist size**
+   ```bash
+   npm run status
+   # If >100 markets → eviction not working
+   ```
+
+### SL Ladder Exhausted (Trading Paused)
+
+1. **Check execution state**
+   ```bash
+   cat state/execution_state.json | jq '.paused'
+   # If true → check pause_reason
+   ```
+
+2. **Manual intervention required**
+   - Review failed SL sell in `journal/executions.jsonl`
+   - Verify CLOB balance/positions match expected
+   - If safe to resume → edit `execution_state.json`: `"paused": false`
+
+3. **Resume trading**
+   ```bash
+   # Restart bot after unpause
+   ```
+
+---
+
+## Performance Optimization Checklist
+
+### If Loop Time >1s
+
+- [ ] Check depth cache hit rate (target >80%)
+- [ ] Verify WS connection (target >85% usage)
+- [ ] Check HTTP concurrency (increase if needed)
+- [ ] Profile breakdown (which phase is slow?)
+- [ ] Reduce watchlist size (adjust eviction threshold)
+
+### If HTTP Success Rate <98%
+
+- [ ] Check rate limit counters
+- [ ] Verify HTTP timeout (default 2500ms)
+- [ ] Increase HTTP concurrency
+- [ ] Check CLOB API status
+
+### If Depth Cache Hit Rate <80%
+
+- [ ] Check TTL (default 15s, increase if markets stable)
+- [ ] Verify bust logic (3¢ price move, adjust if too sensitive)
+- [ ] Check cache size (should match watchlist size)
+
+### If Signals Not Generating
+
+- [ ] Check top reject reasons (status.mjs verbose)
+- [ ] Verify price updates (WS + HTTP fallback working)
+- [ ] Check filters (are thresholds too strict?)
+- [ ] Verify Gamma fetch (are markets being discovered?)
+
+---
+
+## Final Notes
+
+**This bot trades real money.** Every change has financial impact. Follow the critical rules, write tests, dry-run extensively.
+
+**When in doubt, ask.** Don't guess. Don't skip validation. Don't deploy untested code.
+
+**The codebase is deterministic.** Same inputs → same outputs. If behavior changes, a code change caused it. Find the diff.
+
+**Tests are your safety net.** 437 tests (all passing) give confidence. Add tests for every change.
+
+**Shadow runners are your friend.** Use them for risky changes. A/B test strategies. Validate before prod.
+
+Good luck! 🚀
