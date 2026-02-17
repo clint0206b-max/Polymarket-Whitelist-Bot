@@ -18,11 +18,9 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { appendJsonl } from "../core/journal.mjs";
 import { resolvePath } from "../core/state_store.js";
-import { shouldBlockSl } from "./sl_guard_espn.mjs";
 import {
   initClient, executeBuy, executeSell,
   getBalance, getConditionalBalance, getPositions,
-  getRealFillPrice,
 } from "./order_executor.mjs";
 
 // Resolves to state/execution_state.json (prod) or state-{SHADOW_ID}/execution_state.json (shadow)
@@ -156,18 +154,6 @@ export class TradeBridge {
       return { blocked: true, reason: "daily_limit" };
     }
 
-    // Per-slug rolling window limit (2h): count completed round trips (BUY filled + SELL filled)
-    const slugWindowMs = Number(this.cfg?.trading?.slug_limit_window_ms ?? 2 * 60 * 60 * 1000);
-    const maxPerSlug = Number(this.cfg?.trading?.max_trades_per_slug ?? 3);
-    const windowStart = Date.now() - slugWindowMs;
-    const slugRoundTrips = Object.values(this.execState.trades).filter(t =>
-      t.slug === signal.slug && t.side === "SELL" && t.status === "filled" && (t.ts_filled || 0) > windowStart
-    ).length;
-    if (slugRoundTrips >= maxPerSlug) {
-      console.log(`[TRADE_BRIDGE] BLOCKED slug limit: ${signal.slug} has ${slugRoundTrips}/${maxPerSlug} round trips in ${slugWindowMs / 60000}min window`);
-      return { blocked: true, reason: "slug_limit", slug: signal.slug, count: slugRoundTrips, max: maxPerSlug };
-    }
-
     // Concurrent positions limit
     const openTrades = Object.values(this.execState.trades).filter(t => t.status === "filled" && !t.closed);
     if (openTrades.length >= this.maxConcurrent) {
@@ -203,9 +189,6 @@ export class TradeBridge {
       requestedShares: shares,
       entryPrice,
       budget,
-      league: signal.league || null,
-      entry_outcome_name: signal.entry_outcome_name || null,
-      title: signal.title || null,
       ts_queued: Date.now(),
     };
     saveExecutionState(this.execState);
@@ -247,22 +230,14 @@ export class TradeBridge {
       this.execState.trades[tradeId].status = "sent";
       saveExecutionState(this.execState);
 
-      // Slippage cap: max 2% above signal price (e.g. signal=0.93 → max=0.95)
-      const maxSlippagePct = Number(this.cfg?.trading?.max_slippage_pct ?? 2);
-      const maxPrice = Math.min(0.99, entryPrice * (1 + maxSlippagePct / 100));
-      console.log(`[LIVE_BUY] slippage cap: maxPrice=${maxPrice.toFixed(4)} (${maxSlippagePct}% above ${entryPrice.toFixed(4)})`);
-      const result = await executeBuy(this.client, tokenId, shares, maxPrice);
+      const result = await executeBuy(this.client, tokenId, shares);
       
       if (result.ok) {
-        // entryPrice = actual fill price, not signal price (signal price is pre-execution estimate)
-        const actualEntryPrice = result.avgFillPrice || entryPrice;
         this.execState.trades[tradeId] = {
           ...this.execState.trades[tradeId],
           status: "filled",
           filledShares: result.filledShares,
           avgFillPrice: result.avgFillPrice,
-          entryPrice: actualEntryPrice,
-          signalPrice: entryPrice, // keep original signal price for analysis
           spentUsd: result.spentUsd,
           isPartial: result.isPartial,
           orderID: result.orderID,
@@ -289,33 +264,10 @@ export class TradeBridge {
           filledShares: result.filledShares,
           avgFillPrice: result.avgFillPrice,
           spentUsd: result.spentUsd,
-          entryPrice: actualEntryPrice,
-          signalPrice: entryPrice,
+          entryPrice,
           isPartial: result.isPartial,
           slippage_pct: slippage,
         });
-
-        // Post-fill: try to get real VWAP from associate_trades (non-blocking)
-        try {
-          const realFill = await getRealFillPrice(this.client, result);
-          if (realFill?.vwap) {
-            const diff = Math.abs(realFill.vwap - (result.avgFillPrice || 0));
-            if (diff > 0.001) {
-              console.log(`[FILL_PRICE] ${signal.slug} | limit_price=${result.avgFillPrice?.toFixed(4)} real_vwap=${realFill.vwap.toFixed(4)} diff=${diff.toFixed(4)} trades=${realFill.trades}`);
-              // Update with real price
-              this.execState.trades[tradeId].avgFillPrice = realFill.vwap;
-              this.execState.trades[tradeId].entryPrice = realFill.vwap;
-              this.execState.trades[tradeId].spentUsd = realFill.totalVal;
-              this.execState.trades[tradeId].fillPriceSource = "associate_trades";
-              saveExecutionState(this.execState);
-            } else {
-              this.execState.trades[tradeId].fillPriceSource = "limit_price_confirmed";
-              saveExecutionState(this.execState);
-            }
-          }
-        } catch (e) {
-          console.warn(`[FILL_PRICE] ${signal.slug} | error: ${e.message}`);
-        }
 
         // Post-execution quick reconcile: verify position exists
         try {
@@ -364,11 +316,10 @@ export class TradeBridge {
 
     const sellTradeId = `sell:${signal.signal_id}`;
     
-    // Idempotency check (TP retries allowed — previous failed TP is cleaned up)
-    const existingSell = this.execState.trades[sellTradeId];
-    if (existingSell && existingSell.status !== "tp_retry") {
-      console.log(`[TRADE_BRIDGE] SKIP duplicate sell: ${sellTradeId} (status=${existingSell.status})`);
-      return existingSell;
+    // Idempotency check
+    if (this.execState.trades[sellTradeId]) {
+      console.log(`[TRADE_BRIDGE] SKIP duplicate sell: ${sellTradeId}`);
+      return this.execState.trades[sellTradeId];
     }
 
     // Find the buy trade for this signal
@@ -413,97 +364,9 @@ export class TradeBridge {
     // If resolved at 1.00, might be redeemable — but we still try to sell first since
     // terminal price (0.995+) means there are bids. Redemption is backup.
     
-    // For SL: fresh CLOB re-check before executing (guard against stale/phantom bids)
+    // For SL: use escalating floor to guarantee exit
     if (isStopLoss) {
-      const slThreshold = Number(this.cfg?.paper?.stop_loss_bid ?? 0.70);
-      try {
-        const freshBook = await this._getFreshCLOBPrice(tokenId);
-        if (freshBook) {
-          const freshBid = freshBook.bid;
-          const freshAsk = freshBook.ask;
-          const freshSpread = (freshAsk || 1) - (freshBid || 0);
-          const maxSpreadForSL = Number(this.cfg?.trading?.max_spread_for_sl ?? 0.15);
-
-          console.log(`[SL_FRESH_CHECK] ${signal.slug} | fresh bid=${freshBid?.toFixed(3)} ask=${freshAsk?.toFixed(3)} spread=${freshSpread.toFixed(3)} | cached_trigger=${signal.sl_trigger_price?.toFixed(3)}`);
-
-          // Abort if fresh bid is above SL threshold
-          if (freshBid != null && freshBid > slThreshold) {
-            console.log(`[SL_ABORT] ${signal.slug} | fresh bid ${freshBid.toFixed(3)} > SL ${slThreshold} — cached price was stale, aborting SL`);
-            appendJsonl("state/journal/executions.jsonl", {
-              type: "sl_aborted_fresh_check",
-              ts: Date.now(),
-              signal_id: signal.signal_id,
-              slug: signal.slug,
-              cached_bid: signal.sl_trigger_price,
-              fresh_bid: freshBid,
-              fresh_ask: freshAsk,
-              fresh_spread: freshSpread,
-              sl_threshold: slThreshold,
-              reason: "fresh_bid_above_sl",
-            });
-            return null;
-          }
-
-          // Abort if spread is too wide (illiquid book)
-          if (freshSpread > maxSpreadForSL) {
-            console.log(`[SL_ABORT] ${signal.slug} | fresh spread ${freshSpread.toFixed(3)} > max ${maxSpreadForSL} — book illiquid, aborting SL`);
-            appendJsonl("state/journal/executions.jsonl", {
-              type: "sl_aborted_fresh_check",
-              ts: Date.now(),
-              signal_id: signal.signal_id,
-              slug: signal.slug,
-              cached_bid: signal.sl_trigger_price,
-              fresh_bid: freshBid,
-              fresh_ask: freshAsk,
-              fresh_spread: freshSpread,
-              max_spread: maxSpreadForSL,
-              reason: "spread_too_wide",
-            });
-            return null;
-          }
-        }
-      } catch (e) {
-        console.warn(`[SL_FRESH_CHECK] ${signal.slug} | error: ${e.message} — proceeding with SL`);
-      }
-
-      // ESPN SL guard: for NBA/CBB, verify team is actually losing before selling
-      const league = buyTrade.league || signal.league || null;
-      const outcomeName = buyTrade.entry_outcome_name || signal.entry_outcome_name || null;
-      if (league && outcomeName) {
-        try {
-          const guard = await shouldBlockSl(
-            { slug: signal.slug, title: buyTrade.title || signal.title || signal.slug },
-            outcomeName, league, this.cfg
-          );
-          console.log(`[SL_ESPN_GUARD] ${signal.slug} | block=${guard.block} reason=${guard.reason} ${guard.details ? JSON.stringify(guard.details) : ""}`);
-          if (guard.block) {
-            console.log(`[SL_ABORT] ${signal.slug} | ESPN says team winning by ${guard.details?.margin} — aborting SL`);
-            appendJsonl("state/journal/executions.jsonl", {
-              type: "sl_aborted_espn_guard",
-              ts: Date.now(),
-              signal_id: signal.signal_id,
-              slug: signal.slug,
-              league,
-              outcome: outcomeName,
-              guard_reason: guard.reason,
-              guard_details: guard.details,
-              cached_bid: signal.sl_trigger_price,
-            });
-            return null;
-          }
-        } catch (e) {
-          console.warn(`[SL_ESPN_GUARD] ${signal.slug} | error: ${e.message} — proceeding with SL`);
-        }
-      }
-
       return this._executeSLSell(signal, buyTrade, sellTradeId);
-    }
-
-    // For take profit: sell with floor from ladder
-    if (signal.close_reason === "take_profit") {
-      const tpFloor = signal.tp_floor || 0.995;
-      console.log(`[LIVE_TP] ${signal.slug} | floor=${tpFloor} | attempt=${signal.tp_attempt || 1}`);
-      return this._executeMarketSell(signal, buyTrade, sellTradeId, tpFloor);
     }
 
     // For resolution: sell at market (resolved markets have bids at 0.99+)
@@ -696,13 +559,6 @@ export class TradeBridge {
 
         return result;
       } else {
-        // For TP: remove failed sell so it can retry on next cycle with lower floor
-        if (signal.close_reason === "take_profit") {
-          delete this.execState.trades[sellTradeId];
-          saveExecutionState(this.execState);
-          console.log(`[TP_NO_FILL] ${signal.slug} | floor too high, will retry next cycle`);
-          return result;
-        }
         this.execState.trades[sellTradeId].status = "failed";
         this.execState.trades[sellTradeId].error = result.error;
         saveExecutionState(this.execState);
@@ -783,28 +639,11 @@ export class TradeBridge {
       if (!price || price.yes_best_bid == null) continue;
 
       const bid = Number(price.yes_best_bid);
-      const ask = Number(price.yes_best_ask || 1);
-      const spread = ask - bid;
       const entryPrice = Number(trade.entryPrice || trade.avgFillPrice);
       const shares = Number(trade.filledShares || 0);
 
-      // --- SPREAD SANITY CHECK ---
-      // If spread > 15%, the book is illiquid — bid is unreliable for SL/resolution.
-      // Skip this position until the book normalizes.
-      const maxSpreadForSL = Number(this.cfg?.trading?.max_spread_for_sl ?? 0.15);
-      if (spread > maxSpreadForSL) {
-        console.log(`[POSITION_CHECK] ${trade.slug} | SKIP spread=${spread.toFixed(3)} > ${maxSpreadForSL} (bid=${bid.toFixed(3)} ask=${ask.toFixed(3)}) — book illiquid`);
-        continue;
-      }
-
       // --- RESOLUTION: bid >= 0.995 means market resolved in our favor ---
       if (bid >= resolveThreshold) {
-        // Cooldown: don't spam resolution sells (30s between attempts)
-        const lastResAttempt = trade._lastResolutionAttemptTs || 0;
-        if (Date.now() - lastResAttempt < 30000) continue;
-        trade._lastResolutionAttemptTs = Date.now();
-        saveExecutionState(this.execState);
-
         const pnl = shares * (bid - entryPrice);
         console.log(`[RESOLVED_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} >= ${resolveThreshold} | entry=${entryPrice.toFixed(3)} | pnl=$${pnl.toFixed(2)}`);
         signals.push({
@@ -820,48 +659,6 @@ export class TradeBridge {
           roi: (trade.spentUsd > 0) ? pnl / trade.spentUsd : 0,
         });
         continue;
-      }
-
-      // --- TAKE PROFIT: bid >= 0.99 with sufficient depth ---
-      const tpMinBid = Number(this.cfg?.trading?.tp_min_bid ?? 0.99);
-      const tpMinDepth = Number(this.cfg?.trading?.tp_min_depth_usd ?? 500);
-      const bidDepth = Number(price.yes_bid_depth_usd || 0);
-      if (bid >= tpMinBid && bid < resolveThreshold) {
-        // Cooldown: don't spam TP if we just tried (wait 30s between attempts)
-        const tpCooldownMs = 30000;
-        const lastTpAttempt = trade._lastTpAttemptTs || 0;
-        if (Date.now() - lastTpAttempt < tpCooldownMs) continue;
-
-        if (bidDepth >= tpMinDepth) {
-          const tpAttempts = trade._tpAttempts || 0;
-          const tpFloor = tpAttempts === 0 ? 0.997 : 0.995;
-
-          const pnl = shares * (tpFloor - entryPrice);
-          console.log(`[TP_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} depth=$${bidDepth.toFixed(0)} | floor=${tpFloor} | attempt=${tpAttempts + 1} | entry=${entryPrice.toFixed(3)}`);
-
-          // Track attempt on the buy trade itself (survives sell cleanup)
-          trade._tpAttempts = tpAttempts + 1;
-          trade._lastTpAttemptTs = Date.now();
-          saveExecutionState(this.execState);
-
-          signals.push({
-            type: "signal_close",
-            signal_id: trade.signal_id,
-            slug: trade.slug,
-            ts_close: Date.now(),
-            close_reason: "take_profit",
-            tp_trigger_bid: bid,
-            tp_floor: tpFloor,
-            tp_attempt: tpAttempts + 1,
-            bid_depth_usd: bidDepth,
-            win: true,
-            pnl_usd: pnl,
-            roi: (trade.spentUsd > 0) ? pnl / trade.spentUsd : 0,
-          });
-          continue;
-        } else {
-          console.log(`[TP_SKIP] ${trade.slug} | bid=${bid.toFixed(3)} but depth=$${bidDepth.toFixed(0)} < $${tpMinDepth} — waiting`);
-        }
       }
 
       // --- STOP LOSS: bid <= threshold ---
@@ -883,31 +680,6 @@ export class TradeBridge {
       }
     }
     return signals;
-  }
-
-  /**
-   * Fetch fresh CLOB bid/ask directly from API (bypasses cache).
-   * Used as guard-rail before SL execution.
-   */
-  async _getFreshCLOBPrice(tokenId) {
-    const CLOB = "https://clob.polymarket.com";
-    const controller = new AbortController();
-    const to = setTimeout(() => controller.abort(), 3000);
-    try {
-      const [buyRes, sellRes] = await Promise.all([
-        fetch(`${CLOB}/price?token_id=${tokenId}&side=buy`, { signal: controller.signal }).then(r => r.json()),
-        fetch(`${CLOB}/price?token_id=${tokenId}&side=sell`, { signal: controller.signal }).then(r => r.json()),
-      ]);
-      return {
-        ask: Number(buyRes.price),  // buy side = what we'd pay = ask
-        bid: Number(sellRes.price), // sell side = what we'd get = bid
-      };
-    } catch (e) {
-      console.warn(`[FRESH_CLOB] error fetching price for ${tokenId.slice(0, 10)}...: ${e.message}`);
-      return null;
-    } finally {
-      clearTimeout(to);
-    }
   }
 
   getStatus() {

@@ -39,17 +39,12 @@ export function initClient(credentialsPath, funder) {
  * Execute a BUY market order (Fill-And-Kill).
  * Returns fill details or error.
  */
-export async function executeBuy(client, tokenId, shares, maxPrice = null) {
+export async function executeBuy(client, tokenId, shares) {
   const amount = roundDown(shares, 2);
   if (!(amount >= 0.01)) return { ok: false, error: "amount_too_small", amount };
 
-  const orderParams = { tokenID: tokenId, amount, side: "BUY" };
-  if (maxPrice != null && Number.isFinite(maxPrice) && maxPrice > 0 && maxPrice < 1) {
-    orderParams.price = maxPrice;
-  }
-
   const res = await client.createAndPostMarketOrder(
-    orderParams,
+    { tokenID: tokenId, amount, side: "BUY" },
     {},
     "FAK"
   );
@@ -104,42 +99,6 @@ export async function getConditionalBalance(client, tokenId) {
 /**
  * Get all open positions for the funder address.
  */
-/**
- * Fetch real VWAP fill price from associate_trades.
- * Returns { vwap, trades, source } or null if can't determine.
- * Non-blocking — caller should fire-and-forget or await with timeout.
- */
-export async function getRealFillPrice(client, orderResult) {
-  const tradeIds = orderResult?._associateTrades;
-  if (!Array.isArray(tradeIds) || tradeIds.length === 0) return null;
-
-  try {
-    // Fetch each trade by ID (most orders have 1-3 fills)
-    const trades = [];
-    for (const tid of tradeIds.slice(0, 10)) { // cap at 10 fills
-      try {
-        const t = await client.getTrades({ id: tid }, true);
-        if (Array.isArray(t) && t.length > 0) trades.push(...t);
-      } catch {}
-    }
-
-    if (trades.length === 0) return null;
-
-    let totalQty = 0, totalVal = 0;
-    for (const t of trades) {
-      const p = Number(t.price || 0);
-      const s = Number(t.size || 0);
-      if (p > 0 && s > 0) { totalVal += p * s; totalQty += s; }
-    }
-
-    if (totalQty <= 0) return null;
-    return { vwap: totalVal / totalQty, totalQty, totalVal, trades: trades.length, source: "associate_trades" };
-  } catch (e) {
-    console.warn(`[FILL_PRICE] error fetching real fill: ${e.message}`);
-    return null;
-  }
-}
-
 export async function getPositions(funder) {
   const url = `https://data-api.polymarket.com/positions?user=${funder}&limit=200&sizeThreshold=0.5`;
   const resp = await fetch(url);
@@ -209,7 +168,6 @@ function parseFillResult(res, final, requestedAmount, side) {
     spentUsd,
     avgFillPrice,
     isPartial,
-    _associateTrades: final?.associate_trades || [],
     raw: { res, final },
   };
 }
