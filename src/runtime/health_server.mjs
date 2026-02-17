@@ -922,12 +922,26 @@ export function startHealthServer(state, opts = {}) {
         const openMatch = c.signal_id
           ? signals.find(s => s.type === "signal_open" && s.signal_id === c.signal_id)
           : null;
+        // Derive exit_price: explicit field > from resolution > from PnL math
+        let exitPrice = c.exit_price ?? null;
+        if (exitPrice == null && c.close_reason === "resolved") {
+          exitPrice = c.win === true ? 1.0 : 0.0;
+        }
+        if (exitPrice == null && c.pnl_usd != null) {
+          const ep = c.entry_price || openMatch?.entry_price;
+          const notional = c.paper_notional_usd || openMatch?.paper_notional_usd || 10;
+          if (ep && ep > 0) {
+            const shares = notional / ep;
+            exitPrice = shares > 0 ? Math.round(((c.pnl_usd / shares) + ep) * 1000) / 1000 : null;
+          }
+        }
         return {
           slug: c.slug, title: c.title || openMatch?.title || null,
           league: c.league || openMatch?.league || "",
           ts_open: c.ts_open || openMatch?.ts_open || null,
           ts_close: c.ts_close,
           entry_price: c.entry_price || openMatch?.entry_price || null,
+          exit_price: exitPrice,
           win: c.win, pnl_usd: c.pnl_usd, roi: c.roi,
           close_reason: c.close_reason,
         };

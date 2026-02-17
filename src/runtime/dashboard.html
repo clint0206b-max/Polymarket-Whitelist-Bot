@@ -158,6 +158,7 @@
               <th class="px-4 py-2 text-left">Market</th>
               <th class="px-4 py-2 text-left">League</th>
               <th class="px-4 py-2 text-right">Entry</th>
+              <th class="px-4 py-2 text-right">Exit</th>
               <th class="px-4 py-2 text-right">PnL</th>
               <th class="px-4 py-2 text-right">ROI</th>
               <th class="px-4 py-2 text-right">Duration</th>
@@ -555,6 +556,7 @@
           <td class="px-4 py-2 text-left"><span class="text-xs" title="${t.slug}">${t.title || truncSlug(t.slug)}</span></td>
           <td class="px-4 py-2">${leagueBadge(t.league)}</td>
           <td class="px-4 py-2 text-right mono text-xs">${(t.entry_price||0).toFixed(3)}</td>
+          <td class="px-4 py-2 text-right mono text-xs">${t.exit_price != null ? t.exit_price.toFixed(3) : '—'}</td>
           <td class="px-4 py-2 text-right mono text-xs ${pnlColor(t.pnl_usd)}">${pnlStr(t.pnl_usd)}</td>
           <td class="px-4 py-2 text-right mono text-xs">${t.roi != null ? (t.roi * 100).toFixed(1) + '%' : '—'}</td>
           <td class="px-4 py-2 text-right text-xs text-slate-400">${dur(durMs)}</td>
