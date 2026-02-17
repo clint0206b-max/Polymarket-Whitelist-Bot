@@ -599,9 +599,16 @@
 
       if (wlFilter !== 'all') items = items.filter(i => i.status === wlFilter);
 
-      // Sort: signaled first, then pending, then watching
+      // Sort: signaled first, then pending, then watching — within same status, highest ask first
       const order = { signaled: 0, pending_signal: 1, watching: 2, expired: 3 };
-      items.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+      items.sort((a, b) => {
+        const sa = order[a.status] ?? 9;
+        const sb = order[b.status] ?? 9;
+        if (sa !== sb) return sa - sb;
+        const askA = Number(a.last_price?.yes_best_ask ?? 0);
+        const askB = Number(b.last_price?.yes_best_ask ?? 0);
+        return askB - askA;
+      });
 
       $('watchlist-body').innerHTML = items.map(m => {
         const lp = m.last_price || {};
