@@ -445,7 +445,12 @@ try {
           const pricesBySlug = new Map();
           for (const m of Object.values(state.watchlist || {})) {
             if (m?.slug && m?.last_price) {
-              pricesBySlug.set(m.slug, m.last_price);
+              // Merge depth info from liquidity into price data for TP depth check
+              const priceData = { ...m.last_price };
+              if (m.liquidity?.exit_depth_usd_bid != null) {
+                priceData.yes_bid_depth_usd = m.liquidity.exit_depth_usd_bid;
+              }
+              pricesBySlug.set(m.slug, priceData);
             }
           }
           const closeSignals = tradeBridge.checkPositionsFromCLOB(pricesBySlug);
@@ -591,6 +596,24 @@ try {
       loopTimings.persist_ms = nowMs() - persistStartMs;
     } else {
       state.runtime.health.state_write_skipped_count = (state.runtime.health.state_write_skipped_count || 0) + 1;
+    }
+
+    // === POSITION RECONCILIATION (observation mode, every 5 min) ===
+    if (tradeBridge && tradeBridge.mode !== "paper") {
+      const reconcileIntervalMs = Number(cfg?.reconciliation?.interval_minutes ?? 5) * 60 * 1000;
+      const lastReconcile = state.runtime.last_reconcile_ts || 0;
+      if (now - lastReconcile >= reconcileIntervalMs) {
+        try {
+          const { reconcilePositions } = await import("./src/execution/position_reconciler.mjs");
+          const funder = cfg?.trading?.funder_address;
+          if (funder) {
+            await reconcilePositions(tradeBridge.execState, funder);
+            state.runtime.last_reconcile_ts = now;
+          }
+        } catch (e) {
+          console.warn(`[RECONCILE] error: ${e.message}`);
+        }
+      }
     }
 
     // === Loop Performance Metrics ===
