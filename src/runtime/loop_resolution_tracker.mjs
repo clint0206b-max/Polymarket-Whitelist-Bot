@@ -155,9 +155,10 @@ export async function loopResolutionTracker(cfg, state) {
       priceUpdated = true;
     }
 
-    // --- Paper Stop Loss ---
+    // --- Paper Stop Loss (ONLY in paper mode — live uses CLOB SL in main loop) ---
+    const tradingMode = cfg?.trading?.mode || "paper";
     const slThreshold = Number(cfg?.paper?.stop_loss_bid ?? 0.70);
-    if (slThreshold > 0 && curPrice != null && curPrice <= slThreshold) {
+    if (tradingMode === "paper" && slThreshold > 0 && curPrice != null && curPrice <= slThreshold) {
       const entryP = Number(row.entry_price);
       const notional = Number(row.paper_notional_usd);
       const shares = (entryP > 0 && entryP < 1) ? notional / entryP : 0;
