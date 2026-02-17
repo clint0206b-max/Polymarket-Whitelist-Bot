@@ -638,6 +638,10 @@ export class TradeBridge {
       const price = pricesBySlug.get(trade.slug);
       if (!price || price.yes_best_bid == null) continue;
 
+      // Skip if a sell is already pending/queued/filled for this signal
+      const sellKey = `sell:${trade.signal_id}`;
+      if (this.execState.trades[sellKey]) continue;
+
       const bid = Number(price.yes_best_bid);
       const entryPrice = Number(trade.entryPrice || trade.avgFillPrice);
       const shares = Number(trade.filledShares || 0);
