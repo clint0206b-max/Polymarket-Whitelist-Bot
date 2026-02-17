@@ -46,6 +46,7 @@ export const SLUG_PREFIX_TO_LEAGUE = Object.fromEntries(
 
 const STRIP_TOKENS = [
   "fc", "cf", "sc", "cd", "ac", "ssc", "afc", "rc", "rcd", "ca",
+  "bv", "bc", "sv", "tsv", "vfb", "vfl", "fk", "nk", "sk", "pk",
   "club", "deportivo", "athletic", "atletico", "atlético",
   "real", "sporting", "olympique", "olympique lyonnais",
   "de", "la", "el", "los", "las", "le", "du", "des", "von", "van",
@@ -100,9 +101,9 @@ export function normalizeTeamName(raw) {
   const aliased = TEAM_ALIASES[name];
   if (aliased) return aliased;
 
-  // Strip common tokens
+  // Strip common tokens and founding-year numbers (09, 1899, 1904, etc.)
   const words = name.split(/\s+/).filter(w => w.length > 0);
-  const filtered = words.filter(w => !STRIP_TOKENS.includes(w));
+  const filtered = words.filter(w => !STRIP_TOKENS.includes(w) && !/^\d{2,4}$/.test(w));
 
   // If stripping removed everything, keep original words
   const result = (filtered.length > 0 ? filtered : words).join(" ");
@@ -163,6 +164,8 @@ const SLUG_CODE_ALIASES = {
   "tot": "tottenham",
   "wol": "wolverhampton",
   "int": "internazionale",
+  "bvb": "borussia dortmund",
+  "ata": "atalanta",
 };
 
 /** Suffixes that indicate non-team markets (draw, totals, spreads, etc.) */
