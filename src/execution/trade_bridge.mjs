@@ -616,19 +616,22 @@ export class TradeBridge {
   // --- Status ---
   
   /**
-   * Check open positions against CLOB bid prices for stop loss.
-   * Called from main loop with real-time WS/HTTP prices.
+   * Check open positions against CLOB bid prices for stop loss AND resolution.
+   * Called from main loop with real-time WS/HTTP prices (every 2s).
+   * This is the ONLY source of SL and resolution signals in live mode.
+   * Gamma is NOT used for any trading decisions in live mode.
+   *
    * @param {Map<string, {yes_best_bid: number}>} pricesBySlug - current CLOB prices keyed by slug
-   * @returns {Array<object>} - signal_close objects for positions that hit SL
+   * @returns {Array<object>} - signal_close objects for positions that hit SL or resolved
    */
-  checkStopLossFromCLOB(pricesBySlug) {
+  checkPositionsFromCLOB(pricesBySlug) {
     if (this.mode === "paper" || this.execState.paused) return [];
 
     const slThreshold = Number(this.cfg?.paper?.stop_loss_bid ?? 0.70);
-    if (!(slThreshold > 0 && slThreshold < 1)) return [];
+    const resolveThreshold = 0.995; // bid >= this = market resolved
 
     const openTrades = Object.entries(this.execState.trades)
-      .filter(([_, t]) => t.status === "filled" && !t.closed && t.side === "BUY");
+      .filter(([_, t]) => t.status === "filled" && !t.closed && String(t.side).toUpperCase() === "BUY");
 
     const signals = [];
     for (const [tradeId, trade] of openTrades) {
@@ -636,13 +639,32 @@ export class TradeBridge {
       if (!price || price.yes_best_bid == null) continue;
 
       const bid = Number(price.yes_best_bid);
-      if (bid <= slThreshold) {
-        const entryPrice = Number(trade.entryPrice || trade.avgFillPrice);
-        const shares = Number(trade.filledShares || 0);
+      const entryPrice = Number(trade.entryPrice || trade.avgFillPrice);
+      const shares = Number(trade.filledShares || 0);
+
+      // --- RESOLUTION: bid >= 0.995 means market resolved in our favor ---
+      if (bid >= resolveThreshold) {
         const pnl = shares * (bid - entryPrice);
+        console.log(`[RESOLVED_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} >= ${resolveThreshold} | entry=${entryPrice.toFixed(3)} | pnl=$${pnl.toFixed(2)}`);
+        signals.push({
+          type: "signal_close",
+          signal_id: trade.signal_id,
+          slug: trade.slug,
+          ts_close: Date.now(),
+          close_reason: "resolved",
+          resolve_method: "clob_terminal_price",
+          resolved_price: bid,
+          win: true,
+          pnl_usd: pnl,
+          roi: (trade.spentUsd > 0) ? pnl / trade.spentUsd : 0,
+        });
+        continue;
+      }
 
+      // --- STOP LOSS: bid <= threshold ---
+      if (slThreshold > 0 && slThreshold < 1 && bid <= slThreshold) {
+        const pnl = shares * (bid - entryPrice);
         console.log(`[SL_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} <= SL=${slThreshold} | entry=${entryPrice.toFixed(3)} | est_pnl=$${pnl.toFixed(2)}`);
-
         signals.push({
           type: "signal_close",
           signal_id: trade.signal_id,

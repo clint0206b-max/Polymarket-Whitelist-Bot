@@ -215,6 +215,9 @@ export async function loopResolutionTracker(cfg, state) {
       continue;
     }
 
+    // --- Resolution detection (ONLY in paper mode — live uses CLOB terminal price in main loop) ---
+    if (tradingMode !== "paper") continue; // In live mode, skip Gamma-based resolution entirely
+
     const det = detectResolved(r.market);
     if (!det.resolved) continue;
 

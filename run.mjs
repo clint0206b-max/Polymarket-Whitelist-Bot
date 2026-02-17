@@ -437,7 +437,8 @@ try {
         }
       } catch {}
 
-      // === LIVE SL CHECK: use CLOB/WS prices (every eval cycle) ===
+      // === LIVE POSITION CHECK: SL + resolution using CLOB/WS prices (every 2s) ===
+      // Gamma is NOT used for any trading decisions in live mode.
       if (tradeBridge && tradeBridge.mode !== "paper") {
         try {
           // Build price map from watchlist state (updated by WS/HTTP in eval loop)
@@ -447,24 +448,22 @@ try {
               pricesBySlug.set(m.slug, m.last_price);
             }
           }
-          const slSignals = tradeBridge.checkStopLossFromCLOB(pricesBySlug);
-          for (const sig of slSignals) {
+          const closeSignals = tradeBridge.checkPositionsFromCLOB(pricesBySlug);
+          for (const sig of closeSignals) {
             try {
-              // Write signal_close to journal (for audit trail)
               const { appendJsonl } = await import("./src/core/journal.mjs");
               appendJsonl("state/journal/signals.jsonl", {
                 ...sig,
                 runner_id: process.env.SHADOW_ID || "prod",
-                source: "clob_sl_check",
+                source: "clob_position_check",
               });
-              // Execute the sell
               await tradeBridge.handleSignalClose(sig);
             } catch (e) {
-              console.error(`[SL_CLOB] sell error for ${sig.slug}: ${e.message}`);
+              console.error(`[POSITION_CHECK] sell error for ${sig.slug}: ${e.message}`);
             }
           }
         } catch (e) {
-          console.error(`[SL_CLOB] check error: ${e.message}`);
+          console.error(`[POSITION_CHECK] error: ${e.message}`);
         }
       }
 
