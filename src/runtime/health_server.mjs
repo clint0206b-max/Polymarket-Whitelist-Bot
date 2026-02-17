@@ -193,6 +193,41 @@ function computeLeagueSummary(state) {
  * Compute daily utilization from signals.jsonl + watchlist.
  * Cached for 30s to avoid reparsing every health request.
  */
+/**
+ * Build universe funnel: gamma_available → watchlisted → signaled (all unique slugs per day)
+ */
+function buildUniverseFunnel(state) {
+  const funnel = state?.runtime?._funnel;
+  if (!funnel) return null;
+
+  // Get signaled unique slugs from daily_utilization (already computed)
+  const du = computeDailyUtilization(state);
+
+  const allLeagues = new Set([
+    ...Object.keys(funnel.gamma_seen || {}),
+    ...Object.keys(funnel.watchlisted || {}),
+    ...Object.keys(du || {}),
+  ]);
+
+  const result = {};
+  for (const league of allLeagues) {
+    const available = funnel.gamma_seen?.[league]?.size || 0;
+    const watchlisted = funnel.watchlisted?.[league]?.size || 0;
+    const signaled = du?.[league]?.signaled || 0;
+
+    result[league] = {
+      available,
+      watchlisted,
+      signaled,
+      passed: available - signaled,
+      capture_pct: available > 0 ? Math.round((signaled / available) * 1000) / 10 : 0,
+      filter_pct: available > 0 ? Math.round((watchlisted / available) * 1000) / 10 : 0,
+    };
+  }
+
+  return { day: funnel._day, by_league: result };
+}
+
 let _dailyUtilCache = { ts: 0, data: null };
 const DAILY_UTIL_CACHE_MS = 30000;
 
@@ -497,6 +532,7 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
     },
 
     trade_bridge: state?.runtime?.trade_bridge || { mode: "paper", paused: false },
+    universe_funnel: buildUniverseFunnel(state),
   };
 }
 

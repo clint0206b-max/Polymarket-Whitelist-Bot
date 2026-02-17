@@ -401,16 +401,20 @@
         }).join('');
       }
 
-      // Daily utilization — conversion funnel per league
+      // Daily utilization — universe funnel per league
+      const uf = h.universe_funnel;
       const du = h.daily_utilization;
-      if (du && Object.keys(du).length) {
+      if (uf && uf.by_league && Object.keys(uf.by_league).length) {
         $('daily-empty').classList.add('hidden');
-        $('daily-util').innerHTML = Object.entries(du)
-          .sort((a,b) => (b[1].discovered || 0) - (a[1].discovered || 0))
-          .map(([league, d]) => {
-          const disc = d.discovered || 0;
-          const sig = d.signaled || 0;
-          const conv = d.conversion_pct || 0;
+        $('daily-util').innerHTML = Object.entries(uf.by_league)
+          .sort((a,b) => (b[1].available || 0) - (a[1].available || 0))
+          .map(([league, f]) => {
+          const avail = f.available || 0;
+          const wl = f.watchlisted || 0;
+          const sig = f.signaled || 0;
+          const cap = f.capture_pct || 0;
+          // PnL from daily_utilization
+          const d = du?.[league] || {};
           const wins = d.wins || 0;
           const losses = d.losses || 0;
           const pnl = d.pnl || 0;
@@ -419,22 +423,28 @@
           const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
           const pnlCls = pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
           const closedStr = (wins + losses) > 0 ? `${wins}W/${losses}L` : '';
-          const toStr = to > 0 ? `${to}TO${toCost ? '(' + toCost + '💸)' : ''}` : '';
-          const detailParts = [closedStr, toStr].filter(Boolean).join(' · ');
-          return `<div class="mb-2">
+          const toStr = to > 0 ? `${to}TO${toCost?'('+toCost+'💸)':''}` : '';
+          const detail = [closedStr, toStr].filter(Boolean).join(' · ');
+          // Funnel bar: two segments (watchlisted in dark blue, signaled in bright blue)
+          const wlPct = avail > 0 ? Math.round((wl / avail) * 100) : 0;
+          const sigPct = avail > 0 ? Math.round((sig / avail) * 100) : 0;
+          return `<div class="mb-2.5">
             <div class="flex justify-between text-xs mb-0.5">
               <div class="flex items-center gap-2">
                 ${leagueBadge(league)}
-                <span class="text-slate-400">${sig}/${disc} (${conv}%)</span>
+                <span class="text-slate-400 mono">${sig}/${avail}</span>
+                <span class="text-slate-500">(${cap}%)</span>
               </div>
               <div class="flex items-center gap-2">
-                ${detailParts ? `<span class="text-slate-400">${detailParts}</span>` : ''}
-                ${(wins+losses) > 0 ? `<span class="${pnlCls} mono">${pnlStr}</span>` : ''}
+                ${detail ? `<span class="text-slate-400">${detail}</span>` : ''}
+                ${(wins+losses)>0 ? `<span class="${pnlCls} mono">${pnlStr}</span>` : ''}
               </div>
             </div>
-            <div class="bg-slate-700 rounded-full h-1.5 overflow-hidden">
-              <div class="h-full bg-blue-500 rounded-full" style="width:${Math.max(conv, disc > 0 ? 2 : 0)}%"></div>
+            <div class="bg-slate-700 rounded-full h-2 overflow-hidden flex">
+              <div class="h-full bg-blue-500" style="width:${Math.max(sigPct, avail>0?1:0)}%"></div>
+              <div class="h-full bg-blue-900" style="width:${Math.max(wlPct - sigPct, 0)}%"></div>
             </div>
+            <div class="text-[10px] text-slate-500 mt-0.5">${avail} avail → ${wl} watchlisted → ${sig} signaled</div>
           </div>`;
         }).join('');
       }

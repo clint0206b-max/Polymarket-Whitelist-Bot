@@ -184,6 +184,22 @@ export async function loopGamma(state, cfg, now) {
     }
   }
 
+  // --- Daily funnel tracking (unique slugs per league) ---
+  // Reset at Mendoza midnight (UTC-3 → 03:00 UTC)
+  const mendozaNow = new Date(now - 3 * 3600 * 1000);
+  const mendozaDay = mendozaNow.toISOString().slice(0, 10);
+  if (!state.runtime._funnel || state.runtime._funnel._day !== mendozaDay) {
+    state.runtime._funnel = { _day: mendozaDay, gamma_seen: {}, watchlisted: {} };
+  }
+  const funnel = state.runtime._funnel;
+
+  // Track all candidates from Gamma (before our filters)
+  for (const c of candidates) {
+    const l = String(c?.league || "unknown");
+    if (!funnel.gamma_seen[l]) funnel.gamma_seen[l] = new Set();
+    if (c?.slug) funnel.gamma_seen[l].add(c.slug);
+  }
+
   let inserted = 0;
   let seen = 0;
   for (const c of candidates) {
@@ -218,6 +234,13 @@ export async function loopGamma(state, cfg, now) {
     const res = upsertMarket(state, c, now);
     if (res.changed) inserted++;
     seen++;
+
+    // Track watchlisted unique slugs (passed all gamma-level filters)
+    if (c?.slug) {
+      const fl = String(c?.league || "unknown");
+      if (!funnel.watchlisted[fl]) funnel.watchlisted[fl] = new Set();
+      funnel.watchlisted[fl].add(c.slug);
+    }
   }
 
   // Snapshot of live conditionIds from this Gamma fetch (used by purge gates)
