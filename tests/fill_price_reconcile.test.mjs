@@ -246,3 +246,52 @@ describe("fetchRealFillPrice", () => {
     assert.ok(String(avg).length < 20, `avg string too long: ${avg}`);
   });
 });
+
+// === parseFillResult: unknown/null final → fail closed ===
+const { parseFillResult } = await import("../src/execution/order_executor.mjs");
+describe("parseFillResult fail-closed on unknown status", () => {
+
+  it("null final → ok:false, error:order_status_unknown", () => {
+    const res = { orderID: "0xabc" };
+    const result = parseFillResult(res, null, 10, "BUY");
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "order_status_unknown");
+    assert.equal(result.filledShares, 0);
+  });
+
+  it("undefined final → ok:false", () => {
+    const res = { orderID: "0xabc" };
+    const result = parseFillResult(res, undefined, 10, "BUY");
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "order_status_unknown");
+  });
+
+  it("final with empty status → ok:false", () => {
+    const res = { orderID: "0xabc" };
+    const result = parseFillResult(res, { status: "" }, 10, "BUY");
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "order_status_unknown");
+  });
+
+  it("final with status UNKNOWN → ok:false", () => {
+    const res = { orderID: "0xabc" };
+    const result = parseFillResult(res, { status: "UNKNOWN" }, 10, "BUY");
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "order_status_unknown");
+  });
+
+  it("MATCHED final still works (ok:true)", () => {
+    const res = { orderID: "0xabc" };
+    const final = { status: "MATCHED", size_matched: "10", price: "0.95" };
+    const result = parseFillResult(res, final, 10, "BUY");
+    assert.equal(result.ok, true);
+    assert.equal(result.filledShares, 10);
+  });
+
+  it("CANCELED with no fill → ok:false (existing behavior)", () => {
+    const res = { orderID: "0xabc" };
+    const final = { status: "CANCELED", size_matched: "0" };
+    const result = parseFillResult(res, final, 10, "BUY");
+    assert.equal(result.ok, false);
+  });
+});

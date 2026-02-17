@@ -167,7 +167,7 @@ async function waitForOrderFinal(client, orderID, { timeoutMs = 15000, intervalM
   try { return await client.getOrder(orderID); } catch { return last; }
 }
 
-function parseFillResult(res, final, requestedAmount, side) {
+export function parseFillResult(res, final, requestedAmount, side) {
   const orderID = res?.orderID || null;
   const st = String(final?.status || "").toUpperCase();
   
@@ -183,6 +183,20 @@ function parseFillResult(res, final, requestedAmount, side) {
       error: `order_${st.toLowerCase()}`,
       orderID,
       status: st,
+      requestedAmount,
+      filledShares: 0,
+      side,
+    };
+  }
+
+  // If final is null/undefined or status is unknown, we can't confirm a fill.
+  // NEVER assume fill — fail closed to prevent phantom positions.
+  if (!final || !st || st === "UNKNOWN") {
+    return {
+      ok: false,
+      error: "order_status_unknown",
+      orderID,
+      status: st || "UNKNOWN",
       requestedAmount,
       filledShares: 0,
       side,
