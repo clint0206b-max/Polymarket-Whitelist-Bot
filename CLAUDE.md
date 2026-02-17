@@ -1420,6 +1420,16 @@ If any >1000ms → bottleneck identified.
 
 ---
 
+## Critical: Git & State Safety
+
+**NEVER `git add -A` or `git add .`** — always `git add <specific files>`. State files live in `state/` and are gitignored. Using `-A` or `-f` on state files creates a time bomb where future commits silently overwrite runtime state.
+
+**State and runtime logs NEVER go to git.** If state is lost, reconstruct from blockchain — not from git. State backup should use `cp` to a backup directory, never `git add -f`.
+
+**Tests MUST use isolated state directories.** Use OS `tmpdir()` for test files, never write under `state/` or project root. Every test file path must be validated before write/delete. See `tests/reconcile_index.test.mjs` for the pattern.
+
+**`resolvePath` args:** When calling `resolvePath` for state subpaths, use separate args: `resolvePath("state", "execution_state.json")` — NOT `resolvePath("state/execution_state.json")`. Only the first arg `=== "state"` triggers SHADOW_ID isolation.
+
 ## Final Notes
 
 **This bot trades real money.** Every change has financial impact. Follow the critical rules, write tests, dry-run extensively.
@@ -1428,7 +1438,7 @@ If any >1000ms → bottleneck identified.
 
 **The codebase is deterministic.** Same inputs → same outputs. If behavior changes, a code change caused it. Find the diff.
 
-**Tests are your safety net.** 437 tests (all passing) give confidence. Add tests for every change.
+**Tests are your safety net.** 535 tests (all passing) give confidence. Add tests for every change.
 
 **Shadow runners are your friend.** Use them for risky changes. A/B test strategies. Validate before prod.
 

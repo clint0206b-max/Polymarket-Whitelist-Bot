@@ -1,16 +1,15 @@
 node_modules/
 logs/
 *.log
-state/
-!state/.keep
-state/*.tmp
-state/*.lock
 .env
 .env.*
 
 # Local overrides
 src/config/local.json
+
+# === STATE FILES: NEVER TRACK ===
+# Runtime state is ephemeral. NEVER use `git add -f` on these.
+# If state is lost, reconstruct from blockchain — not from git.
+state/**
+!state/.keep
 state-*/
-!state-*/.keep
-state/execution_state.json
-state/journal/executions.jsonl

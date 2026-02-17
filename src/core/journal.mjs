@@ -98,7 +98,7 @@ export function reconcileIndex(index, jsonlRelPath = "state/journal/signals.json
   // This prevents premature closure when signal_close exists but sell failed
   let execTrades = {};
   try {
-    const execState = readJson(resolvePath("state/execution_state.json"));
+    const execState = readJson(resolvePath("state", "execution_state.json"));
     execTrades = execState?.trades || {};
   } catch {}
 
