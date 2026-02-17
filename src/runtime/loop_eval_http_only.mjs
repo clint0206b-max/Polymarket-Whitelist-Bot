@@ -1221,6 +1221,23 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     openPositionSlugs = new Set();
   }
 
+  // === PURGE STALE SLUG DATE ===
+  // Remove markets whose slug date is >24h in the past (zombie markets).
+  // Skip markets with open positions (safety).
+  {
+    const { extractSlugDate } = await import("../strategy/watchlist_upsert.mjs");
+    const SLUG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    for (const [key, m] of Object.entries(state.watchlist || {})) {
+      if (openPositionSlugs.has(m.slug)) continue;
+      const slugDate = extractSlugDate(m.slug);
+      if (slugDate && (now - slugDate.getTime()) > SLUG_MAX_AGE_MS) {
+        delete state.watchlist[key];
+        bumpBucket("health", "purge_slug_date_expired", 1);
+        console.log(`[PURGE_SLUG_DATE] ${m.slug} | date=${slugDate.toISOString().slice(0,10)} | age=${Math.round((now - slugDate.getTime()) / 3600000)}h`);
+      }
+    }
+  }
+
   // === PURGE EXPIRED TTL ===
   // For only_live strategy: purge expired/resolved markets older than X hours
   // This keeps the watchlist fresh and prevents accumulation of stale entries

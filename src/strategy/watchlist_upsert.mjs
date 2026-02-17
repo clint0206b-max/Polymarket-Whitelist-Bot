@@ -1,3 +1,20 @@
+/**
+ * Extract the date (YYYY-MM-DD) embedded in a slug.
+ * Looks for 3 consecutive parts matching year (4 digits), month (2 digits), day (2 digits).
+ * Returns a Date object (UTC midnight) or null if no valid date found.
+ */
+export function extractSlugDate(slug) {
+  const parts = String(slug || "").split("-");
+  for (let i = 0; i < parts.length - 2; i++) {
+    const y = parts[i], mo = parts[i + 1], d = parts[i + 2];
+    if (/^\d{4}$/.test(y) && /^\d{2}$/.test(mo) && /^\d{2}$/.test(d)) {
+      const dt = new Date(`${y}-${mo}-${d}T00:00:00Z`);
+      if (!isNaN(dt.getTime())) return dt;
+    }
+  }
+  return null;
+}
+
 function isObj(x) { return x && typeof x === "object" && !Array.isArray(x); }
 function nonEmpty(v) {
   if (v == null) return false;
@@ -129,6 +146,17 @@ export function upsertMarket(state, market, now) {
   const purgedSlugs = state._terminal_purged_slugs;
   if (purgedSlugs && (purgedSlugs instanceof Set ? purgedSlugs.has(market.slug) : purgedSlugs[market.slug])) {
     return { changed: false, reason: "terminal_purged" };
+  }
+
+  // Skip markets with slug date >24h in the past (stale/zombie markets).
+  // Only applies to NEW markets (not already in watchlist) to avoid purging
+  // markets that were added when they were fresh.
+  if (!existed) {
+    const slugDate = extractSlugDate(market.slug);
+    const MAX_SLUG_AGE_MS = 24 * 60 * 60 * 1000; // 24h
+    if (slugDate && (now - slugDate.getTime()) > MAX_SLUG_AGE_MS) {
+      return { changed: false, reason: "slug_date_expired" };
+    }
   }
 
   if (!merged.status) merged.status = "watching";
