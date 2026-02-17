@@ -233,11 +233,15 @@ export class TradeBridge {
       const result = await executeBuy(this.client, tokenId, shares);
       
       if (result.ok) {
+        // entryPrice = actual fill price, not signal price (signal price is pre-execution estimate)
+        const actualEntryPrice = result.avgFillPrice || entryPrice;
         this.execState.trades[tradeId] = {
           ...this.execState.trades[tradeId],
           status: "filled",
           filledShares: result.filledShares,
           avgFillPrice: result.avgFillPrice,
+          entryPrice: actualEntryPrice,
+          signalPrice: entryPrice, // keep original signal price for analysis
           spentUsd: result.spentUsd,
           isPartial: result.isPartial,
           orderID: result.orderID,
@@ -264,7 +268,8 @@ export class TradeBridge {
           filledShares: result.filledShares,
           avgFillPrice: result.avgFillPrice,
           spentUsd: result.spentUsd,
-          entryPrice,
+          entryPrice: actualEntryPrice,
+          signalPrice: entryPrice,
           isPartial: result.isPartial,
           slippage_pct: slippage,
         });

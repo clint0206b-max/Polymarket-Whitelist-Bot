@@ -979,12 +979,22 @@ export function startHealthServer(state, opts = {}) {
             exitPrice = shares > 0 ? Math.round(((c.pnl_usd / shares) + ep) * 1000) / 1000 : null;
           }
         }
+        // In live mode, use actual fill price from execution_state
+        let actualEntryPrice = c.entry_price || openMatch?.entry_price || null;
+        const execState2 = cachedReadJson(statePath("execution_state.json"), 3000);
+        const trades2 = execState2?.trades || {};
+        const sigId = c.signal_id || "";
+        const buyTrade2 = trades2[`buy:${sigId}`];
+        if (buyTrade2?.avgFillPrice) {
+          actualEntryPrice = buyTrade2.avgFillPrice;
+        }
         return {
           slug: c.slug, title: c.title || openMatch?.title || null,
           league: c.league || openMatch?.league || "",
           ts_open: c.ts_open || openMatch?.ts_open || null,
           ts_close: c.ts_close,
-          entry_price: c.entry_price || openMatch?.entry_price || null,
+          entry_price: actualEntryPrice,
+          signal_price: c.entry_price || openMatch?.entry_price || null,
           exit_price: exitPrice,
           win: c.win, pnl_usd: c.pnl_usd, roi: c.roi,
           close_reason: c.close_reason,
@@ -996,17 +1006,31 @@ export function startHealthServer(state, opts = {}) {
   // API: build positions response
   function buildPositionsResponse() {
     const idx = cachedReadJson(statePath("journal", "open_index.json"), 3000);
+    const execState = cachedReadJson(statePath("execution_state.json"), 3000);
     const open = idx?.open || {};
+    const trades = execState?.trades || {};
     return {
       as_of_ts: Date.now(),
-      items: Object.values(open).map(p => ({
-        slug: p.slug, title: p.title || null,
-        league: p.league || "", market_kind: p.market_kind || null,
-        ts_open: p.ts_open, entry_price: p.entry_price,
-        paper_notional_usd: p.paper_notional_usd,
-        entry_outcome_name: p.entry_outcome_name,
-        price_tracking: p.price_tracking || null,
-      })),
+      items: Object.values(open).map(p => {
+        // In live mode, use actual fill price from execution_state (not signal price)
+        let actualEntryPrice = p.entry_price;
+        const buyTrade = trades[`buy:${p.signal_id || ""}`];
+        if (buyTrade?.avgFillPrice) {
+          actualEntryPrice = buyTrade.avgFillPrice;
+        }
+        return {
+          slug: p.slug, title: p.title || null,
+          league: p.league || "", market_kind: p.market_kind || null,
+          ts_open: p.ts_open,
+          entry_price: actualEntryPrice,
+          signal_price: p.entry_price, // original signal price for reference
+          paper_notional_usd: p.paper_notional_usd,
+          entry_outcome_name: p.entry_outcome_name,
+          price_tracking: p.price_tracking || null,
+          actual_spent_usd: buyTrade?.spentUsd || null,
+          filled_shares: buyTrade?.filledShares || null,
+        };
+      }),
     };
   }
 
