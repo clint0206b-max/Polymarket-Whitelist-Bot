@@ -890,6 +890,12 @@ export function startHealthServer(state, opts = {}) {
     const savedUs = toResolved.filter(s => s.verdict === "filter_saved_us").length;
     const costUs = toResolved.filter(s => s.verdict === "filter_cost_us").length;
 
+    // Infer category for old events without timeout_category
+    const inferCategory = (t) => {
+      if (t.timeout_category) return t.timeout_category;
+      return t.timeout_reason === "fail_base_price_out_of_range" ? "price_window" : "confirmation_filter";
+    };
+
     // Match timeout_category from signal_timeout to its timeout_resolved
     const timeoutMap = new Map(timeouts.map(t => [t.slug + "|" + t.ts, t]));
     const priceWindowResolved = toResolved.filter(r => {
@@ -900,11 +906,6 @@ export function startHealthServer(state, opts = {}) {
       const t = timeoutMap.get(r.slug + "|" + r.timeout_ts);
       return !t || inferCategory(t) !== "price_window";
     });
-    // Infer category for old events without timeout_category
-    const inferCategory = (t) => {
-      if (t.timeout_category) return t.timeout_category;
-      return t.timeout_reason === "fail_base_price_out_of_range" ? "price_window" : "confirmation_filter";
-    };
     const priceWindowTimeouts = timeouts.filter(t => inferCategory(t) === "price_window");
     const confirmFilterTimeouts = timeouts.filter(t => inferCategory(t) !== "price_window");
 
