@@ -10,9 +10,9 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
+import { resolvePath } from "../core/state_store.js";
 
-const STATE_PATH = path.resolve(process.cwd(), "state", "daily_events.json");
+const STATE_PATH = resolvePath("state", "daily_events.json");
 
 /** Load daily events state (or empty). */
 export function loadDailyEvents() {
