@@ -873,10 +873,23 @@ export function startHealthServer(state, opts = {}) {
     const closesToday = closes.filter(s => (s.ts_close || 0) >= todayStart);
     const wins = closesToday.filter(s => s.win === true);
     const losses = closesToday.filter(s => s.win === false);
-    const pnlToday = closesToday.reduce((sum, s) => sum + (s.pnl_usd || 0), 0);
     const winsAll = closes.filter(s => s.win === true);
     const lossesAll = closes.filter(s => s.win === false);
-    const pnlTotal = closes.reduce((sum, s) => sum + (s.pnl_usd || 0), 0);
+
+    // PnL: prefer real fill data from execution_state over signal journal estimates
+    const execStateForPnl = cachedReadJson(statePath("execution_state.json"), 3000);
+    const tradesForPnl = execStateForPnl?.trades || {};
+    function getRealPnl(closeSignal) {
+      const sigId = closeSignal.signal_id || "";
+      const buy = tradesForPnl[`buy:${sigId}`];
+      const sell = tradesForPnl[`sell:${sigId}`];
+      if (buy?.spentUsd != null && sell?.receivedUsd != null) {
+        return sell.receivedUsd - buy.spentUsd;
+      }
+      return closeSignal.pnl_usd || 0;
+    }
+    const pnlToday = closesToday.reduce((sum, s) => sum + getRealPnl(s), 0);
+    const pnlTotal = closes.reduce((sum, s) => sum + getRealPnl(s), 0);
     const wrToday = (wins.length + losses.length) > 0
       ? ((wins.length / (wins.length + losses.length)) * 100).toFixed(1) + "%"
       : "n/a";
@@ -979,14 +992,26 @@ export function startHealthServer(state, opts = {}) {
             exitPrice = shares > 0 ? Math.round(((c.pnl_usd / shares) + ep) * 1000) / 1000 : null;
           }
         }
-        // In live mode, use actual fill price from execution_state
+        // In live mode, use actual fill prices from execution_state
         let actualEntryPrice = c.entry_price || openMatch?.entry_price || null;
+        let actualExitPrice = exitPrice;
+        let actualPnl = c.pnl_usd;
+        let actualRoi = c.roi;
         const execState2 = cachedReadJson(statePath("execution_state.json"), 3000);
         const trades2 = execState2?.trades || {};
         const sigId = c.signal_id || "";
         const buyTrade2 = trades2[`buy:${sigId}`];
+        const sellTrade2 = trades2[`sell:${sigId}`];
         if (buyTrade2?.avgFillPrice) {
           actualEntryPrice = buyTrade2.avgFillPrice;
+        }
+        if (sellTrade2?.avgFillPrice) {
+          actualExitPrice = sellTrade2.avgFillPrice;
+        }
+        // Recalculate PnL from real fill prices if we have both
+        if (buyTrade2 && sellTrade2?.receivedUsd != null && buyTrade2.spentUsd != null) {
+          actualPnl = (sellTrade2.receivedUsd || 0) - (buyTrade2.spentUsd || 0);
+          actualRoi = buyTrade2.spentUsd > 0 ? actualPnl / buyTrade2.spentUsd : 0;
         }
         return {
           slug: c.slug, title: c.title || openMatch?.title || null,
@@ -995,8 +1020,9 @@ export function startHealthServer(state, opts = {}) {
           ts_close: c.ts_close,
           entry_price: actualEntryPrice,
           signal_price: c.entry_price || openMatch?.entry_price || null,
-          exit_price: exitPrice,
-          win: c.win, pnl_usd: c.pnl_usd, roi: c.roi,
+          exit_price: actualExitPrice,
+          win: c.win, pnl_usd: actualPnl != null ? Math.round(actualPnl * 100) / 100 : null,
+          roi: actualRoi != null ? Math.round(actualRoi * 10000) / 10000 : null,
           close_reason: c.close_reason,
         };
       }),

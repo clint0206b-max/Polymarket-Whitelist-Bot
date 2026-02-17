@@ -799,6 +799,12 @@ export class TradeBridge {
 
       // --- RESOLUTION: bid >= 0.995 means market resolved in our favor ---
       if (bid >= resolveThreshold) {
+        // Cooldown: don't spam resolution sells (30s between attempts)
+        const lastResAttempt = trade._lastResolutionAttemptTs || 0;
+        if (Date.now() - lastResAttempt < 30000) continue;
+        trade._lastResolutionAttemptTs = Date.now();
+        saveExecutionState(this.execState);
+
         const pnl = shares * (bid - entryPrice);
         console.log(`[RESOLVED_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} >= ${resolveThreshold} | entry=${entryPrice.toFixed(3)} | pnl=$${pnl.toFixed(2)}`);
         signals.push({
@@ -821,16 +827,23 @@ export class TradeBridge {
       const tpMinDepth = Number(this.cfg?.trading?.tp_min_depth_usd ?? 500);
       const bidDepth = Number(price.yes_bid_depth_usd || 0);
       if (bid >= tpMinBid && bid < resolveThreshold) {
+        // Cooldown: don't spam TP if we just tried (wait 30s between attempts)
+        const tpCooldownMs = 30000;
+        const lastTpAttempt = trade._lastTpAttemptTs || 0;
+        if (Date.now() - lastTpAttempt < tpCooldownMs) continue;
+
         if (bidDepth >= tpMinDepth) {
-          // Check TP attempt history for ladder: first try 0.997, next cycle 0.995
-          const tpKey = `tp_attempts:${trade.signal_id}`;
-          const prevAttempts = this._tpAttempts?.[tpKey] || 0;
-          const tpFloor = prevAttempts === 0 ? 0.997 : 0.995;
-          this._tpAttempts = this._tpAttempts || {};
-          this._tpAttempts[tpKey] = prevAttempts + 1;
+          const tpAttempts = trade._tpAttempts || 0;
+          const tpFloor = tpAttempts === 0 ? 0.997 : 0.995;
 
           const pnl = shares * (tpFloor - entryPrice);
-          console.log(`[TP_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} depth=$${bidDepth.toFixed(0)} | floor=${tpFloor} | attempt=${prevAttempts + 1} | entry=${entryPrice.toFixed(3)}`);
+          console.log(`[TP_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} depth=$${bidDepth.toFixed(0)} | floor=${tpFloor} | attempt=${tpAttempts + 1} | entry=${entryPrice.toFixed(3)}`);
+
+          // Track attempt on the buy trade itself (survives sell cleanup)
+          trade._tpAttempts = tpAttempts + 1;
+          trade._lastTpAttemptTs = Date.now();
+          saveExecutionState(this.execState);
+
           signals.push({
             type: "signal_close",
             signal_id: trade.signal_id,
@@ -839,7 +852,7 @@ export class TradeBridge {
             close_reason: "take_profit",
             tp_trigger_bid: bid,
             tp_floor: tpFloor,
-            tp_attempt: prevAttempts + 1,
+            tp_attempt: tpAttempts + 1,
             bid_depth_usd: bidDepth,
             win: true,
             pnl_usd: pnl,
