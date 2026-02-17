@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { appendJsonl } from "../core/journal.mjs";
 import { resolvePath } from "../core/state_store.js";
+import { shouldBlockSl } from "./sl_guard_espn.mjs";
 import {
   initClient, executeBuy, executeSell,
   getBalance, getConditionalBalance, getPositions,
@@ -189,6 +190,9 @@ export class TradeBridge {
       requestedShares: shares,
       entryPrice,
       budget,
+      league: signal.league || null,
+      entry_outcome_name: signal.entry_outcome_name || null,
+      title: signal.title || null,
       ts_queued: Date.now(),
     };
     saveExecutionState(this.execState);
@@ -424,6 +428,36 @@ export class TradeBridge {
         }
       } catch (e) {
         console.warn(`[SL_FRESH_CHECK] ${signal.slug} | error: ${e.message} — proceeding with SL`);
+      }
+
+      // ESPN SL guard: for NBA/CBB, verify team is actually losing before selling
+      const league = buyTrade.league || signal.league || null;
+      const outcomeName = buyTrade.entry_outcome_name || signal.entry_outcome_name || null;
+      if (league && outcomeName) {
+        try {
+          const guard = await shouldBlockSl(
+            { slug: signal.slug, title: buyTrade.title || signal.title || signal.slug },
+            outcomeName, league, this.cfg
+          );
+          console.log(`[SL_ESPN_GUARD] ${signal.slug} | block=${guard.block} reason=${guard.reason} ${guard.details ? JSON.stringify(guard.details) : ""}`);
+          if (guard.block) {
+            console.log(`[SL_ABORT] ${signal.slug} | ESPN says team winning by ${guard.details?.margin} — aborting SL`);
+            appendJsonl("state/journal/executions.jsonl", {
+              type: "sl_aborted_espn_guard",
+              ts: Date.now(),
+              signal_id: signal.signal_id,
+              slug: signal.slug,
+              league,
+              outcome: outcomeName,
+              guard_reason: guard.reason,
+              guard_details: guard.details,
+              cached_bid: signal.sl_trigger_price,
+            });
+            return null;
+          }
+        } catch (e) {
+          console.warn(`[SL_ESPN_GUARD] ${signal.slug} | error: ${e.message} — proceeding with SL`);
+        }
       }
 
       return this._executeSLSell(signal, buyTrade, sellTradeId);
