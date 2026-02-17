@@ -106,6 +106,45 @@ export async function getPositions(funder) {
   return resp.json();
 }
 
+/**
+ * Fetch real fill price from CLOB trades API by orderID.
+ * Returns weighted average price or null if unavailable.
+ * Retries with backoff since trades may not be indexed immediately after fill.
+ * Non-blocking: caller should treat null as "keep provisional, try later".
+ */
+export async function fetchRealFillPrice(client, orderID, { maxRetries = 2, delayMs = 500 } = {}) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const trades = await client.getTrades({ orderID });
+      if (!trades || trades.length === 0) {
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+          continue;
+        }
+        return null;
+      }
+      let totalValue = 0;
+      let totalSize = 0;
+      for (const t of trades) {
+        const price = Number(t.price);
+        const size = Number(t.size);
+        if (Number.isFinite(price) && Number.isFinite(size) && size > 0) {
+          totalValue += price * size;
+          totalSize += size;
+        }
+      }
+      return totalSize > 0 ? totalValue / totalSize : null;
+    } catch {
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 // --- Internal helpers ---
 
 function roundDown(n, decimals) {
@@ -151,6 +190,11 @@ function parseFillResult(res, final, requestedAmount, side) {
   }
 
   const filledShares = matchedShares ?? requestedAmount;
+
+  // NOTE: matchedPrice is the ORDER limit price (floor for sells, max for buys),
+  // NOT the actual fill price. Mark as provisional so callers know to reconcile.
+  const priceProvisional = matchedPrice != null;
+
   const spentUsd = (matchedShares != null && matchedPrice != null)
     ? (matchedShares * matchedPrice)
     : ((res?.makingAmount && Number(res.makingAmount) > 0)
@@ -168,6 +212,7 @@ function parseFillResult(res, final, requestedAmount, side) {
     spentUsd,
     avgFillPrice,
     isPartial,
+    priceProvisional,
     raw: { res, final },
   };
 }

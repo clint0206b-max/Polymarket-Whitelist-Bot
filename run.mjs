@@ -457,7 +457,32 @@ try {
                 runner_id: process.env.SHADOW_ID || "prod",
                 source: "clob_position_check",
               });
-              await tradeBridge.handleSignalClose(sig);
+              const sellResult = await tradeBridge.handleSignalClose(sig);
+
+              // Mark close_pending in open_index (don't move to closed yet)
+              if (sellResult && sellResult.ok) {
+                try {
+                  const idx = loadOpenIndex();
+                  const entry = idx.open?.[sig.signal_id];
+                  if (entry && !entry.close_status) {
+                    entry.close_status = "sell_executed";
+                    entry.close_ts = Date.now();
+                    entry.close_reason = sig.close_reason || "unknown";
+                    entry.close_fill = {
+                      filledShares: sellResult.filledShares ?? 0,
+                      avgFillPrice: sellResult.avgFillPrice ?? null,
+                      receivedUsd: sellResult.spentUsd ?? null,
+                      isPartial: sellResult.isPartial || false,
+                      orderID: sellResult.orderID || null,
+                      priceProvisional: sellResult.priceProvisional || false,
+                    };
+                    saveOpenIndex(idx);
+                    console.log(`[CLOSE_PENDING] ${sig.slug} | sell executed, marked close_pending | partial=${sellResult.isPartial || false}`);
+                  }
+                } catch (idxErr) {
+                  console.error(`[CLOSE_PENDING] failed to update open_index for ${sig.slug}: ${idxErr.message}`);
+                }
+              }
             } catch (e) {
               console.error(`[POSITION_CHECK] sell error for ${sig.slug}: ${e.message}`);
             }
@@ -498,6 +523,78 @@ try {
             
             // Periodic reconciliation
             await tradeBridge.reconcilePositions();
+
+            // === Reconcile close_pending entries in open_index ===
+            // Check if on-chain position is zero → move to closed
+            try {
+              const idx = loadOpenIndex();
+              const pending = Object.entries(idx.open).filter(([_, e]) => e.close_status === "sell_executed");
+              let idxChanged = false;
+              for (const [sigId, entry] of pending) {
+                const buyKey = `buy:${sigId}`;
+                const buyTrade = tradeBridge.execState.trades[buyKey];
+                if (!buyTrade?.tokenId) continue;
+
+                try {
+                  const { getConditionalBalance: getCondBal, fetchRealFillPrice: fetchReal } = await import("./src/execution/order_executor.mjs");
+                  const balance = await getCondBal(tradeBridge.client, buyTrade.tokenId);
+
+                  if (balance >= 0.01) {
+                    // Position still open — partial fill or resting order
+                    continue;
+                  }
+
+                  // Position confirmed zero on-chain
+                  const fill = entry.close_fill || {};
+
+                  // Try to reconcile real fill price if still provisional
+                  let exitPrice = fill.avgFillPrice;
+                  let priceStillProvisional = fill.priceProvisional || false;
+                  if (priceStillProvisional && fill.orderID) {
+                    try {
+                      const real = await fetchReal(tradeBridge.client, fill.orderID, { maxRetries: 1, delayMs: 300 });
+                      if (real != null) {
+                        exitPrice = real;
+                        priceStillProvisional = false;
+                        console.log(`[RECONCILE_PRICE] ${entry.slug} | real avg=${real.toFixed(4)}`);
+                      }
+                    } catch {}
+                  }
+
+                  const filledShares = fill.filledShares || 0;
+                  const receivedUsd = exitPrice != null && filledShares > 0
+                    ? filledShares * exitPrice : (fill.receivedUsd ?? 0);
+                  const spentUsd = buyTrade.spentUsd || 0;
+                  const pnl = receivedUsd - spentUsd;
+                  const roi = spentUsd > 0 ? pnl / spentUsd : 0;
+
+                  addClosed(idx, sigId, {
+                    slug: entry.slug,
+                    title: entry.title || null,
+                    ts_open: entry.ts_open,
+                    ts_close: entry.close_ts || Date.now(),
+                    league: entry.league || "",
+                    entry_price: entry.entry_price,
+                    paper_notional_usd: entry.paper_notional_usd,
+                    entry_outcome_name: entry.entry_outcome_name || null,
+                    close_reason: entry.close_reason || "resolved",
+                    resolve_method: "clob_position_check",
+                    win: pnl >= 0,
+                    pnl_usd: Math.round(pnl * 100) / 100,
+                    roi: Math.round(roi * 10000) / 10000,
+                    price_provisional: priceStillProvisional,
+                  });
+                  removeOpen(idx, sigId);
+                  idxChanged = true;
+                  console.log(`[CLOSE_CONFIRMED] ${entry.slug} | on-chain balance=0 | PnL=$${pnl.toFixed(2)}${priceStillProvisional ? " (provisional)" : ""}`);
+                } catch (e) {
+                  console.error(`[CLOSE_RECONCILE] error checking ${entry.slug}: ${e.message}`);
+                }
+              }
+              if (idxChanged) saveOpenIndex(idx);
+            } catch (e) {
+              console.error(`[CLOSE_RECONCILE] error: ${e.message}`);
+            }
           }
         }
       } catch {}

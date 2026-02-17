@@ -21,6 +21,7 @@ import { resolvePath } from "../core/state_store.js";
 import {
   initClient, executeBuy, executeSell,
   getBalance, getConditionalBalance, getPositions,
+  fetchRealFillPrice,
 } from "./order_executor.mjs";
 
 // Resolves to state/execution_state.json (prod) or state-{SHADOW_ID}/execution_state.json (shadow)
@@ -523,21 +524,40 @@ export class TradeBridge {
       const result = await executeSell(this.client, tokenId, actualShares, floor);
 
       if (result.ok) {
+        // Try to get real fill price (order price is provisional — it's the floor, not the fill)
+        let realAvg = result.avgFillPrice;
+        let priceProvisional = result.priceProvisional || false;
+        if (priceProvisional && result.orderID) {
+          try {
+            const real = await fetchRealFillPrice(this.client, result.orderID, { maxRetries: 2, delayMs: 500 });
+            if (real != null) {
+              realAvg = real;
+              priceProvisional = false;
+              console.log(`[FILL_PRICE] ${signal.slug} | real avg=${real.toFixed(4)} (order limit was ${result.avgFillPrice?.toFixed(4)})`);
+            }
+          } catch (e) {
+            console.warn(`[FILL_PRICE] ${signal.slug} | getTrades failed, keeping provisional: ${e.message}`);
+          }
+        }
+        const receivedUsd = realAvg != null && result.filledShares > 0
+          ? realAvg * result.filledShares : result.spentUsd;
+
         this.execState.trades[sellTradeId] = {
           ...this.execState.trades[sellTradeId],
           status: "filled",
           filledShares: result.filledShares,
-          avgFillPrice: result.avgFillPrice,
-          receivedUsd: result.spentUsd,
+          avgFillPrice: realAvg,
+          receivedUsd,
           isPartial: result.isPartial,
           orderID: result.orderID,
           ts_filled: Date.now(),
+          priceProvisional,
         };
         buyTrade.closed = true;
         saveExecutionState(this.execState);
 
-        const pnl = (result.spentUsd || 0) - (buyTrade.spentUsd || 0);
-        console.log(`[FILLED_SELL] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4)} | PnL=$${pnl.toFixed(2)}`);
+        const pnl = (receivedUsd || 0) - (buyTrade.spentUsd || 0);
+        console.log(`[FILLED_SELL] ${signal.slug} | ${result.filledShares} shares @ $${realAvg?.toFixed(4)}${priceProvisional ? " (provisional)" : ""} | PnL=$${pnl.toFixed(2)}`);
 
         appendJsonl("state/journal/executions.jsonl", {
           type: "trade_executed",
@@ -552,12 +572,13 @@ export class TradeBridge {
           orderID: result.orderID,
           requestedShares: shares,
           filledShares: result.filledShares,
-          avgFillPrice: result.avgFillPrice,
-          receivedUsd: result.spentUsd,
+          avgFillPrice: realAvg,
+          receivedUsd,
           pnl_usd: pnl,
+          priceProvisional,
         });
 
-        return result;
+        return { ...result, avgFillPrice: realAvg, spentUsd: receivedUsd, priceProvisional };
       } else {
         this.execState.trades[sellTradeId].status = "failed";
         this.execState.trades[sellTradeId].error = result.error;
