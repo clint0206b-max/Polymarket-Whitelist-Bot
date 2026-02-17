@@ -66,27 +66,57 @@
     <!-- Alert Banner -->
     <div id="alert-banner" class="hidden rounded-lg border px-4 py-3 text-sm font-medium"></div>
     
-    <!-- KPI Row -->
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-3" id="kpi-row">
-      <div class="bg-card rounded-lg p-4 border border-slate-700">
-        <div class="text-xs text-slate-400 uppercase tracking-wide">PnL Today</div>
-        <div id="kpi-pnl" class="text-2xl font-bold mono mt-1">—</div>
-      </div>
-      <div class="bg-card rounded-lg p-4 border border-slate-700">
-        <div class="text-xs text-slate-400 uppercase tracking-wide">Win Rate</div>
-        <div id="kpi-wr" class="text-2xl font-bold mono mt-1">—</div>
-      </div>
-      <div class="bg-card rounded-lg p-4 border border-slate-700">
-        <div class="text-xs text-slate-400 uppercase tracking-wide">Trades Today</div>
-        <div id="kpi-trades" class="text-2xl font-bold mono mt-1">—</div>
-      </div>
-      <div class="bg-card rounded-lg p-4 border border-slate-700">
-        <div class="text-xs text-slate-400 uppercase tracking-wide">Open Positions</div>
-        <div id="kpi-open" class="text-2xl font-bold mono mt-1">—</div>
-      </div>
-      <div class="bg-card rounded-lg p-4 border border-slate-700">
-        <div class="text-xs text-slate-400 uppercase tracking-wide">Watchlist</div>
+    <!-- KPI: Today -->
+    <div>
+      <div class="text-xs text-slate-500 uppercase tracking-wider mb-2 font-semibold">📅 Today</div>
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">PnL</div>
+          <div id="kpi-pnl" class="text-2xl font-bold mono mt-1">—</div>
+        </div>
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">Win Rate</div>
+          <div id="kpi-wr" class="text-2xl font-bold mono mt-1">—</div>
+        </div>
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">Trades</div>
+          <div id="kpi-trades" class="text-2xl font-bold mono mt-1">—</div>
+        </div>
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">Open Positions</div>
+          <div id="kpi-open" class="text-2xl font-bold mono mt-1">—</div>
+        </div>
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">Watchlist</div>
         <div id="kpi-watchlist" class="text-2xl font-bold mono mt-1">—</div>
+      </div>
+      </div>
+    </div>
+
+    <!-- KPI: All-Time -->
+    <div>
+      <div class="text-xs text-slate-500 uppercase tracking-wider mb-2 font-semibold">📊 All-Time</div>
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">PnL</div>
+          <div id="kpi-pnl-all" class="text-2xl font-bold mono mt-1">—</div>
+        </div>
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">Win Rate</div>
+          <div id="kpi-wr-all" class="text-2xl font-bold mono mt-1">—</div>
+        </div>
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">Trades</div>
+          <div id="kpi-trades-all" class="text-2xl font-bold mono mt-1">—</div>
+        </div>
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">Timeouts</div>
+          <div id="kpi-timeouts" class="text-2xl font-bold mono mt-1">—</div>
+        </div>
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">Since</div>
+          <div id="kpi-since" class="text-lg font-bold mono mt-1">—</div>
+        </div>
       </div>
     </div>
 
@@ -481,11 +511,25 @@
       const s = data.summary || {};
       const items = data.items || [];
 
-      // KPIs
+      // KPIs: Today
       $('kpi-pnl').textContent = pnlStr(s.pnl_today);
       $('kpi-pnl').className = 'text-2xl font-bold mono mt-1 ' + pnlColor(s.pnl_today);
       $('kpi-wr').textContent = s.wr_today || '—';
       $('kpi-trades').textContent = s.trades_today ?? '—';
+
+      // KPIs: All-Time
+      $('kpi-pnl-all').textContent = pnlStr(s.pnl_total);
+      $('kpi-pnl-all').className = 'text-2xl font-bold mono mt-1 ' + pnlColor(s.pnl_total);
+      $('kpi-wr-all').textContent = s.wr_total || '—';
+      $('kpi-trades-all').textContent = s.trades_total ?? '—';
+      const toTotal = s.timeouts_total || 0;
+      const toCost = s.timeouts_cost || 0;
+      const toSaved = s.timeouts_saved || 0;
+      $('kpi-timeouts').textContent = toTotal > 0 ? `${toTotal} (${toCost}💸 ${toSaved}✅)` : '0';
+      if (s.first_trade_ts) {
+        const d = new Date(s.first_trade_ts);
+        $('kpi-since').textContent = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
 
       $('trades-summary').textContent = `${s.wins_today||0}W / ${s.losses_today||0}L · $${(s.pnl_total||0).toFixed(2)} all-time`;
 

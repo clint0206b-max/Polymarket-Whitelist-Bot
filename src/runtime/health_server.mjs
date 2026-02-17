@@ -874,9 +874,14 @@ export function startHealthServer(state, opts = {}) {
     const wins = closesToday.filter(s => s.win === true);
     const losses = closesToday.filter(s => s.win === false);
     const pnlToday = closesToday.reduce((sum, s) => sum + (s.pnl_usd || 0), 0);
+    const winsAll = closes.filter(s => s.win === true);
+    const lossesAll = closes.filter(s => s.win === false);
     const pnlTotal = closes.reduce((sum, s) => sum + (s.pnl_usd || 0), 0);
     const wrToday = (wins.length + losses.length) > 0
       ? ((wins.length / (wins.length + losses.length)) * 100).toFixed(1) + "%"
+      : "n/a";
+    const wrAll = (winsAll.length + lossesAll.length) > 0
+      ? ((winsAll.length / (winsAll.length + lossesAll.length)) * 100).toFixed(1) + "%"
       : "n/a";
 
     // Timeout analysis
@@ -885,16 +890,28 @@ export function startHealthServer(state, opts = {}) {
     const savedUs = toResolved.filter(s => s.verdict === "filter_saved_us").length;
     const costUs = toResolved.filter(s => s.verdict === "filter_cost_us").length;
 
+    // First trade date
+    const allOpens = signals.filter(s => s.type === "signal_open").map(s => s.ts_open || s.ts || 0).filter(Boolean);
+    const firstTradeTs = allOpens.length > 0 ? Math.min(...allOpens) : null;
+
     return {
       as_of_ts: Date.now(),
       parse_errors,
       summary: {
+        // Today
         trades_today: closesToday.length,
         wins_today: wins.length,
         losses_today: losses.length,
         pnl_today: pnlToday,
-        pnl_total: pnlTotal,
         wr_today: wrToday,
+        // All-time
+        trades_total: closes.length,
+        wins_total: winsAll.length,
+        losses_total: lossesAll.length,
+        pnl_total: pnlTotal,
+        wr_total: wrAll,
+        first_trade_ts: firstTradeTs,
+        // Timeouts
         timeouts_total: timeouts.length,
         timeouts_saved: savedUs,
         timeouts_cost: costUs,
