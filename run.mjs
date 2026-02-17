@@ -253,7 +253,7 @@ try {
       state.runtime.health.watchlist_total = Object.keys(state.watchlist || {}).length;
       state.runtime.health.loop_gamma_last = r.stats;
 
-      // Mark dirty if watchlist changed
+      // Mark dirty if watchlist changed or funnel updated
       if (r.changed) {
         const afterWatchlistSize = Object.keys(state.watchlist || {}).length;
         const delta = afterWatchlistSize - beforeWatchlistSize;
@@ -262,6 +262,9 @@ try {
         } else {
           dirtyTracker.mark("gamma:markets_updated");
         }
+      } else if (state._funnel) {
+        // Funnel data updated even when no market changes — persist it
+        dirtyTracker.mark("gamma:funnel_updated");
       }
       
       loopTimings.gamma_ms = nowMs() - gammaStartMs;
