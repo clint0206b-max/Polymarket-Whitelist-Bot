@@ -1,0 +1,44 @@
+{
+  "polling": {
+    "gamma_discovery_seconds": 30,
+    "clob_eval_seconds": 2,
+    "pending_window_seconds": 4
+  },
+  "gamma": {
+    "gamma_tags": ["esports", "nba", "ncaa-basketball", "soccer"]
+  },
+  "filters": {
+    "min_prob": 0.93,
+    "max_entry_price": 0.98,
+    "max_spread": 0.04
+  },
+  "_deprecated_entry_rules": {
+    "_note": "DEAD CONFIG — was never read by pipeline. Moved to filters. Delete after 2026-03-01.",
+    "min_prob": 0.93,
+    "max_entry_price": 0.98,
+    "max_spread": 0.04,
+    "min_depth_entry_usd": 1000,
+    "min_depth_exit_usd": 2000
+  },
+  "trading": {
+    "mode": "live",
+    "funder_address": "0xddb60e6980B311997F75CDA0028080E46fACeBFA",
+    "credentials_path": "/Users/andres/.openclaw/workspace/.polymarket-credentials.json",
+    "max_position_usd": 10,
+    "max_total_exposure_usd": 50,
+    "max_concurrent_positions": 5,
+    "max_trades_per_day": 50
+  },
+  "paper": {
+    "stop_loss_bid": 0.70
+  },
+  "context": {
+    "entry_rules": {
+      "gate_mode_nba": "blocking",
+      "gate_mode_cbb": "blocking"
+    }
+  },
+  "purge": {
+    "expired_ttl_minutes": 5
+  }
+}
