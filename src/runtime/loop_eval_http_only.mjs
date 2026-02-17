@@ -7,7 +7,7 @@ import { createHttpQueue } from "./http_queue.mjs";
 import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWindow3, mergeScoreboardEventsByWindow } from "../context/espn_cbb_scoreboard.mjs";
 import { fetchEspnNbaScoreboardForDate, deriveNbaContextForMarket } from "../context/espn_nba_scoreboard.mjs";
 import { estimateWinProb, checkContextEntryGate, checkSoccerEntryGate, soccerWinProb } from "../strategy/win_prob_table.mjs";
-import { fetchSoccerScoreboard, matchMarketToGame, deriveSoccerContext, ESPN_LEAGUE_IDS, SLUG_PREFIX_TO_LEAGUE, resetScoreHistory, purgeStaleScoreHistory } from "../context/espn_soccer_scoreboard.mjs";
+import { fetchSoccerScoreboard, matchMarketToGame, deriveSoccerContext, ESPN_LEAGUE_IDS, SLUG_PREFIX_TO_LEAGUE, resetScoreHistory, purgeStaleScoreHistory, extractSlugTeamSuffix, resolveYesTeamFromSlug } from "../context/espn_soccer_scoreboard.mjs";
 import { isSoccerSlug } from "../gamma/gamma_parser.mjs";
 import { loadDailyEvents, saveDailyEvents, recordMarketTick, purgeStaleDates } from "../metrics/daily_events.mjs";
 import { appendJsonl } from "../core/journal.mjs";
@@ -1055,6 +1055,14 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           if (!match.matched) {
             bumpBucket("health", `soccer_match_fail:${match.reasons?.[0] || "unknown"}`, 1);
             m.soccer_context = { state: "unknown", confidence: "low", match_reasons: match.reasons };
+            // Explicitly set context_entry so gate gets a clear reason (not null fallback)
+            m.context_entry = {
+              yes_outcome_name: null,
+              margin_for_yes: null,
+              win_prob: null,
+              entry_allowed: false,
+              entry_blocked_reason: "no_espn_match",
+            };
             continue;
           }
 
@@ -1066,6 +1074,27 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           if (outcomes && clobIds && yesId && outcomes.length === 2 && clobIds.length === 2) {
             const yesIdx = clobIds.findIndex(x => String(x) === String(yesId));
             if (yesIdx >= 0) yesOutcomeName = String(outcomes[yesIdx]);
+          }
+
+          // Fallback: soccer markets use generic "Yes"/"No" outcomes.
+          // Resolve actual team from slug suffix (e.g. ucl-ben-rma-2026-02-17-ben → "ben" → Benfica)
+          if (!yesOutcomeName || yesOutcomeName === "Yes" || yesOutcomeName === "No") {
+            const suffix = extractSlugTeamSuffix(m.slug);
+            if (suffix && match.game) {
+              const resolved = resolveYesTeamFromSlug(
+                suffix,
+                match.game.home?.name || "",
+                match.game.away?.name || "",
+              );
+              if (resolved) {
+                yesOutcomeName = resolved.name;
+                bumpBucket("health", `soccer_slug_team_resolved:${resolved.via}`, 1);
+              } else {
+                bumpBucket("health", "soccer_slug_team_ambiguous", 1);
+              }
+            } else {
+              bumpBucket("health", "soccer_slug_team_no_suffix", 1);
+            }
           }
 
           const ctx = deriveSoccerContext(

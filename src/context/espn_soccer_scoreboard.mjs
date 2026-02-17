@@ -146,6 +146,104 @@ export function teamMatchScore(nameA, nameB) {
 
 const MATCH_THRESHOLD = 0.60; // minimum score to consider a team match
 
+// ─── Resolve YES team from slug suffix ───────────────────────
+
+/**
+ * Polymarket soccer slug codes that are acronyms not derivable from ESPN team names.
+ * Only add codes where fuzzy matching fails (i.e. the code is NOT a substring of
+ * any word in the normalized ESPN name).
+ */
+const SLUG_CODE_ALIASES = {
+  "rma": "real madrid",
+  "fcb": "barcelona",
+  "atm": "atletico madrid",
+  "liv": "liverpool",
+  "mci": "manchester city",
+  "mun": "manchester united",
+  "tot": "tottenham",
+  "wol": "wolverhampton",
+  "int": "internazionale",
+};
+
+/** Suffixes that indicate non-team markets (draw, totals, spreads, etc.) */
+const NON_TEAM_SUFFIXES = new Set([
+  "draw", "total", "spread", "btts", "over", "under",
+]);
+
+/**
+ * Extract the team suffix from a soccer slug.
+ * Format: <league>-<home>-<away>-YYYY-MM-DD-<teamCode>
+ * Returns null if no valid date pattern found or suffix is a non-team token.
+ */
+export function extractSlugTeamSuffix(slug) {
+  const parts = String(slug || "").split("-");
+  // Find YYYY-MM-DD: 3 consecutive parts matching year (4 digits), month (2 digits), day (2 digits)
+  for (let i = 0; i < parts.length - 2; i++) {
+    const y = parts[i], mo = parts[i + 1], d = parts[i + 2];
+    if (/^\d{4}$/.test(y) && /^\d{2}$/.test(mo) && /^\d{2}$/.test(d)) {
+      const suffix = parts.slice(i + 3).join("-");
+      if (!suffix) return null;
+      // Check if ANY part of the suffix is a non-team token
+      const suffixParts = suffix.split("-");
+      if (suffixParts.some(p => NON_TEAM_SUFFIXES.has(p))) return null;
+      return suffix;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve which ESPN team the YES outcome refers to, using the slug suffix.
+ *
+ * Strategy:
+ * 1. Strip trailing digits from suffix (e.g. "asm1" → "asm", "bvb1" → "bvb")
+ * 2. Check explicit SLUG_CODE_ALIASES for known acronyms
+ * 3. Fuzzy match (teamMatchScore) against individual words of each team name
+ * 4. Only return if exactly ONE team matches (unambiguous)
+ *
+ * @param {string} suffix - team code from slug (e.g. "ben", "rma", "asm1")
+ * @param {string} homeName - ESPN home team display name
+ * @param {string} awayName - ESPN away team display name
+ * @returns {{ side: "home"|"away", name: string, score: number, via: string }|null}
+ */
+export function resolveYesTeamFromSlug(suffix, homeName, awayName) {
+  if (!suffix || !homeName || !awayName) return null;
+
+  const cleaned = suffix.replace(/\d+$/, "").toLowerCase();
+  if (!cleaned) return null;
+
+  // 1. Check explicit alias
+  const alias = SLUG_CODE_ALIASES[cleaned];
+  if (alias) {
+    const hScore = teamMatchScore(alias, homeName);
+    const aScore = teamMatchScore(alias, awayName);
+    if (hScore > aScore && hScore > 0.5) return { side: "home", name: homeName, score: hScore, via: "alias" };
+    if (aScore > hScore && aScore > 0.5) return { side: "away", name: awayName, score: aScore, via: "alias" };
+    // Alias matched neither team (unlikely) — fall through to fuzzy
+  }
+
+  // 2. Fuzzy match: compare cleaned suffix against each word of the team names
+  const homeWords = homeName.split(/\s+/);
+  const awayWords = awayName.split(/\s+/);
+  const hScore = Math.max(
+    teamMatchScore(cleaned, homeName),
+    ...homeWords.map(w => teamMatchScore(cleaned, w)),
+  );
+  const aScore = Math.max(
+    teamMatchScore(cleaned, awayName),
+    ...awayWords.map(w => teamMatchScore(cleaned, w)),
+  );
+
+  // 3. Only accept if unambiguous
+  if (hScore > 0 && aScore === 0) return { side: "home", name: homeName, score: hScore, via: "fuzzy" };
+  if (aScore > 0 && hScore === 0) return { side: "away", name: awayName, score: aScore, via: "fuzzy" };
+  // Clear gap (≥ 0.3 difference)
+  if (hScore > aScore && (hScore - aScore) >= 0.3) return { side: "home", name: homeName, score: hScore, via: "fuzzy" };
+  if (aScore > hScore && (aScore - hScore) >= 0.3) return { side: "away", name: awayName, score: aScore, via: "fuzzy" };
+
+  return null; // ambiguous or no match — fail closed
+}
+
 // ─── Fetch scoreboard ────────────────────────────────────────
 
 /**
