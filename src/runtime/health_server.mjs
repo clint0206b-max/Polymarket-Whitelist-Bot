@@ -1045,17 +1045,20 @@ export function startHealthServer(state, opts = {}) {
     const signalOpensToday = signals.filter(s => s.type === "signal_open" && (s.ts_open || 0) >= todayStart);
     const signalClosesToday = signals.filter(s => s.type === "signal_close" && (s.ts_close || 0) >= todayStart);
 
-    const executedBuyIds = new Set(buys.map(e => e.trade_id));
-    const executedSellIds = new Set(sells.map(e => e.trade_id));
+    const executedBuyTradeIds = new Set(buys.map(e => e.trade_id));
+    const executedBuySignalIds = new Set(buys.map(e => e.signal_id).filter(Boolean));
+    const executedSellTradeIds = new Set(sells.map(e => e.trade_id));
+    const executedSellSignalIds = new Set(sells.map(e => e.signal_id).filter(Boolean));
 
     // Divergences: signals without matching execution
+    // Match by trade_id (primary) OR signal_id (fallback for legacy entries)
     const unexecutedOpens = signalOpensToday.filter(s => {
       const tid = `buy:${s.signal_id}`;
-      return !executedBuyIds.has(tid);
+      return !executedBuyTradeIds.has(tid) && !executedBuySignalIds.has(s.signal_id);
     });
     const unexecutedCloses = signalClosesToday.filter(s => {
       const tid = `sell:${s.signal_id}`;
-      return !executedSellIds.has(tid);
+      return !executedSellTradeIds.has(tid) && !executedSellSignalIds.has(s.signal_id);
     });
 
     const mode = bridge.mode || "paper";
@@ -1072,6 +1075,7 @@ export function startHealthServer(state, opts = {}) {
         sells_today: sells.length,
         failed_today: failed.length,
         total_today: todayExecs.length,
+        backfills_today: todayExecs.filter(e => e.type === "trade_reconciled").length,
       },
       divergence: divApplies ? {
         signals_without_buy: unexecutedOpens.length,

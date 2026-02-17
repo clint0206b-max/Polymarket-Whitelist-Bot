@@ -5,6 +5,7 @@ import { acquireLock, releaseLock } from "./src/core/lockfile.js";
 import { nowMs, sleepMs } from "./src/core/time.js";
 import { readJsonWithFallback, writeJsonAtomic, resolvePath } from "./src/core/state_store.js";
 import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, reconcileIndex } from "./src/core/journal.mjs";
+import { reconcileExecutionsFromSignals } from "./src/core/reconcile_journals.mjs";
 import { DirtyTracker, detectChanges } from "./src/core/dirty_tracker.mjs";
 import { startHealthServer } from "./src/runtime/health_server.mjs";
 import { TradeBridge, validateBootConfig } from "./src/execution/trade_bridge.mjs";
@@ -170,6 +171,24 @@ const stopAfterMs = Number(process.env.STOP_AFTER_MS ?? 0); // Default: 0 = run 
     console.log(`[RECONCILE] Synced open_index from signals.jsonl: added=${result.added} removed=${result.removed} closedAdded=${result.closedAdded} open=${Object.keys(idx.open).length} closed=${Object.keys(idx.closed).length}`);
   } else {
     console.log(`[RECONCILE] open_index in sync (open=${Object.keys(idx.open).length} closed=${Object.keys(idx.closed).length})`);
+  }
+}
+
+// --- Reconcile executions.jsonl from signals.jsonl (close divergence gaps) ---
+{
+  const stateDir = resolvePath("state");
+  const tradingMode = cfg?.trading?.mode || "paper";
+  const recon = reconcileExecutionsFromSignals(stateDir, { mode: tradingMode });
+  if (recon.added > 0) {
+    console.log(`[RECONCILE] Backfilled ${recon.added} missing sell entries in executions.jsonl (type=trade_reconciled)`);
+    for (const item of recon.items) {
+      console.log(`  → ${item.slug} (${item.close_reason}) source=${item.source}`);
+    }
+  }
+  if (recon.warnings.length > 0) {
+    for (const w of recon.warnings) {
+      console.log(`[RECONCILE] WARN: ${w}`);
+    }
   }
 }
 
