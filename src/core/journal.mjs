@@ -94,8 +94,22 @@ export function reconcileIndex(index, jsonlRelPath = "state/journal/signals.json
   }
 
   // Remove any opens from index that are already closed in JSONL
+  // BUT only if the buy trade is actually closed in execution_state (sell completed)
+  // This prevents premature closure when signal_close exists but sell failed
+  let execTrades = {};
+  try {
+    const execState = readJson(resolvePath("state/execution_state.json"));
+    execTrades = execState?.trades || {};
+  } catch {}
+
   for (const id of Object.keys(index.open)) {
     if (closeMap[id]) {
+      // Check execution_state: if buy exists and isn't closed, don't remove
+      const buyKey = `buy:${id}`;
+      const buyTrade = execTrades[buyKey];
+      if (buyTrade && buyTrade.status === "filled" && !buyTrade.closed) {
+        continue; // sell hasn't completed — keep in open
+      }
       delete index.open[id];
       removed++;
     }
