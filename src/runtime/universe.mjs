@@ -33,12 +33,15 @@
  */
 export function selectPriceUpdateUniverse(state, cfg) {
   const wl = state.watchlist || {};
+  const now = Date.now();
   const all = Object.values(wl).filter(Boolean);
   
   return all.filter(m => 
-    m.status === "watching" || 
+    (m.status === "watching" || 
     m.status === "pending_signal" || 
-    m.status === "signaled"
+    m.status === "signaled") &&
+    // Skip markets in boot quarantine (terminal-looking, awaiting confirmation)
+    !(m._boot_quarantine_until && m._boot_quarantine_until > now)
   );
 }
 
@@ -67,9 +70,10 @@ export function selectPipelineUniverse(state, cfg) {
   const wl = state.watchlist || {};
   const all = Object.values(wl).filter(Boolean);
 
+  const now = Date.now();
   // v1 rule: ALWAYS include pending_signal first (to make 2 hits in-window possible)
   const pending = all
-    .filter(m => m.status === "pending_signal")
+    .filter(m => m.status === "pending_signal" && !(m._boot_quarantine_until && m._boot_quarantine_until > now))
     .map(m => ({ m, ps: Number(m.pending_since_ts || 0) }));
 
   // Deterministic order: oldest pending first (closest to expiry)
@@ -79,7 +83,7 @@ export function selectPipelineUniverse(state, cfg) {
   if (pending.length > 0) return pending.map(x => x.m);
 
   const watching = all
-    .filter(m => m.status === "watching")
+    .filter(m => m.status === "watching" && !(m._boot_quarantine_until && m._boot_quarantine_until > now))
     .map(m => ({
       m,
       vol: Number(m.gamma_vol24h_usd || 0),

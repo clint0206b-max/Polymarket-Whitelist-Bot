@@ -162,6 +162,29 @@ process.on("SIGTERM", shutdown);
 const started = nowMs();
 const stopAfterMs = Number(process.env.STOP_AFTER_MS ?? 0); // Default: 0 = run indefinitely. Set >0 for test/debug
 
+// --- Boot quarantine: mark terminal-looking markets to suppress from dashboard ---
+// Markets in watchlist.json with bid/ask >= 0.995 may have been saved before
+// the 30s anti-flicker confirmation. Instead of purging (which would bypass
+// the confirmation window), we quarantine them: hidden from dashboard and
+// skipped for depth fetches until the normal loop confirms and purges them.
+{
+  const TERMINAL_THRESHOLD = 0.995;
+  const QUARANTINE_MS = 30_000;
+  const now = Date.now();
+  let quarantined = 0;
+  for (const m of Object.values(state.watchlist || {})) {
+    const bid = Number(m?.last_price?.yes_best_bid ?? 0);
+    const ask = Number(m?.last_price?.yes_best_ask ?? 0);
+    if (bid >= TERMINAL_THRESHOLD || ask >= TERMINAL_THRESHOLD) {
+      m._boot_quarantine_until = now + QUARANTINE_MS;
+      quarantined++;
+    }
+  }
+  if (quarantined > 0) {
+    console.log(`[BOOT] Quarantined ${quarantined} terminal-looking markets for ${QUARANTINE_MS / 1000}s`);
+  }
+}
+
 // --- Reconcile open_index from signals.jsonl (crash recovery) ---
 {
   const idx = loadOpenIndex();

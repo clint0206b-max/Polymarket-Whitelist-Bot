@@ -1095,14 +1095,17 @@ export function startHealthServer(state, opts = {}) {
   // API: build watchlist response
   function buildWatchlistResponse() {
     const wl = state?.watchlist || {};
-    const items = Object.values(wl).map(m => ({
-      slug: m.slug, status: m.status, league: m.league || "",
-      title: m.title || m.question || null,
-      market_kind: m.market_kind || null,
-      last_price: m.last_price || {},
-      last_reject: m.last_reject || {},
-      first_seen_ts: m.first_seen_ts,
-    }));
+    const now = Date.now();
+    const items = Object.values(wl)
+      .filter(m => !(m._boot_quarantine_until && m._boot_quarantine_until > now))
+      .map(m => ({
+        slug: m.slug, status: m.status, league: m.league || "",
+        title: m.title || m.question || null,
+        market_kind: m.market_kind || null,
+        last_price: m.last_price || {},
+        last_reject: m.last_reject || {},
+        first_seen_ts: m.first_seen_ts,
+      }));
 
     // Sort: signaled/pending first, then by ask descending (closest to entry range on top)
     const statusOrder = { signaled: 0, pending_signal: 1, pending_entered: 1, watching: 2, expired: 3 };
