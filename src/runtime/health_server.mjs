@@ -197,10 +197,18 @@ function computeLeagueSummary(state) {
  * Build universe funnel: gamma_available → watchlisted → signaled (all unique slugs per day)
  */
 function buildUniverseFunnel(state) {
-  const funnel = state?.runtime?._funnel;
+  // Try runtime Sets first (live), fallback to persisted arrays (after restart)
+  const live = state?.runtime?._funnel;
+  const persisted = state?._funnel;
+  const funnel = live || persisted;
   if (!funnel) return null;
 
-  // Get signaled unique slugs from daily_utilization (already computed)
+  const sizeOf = (v) => {
+    if (v instanceof Set) return v.size;
+    if (Array.isArray(v)) return v.length;
+    return 0;
+  };
+
   const du = computeDailyUtilization(state);
 
   const allLeagues = new Set([
@@ -211,15 +219,15 @@ function buildUniverseFunnel(state) {
 
   const result = {};
   for (const league of allLeagues) {
-    const available = funnel.gamma_seen?.[league]?.size || 0;
-    const watchlisted = funnel.watchlisted?.[league]?.size || 0;
+    const available = sizeOf(funnel.gamma_seen?.[league]);
+    const watchlisted = sizeOf(funnel.watchlisted?.[league]);
     const signaled = du?.[league]?.signaled || 0;
 
     result[league] = {
       available,
       watchlisted,
       signaled,
-      passed: available - signaled,
+      passed: Math.max(0, available - signaled),
       capture_pct: available > 0 ? Math.round((signaled / available) * 1000) / 10 : 0,
       filter_pct: available > 0 ? Math.round((watchlisted / available) * 1000) / 10 : 0,
     };

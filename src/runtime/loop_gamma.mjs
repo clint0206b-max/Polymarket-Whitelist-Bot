@@ -186,12 +186,25 @@ export async function loopGamma(state, cfg, now) {
 
   // --- Daily funnel tracking (unique slugs per league) ---
   // Reset at Mendoza midnight (UTC-3 → 03:00 UTC)
+  // Persisted on state (survives restart via dirty tracker)
   const mendozaNow = new Date(now - 3 * 3600 * 1000);
   const mendozaDay = mendozaNow.toISOString().slice(0, 10);
-  if (!state.runtime._funnel || state.runtime._funnel._day !== mendozaDay) {
-    state.runtime._funnel = { _day: mendozaDay, gamma_seen: {}, watchlisted: {} };
+
+  // Restore Sets from persisted arrays (after restart, state has arrays not Sets)
+  if (!state._funnel || state._funnel._day !== mendozaDay) {
+    state._funnel = { _day: mendozaDay, gamma_seen: {}, watchlisted: {} };
   }
-  const funnel = state.runtime._funnel;
+  const funnel = state._funnel;
+  for (const key of ["gamma_seen", "watchlisted"]) {
+    if (!funnel[key]) funnel[key] = {};
+    for (const league of Object.keys(funnel[key])) {
+      if (!(funnel[key][league] instanceof Set)) {
+        funnel[key][league] = new Set(Array.isArray(funnel[key][league]) ? funnel[key][league] : []);
+      }
+    }
+  }
+  // Also expose on runtime for health_server
+  state.runtime._funnel = funnel;
 
   // Track all candidates from Gamma (before our filters)
   for (const c of candidates) {
@@ -241,6 +254,15 @@ export async function loopGamma(state, cfg, now) {
       if (!funnel.watchlisted[fl]) funnel.watchlisted[fl] = new Set();
       funnel.watchlisted[fl].add(c.slug);
     }
+  }
+
+  // Serialize funnel Sets→Arrays for JSON persistence
+  state._funnel = { _day: mendozaDay, gamma_seen: {}, watchlisted: {} };
+  for (const [l, s] of Object.entries(funnel.gamma_seen)) {
+    state._funnel.gamma_seen[l] = [...s];
+  }
+  for (const [l, s] of Object.entries(funnel.watchlisted)) {
+    state._funnel.watchlisted[l] = [...s];
   }
 
   // Snapshot of live conditionIds from this Gamma fetch (used by purge gates)
