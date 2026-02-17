@@ -1434,6 +1434,10 @@ export async function loopEvalHttpOnly(state, cfg, now) {
             spread_at_timeout: Number(lp_timeout.spread || 0),
             pending_duration_ms: tNow - Number(ps),
             timeout_reason: String(m.pending_confirm_fail_last_reason || m.last_reject?.reason || "unknown"),
+            timeout_category: (() => {
+              const r = String(m.pending_confirm_fail_last_reason || m.last_reject?.reason || "unknown");
+              return r === "fail_base_price_out_of_range" ? "price_window" : "confirmation_filter";
+            })(),
           });
         } catch {}
 

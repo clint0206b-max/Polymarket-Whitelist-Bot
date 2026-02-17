@@ -884,11 +884,36 @@ export function startHealthServer(state, opts = {}) {
       ? ((winsAll.length / (winsAll.length + lossesAll.length)) * 100).toFixed(1) + "%"
       : "n/a";
 
-    // Timeout analysis
+    // Timeout analysis — split by category
     const timeouts = signals.filter(s => s.type === "signal_timeout");
     const toResolved = signals.filter(s => s.type === "timeout_resolved");
     const savedUs = toResolved.filter(s => s.verdict === "filter_saved_us").length;
     const costUs = toResolved.filter(s => s.verdict === "filter_cost_us").length;
+
+    // Match timeout_category from signal_timeout to its timeout_resolved
+    const timeoutMap = new Map(timeouts.map(t => [t.slug + "|" + t.ts, t]));
+    const priceWindowResolved = toResolved.filter(r => {
+      const t = timeoutMap.get(r.slug + "|" + r.timeout_ts);
+      return t && inferCategory(t) === "price_window";
+    });
+    const confirmFilterResolved = toResolved.filter(r => {
+      const t = timeoutMap.get(r.slug + "|" + r.timeout_ts);
+      return !t || inferCategory(t) !== "price_window";
+    });
+    // Infer category for old events without timeout_category
+    const inferCategory = (t) => {
+      if (t.timeout_category) return t.timeout_category;
+      return t.timeout_reason === "fail_base_price_out_of_range" ? "price_window" : "confirmation_filter";
+    };
+    const priceWindowTimeouts = timeouts.filter(t => inferCategory(t) === "price_window");
+    const confirmFilterTimeouts = timeouts.filter(t => inferCategory(t) !== "price_window");
+
+    // Sub-reason breakdown for confirmation_filter
+    const confirmReasonCounts = {};
+    for (const t of confirmFilterTimeouts) {
+      const r = t.timeout_reason || "unknown";
+      confirmReasonCounts[r] = (confirmReasonCounts[r] || 0) + 1;
+    }
 
     // First trade date
     const allOpens = signals.filter(s => s.type === "signal_open").map(s => s.ts_open || s.ts || 0).filter(Boolean);
@@ -911,11 +936,27 @@ export function startHealthServer(state, opts = {}) {
         pnl_total: pnlTotal,
         wr_total: wrAll,
         first_trade_ts: firstTradeTs,
-        // Timeouts
+        // Timeouts (aggregate)
         timeouts_total: timeouts.length,
         timeouts_saved: savedUs,
         timeouts_cost: costUs,
         timeouts_pending: timeouts.length - toResolved.length,
+        // Timeouts by category
+        timeouts_price_window: {
+          total: priceWindowTimeouts.length,
+          cost: priceWindowResolved.filter(r => r.verdict === "filter_cost_us").length,
+          saved: priceWindowResolved.filter(r => r.verdict === "filter_saved_us").length,
+          pending: priceWindowTimeouts.length - priceWindowResolved.length,
+          lost_pnl: +priceWindowResolved.filter(r => r.verdict === "filter_cost_us").reduce((s, r) => s + (r.hypothetical_pnl_usd || 0), 0).toFixed(2),
+        },
+        timeouts_confirmation: {
+          total: confirmFilterTimeouts.length,
+          cost: confirmFilterResolved.filter(r => r.verdict === "filter_cost_us").length,
+          saved: confirmFilterResolved.filter(r => r.verdict === "filter_saved_us").length,
+          pending: confirmFilterTimeouts.length - confirmFilterResolved.length,
+          lost_pnl: +confirmFilterResolved.filter(r => r.verdict === "filter_cost_us").reduce((s, r) => s + (r.hypothetical_pnl_usd || 0), 0).toFixed(2),
+          by_reason: confirmReasonCounts,
+        },
       },
       items: closesToday.map(c => {
         // Enrich from matching signal_open if fields missing

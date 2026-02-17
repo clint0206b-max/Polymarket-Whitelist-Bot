@@ -224,15 +224,26 @@
           <div id="reject-empty" class="text-slate-500 text-xs">No data yet</div>
         </div>
 
-        <!-- Timeout Analysis -->
+        <!-- Timeout Analysis — split by category -->
         <div class="bg-card rounded-lg border border-slate-700 p-4">
-          <h3 class="font-semibold text-white text-sm mb-3">⏱️ 6s Window Analysis</h3>
-          <div class="space-y-2 text-sm" id="timeout-stats">
-            <div class="flex justify-between"><span class="text-slate-400">Timeouts</span><span id="to-total" class="mono">—</span></div>
-            <div class="flex justify-between"><span class="text-slate-400">Saved us</span><span id="to-saved" class="mono text-emerald-400">—</span></div>
-            <div class="flex justify-between"><span class="text-slate-400">Cost us</span><span id="to-cost" class="mono text-red-400">—</span></div>
-            <div class="flex justify-between"><span class="text-slate-400">Pending</span><span id="to-pending" class="mono">—</span></div>
+          <h3 class="font-semibold text-white text-sm mb-3">⏱️ Timeout Analysis</h3>
+          <!-- Price Window -->
+          <div class="text-xs text-slate-500 uppercase tracking-wide mb-1">6s Price Window</div>
+          <div class="space-y-1 text-sm mb-3" id="to-pw">
+            <div class="flex justify-between"><span class="text-slate-400">Total</span><span id="to-pw-total" class="mono">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Cost us</span><span id="to-pw-cost" class="mono text-red-400">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Saved us</span><span id="to-pw-saved" class="mono text-emerald-400">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Lost PnL</span><span id="to-pw-pnl" class="mono text-red-400">—</span></div>
           </div>
+          <!-- Confirmation Filters -->
+          <div class="text-xs text-slate-500 uppercase tracking-wide mb-1">Confirmation Filters</div>
+          <div class="space-y-1 text-sm mb-2" id="to-cf">
+            <div class="flex justify-between"><span class="text-slate-400">Total</span><span id="to-cf-total" class="mono">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Cost us</span><span id="to-cf-cost" class="mono text-red-400">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Saved us</span><span id="to-cf-saved" class="mono text-emerald-400">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Lost PnL</span><span id="to-cf-pnl" class="mono text-red-400">—</span></div>
+          </div>
+          <div id="to-cf-reasons" class="text-xs text-slate-500"></div>
         </div>
 
         <!-- Daily Utilization -->
@@ -526,7 +537,9 @@
       const toTotal = s.timeouts_total || 0;
       const toCost = s.timeouts_cost || 0;
       const toSaved = s.timeouts_saved || 0;
-      $('kpi-timeouts').textContent = toTotal > 0 ? `${toTotal} (${toCost}💸 ${toSaved}✅)` : '0';
+      const pwCost = (s.timeouts_price_window || {}).cost || 0;
+      const cfCost = (s.timeouts_confirmation || {}).cost || 0;
+      $('kpi-timeouts').textContent = toTotal > 0 ? `${toTotal} (pw:${pwCost} cf:${cfCost} 💸)` : '0';
       if (s.first_trade_ts) {
         const d = new Date(s.first_trade_ts);
         $('kpi-since').textContent = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -534,11 +547,21 @@
 
       $('trades-summary').textContent = `${s.wins_today||0}W / ${s.losses_today||0}L · $${(s.pnl_total||0).toFixed(2)} all-time`;
 
-      // Timeout stats
-      $('to-total').textContent = s.timeouts_total ?? '—';
-      $('to-saved').textContent = s.timeouts_saved ?? '—';
-      $('to-cost').textContent = s.timeouts_cost ?? '—';
-      $('to-pending').textContent = s.timeouts_pending ?? '—';
+      // Timeout stats — split by category
+      const pw = s.timeouts_price_window || {};
+      $('to-pw-total').textContent = pw.total ?? 0;
+      $('to-pw-cost').textContent = pw.cost ?? 0;
+      $('to-pw-saved').textContent = pw.saved ?? 0;
+      $('to-pw-pnl').textContent = pw.lost_pnl ? `-$${pw.lost_pnl.toFixed(2)}` : '$0';
+      const cf = s.timeouts_confirmation || {};
+      $('to-cf-total').textContent = cf.total ?? 0;
+      $('to-cf-cost').textContent = cf.cost ?? 0;
+      $('to-cf-saved').textContent = cf.saved ?? 0;
+      $('to-cf-pnl').textContent = cf.lost_pnl ? `-$${cf.lost_pnl.toFixed(2)}` : '$0';
+      // Sub-reason breakdown
+      const reasons = cf.by_reason || {};
+      const reasonStr = Object.entries(reasons).sort((a,b) => b[1]-a[1]).map(([r,c]) => `${r.replace('fail_','')}: ${c}`).join(' · ');
+      $('to-cf-reasons').textContent = reasonStr || '';
 
       if (!items.length) {
         $('trades-body').innerHTML = '';
