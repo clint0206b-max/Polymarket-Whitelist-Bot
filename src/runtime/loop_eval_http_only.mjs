@@ -1172,6 +1172,26 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     return true;
   }
 
+  // Load open positions to check exclusion (from BOTH open_index and execution_state)
+  // Moved before purge blocks so all purge logic can use it
+  let openPositionSlugs;
+  try {
+    const { loadOpenIndex } = await import("../core/journal.mjs");
+    const idx = loadOpenIndex();
+    const fromIndex = Object.values(idx.open || {}).map(p => p.slug);
+    let fromExec = [];
+    try {
+      const { readJson } = await import("../core/state_store.js");
+      const execState = readJson(resolvePath("state/execution_state.json"));
+      fromExec = Object.values(execState?.trades || {})
+        .filter(t => String(t.side).toUpperCase() === "BUY" && t.status === "filled" && !t.closed)
+        .map(t => t.slug);
+    } catch {}
+    openPositionSlugs = new Set([...fromIndex, ...fromExec]);
+  } catch {
+    openPositionSlugs = new Set();
+  }
+
   // === PURGE EXPIRED TTL ===
   // For only_live strategy: purge expired/resolved markets older than X hours
   // This keeps the watchlist fresh and prevents accumulation of stale entries
@@ -1188,7 +1208,14 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     const ageTs = m.expired_at_ts || m.resolved_at || m.last_price?.updated_ts || null;
     
     if (ageTs == null) {
-      // Missing timestamp: backfill with now so it purges after TTL
+      // No position open → purge immediately; otherwise backfill and wait for TTL
+      if (!openPositionSlugs.has(m.slug)) {
+        delete state.watchlist[key];
+        expiredPurgedCount++;
+        bumpBucket("health", "expired_purged_no_timestamp", 1);
+        console.log(`[PURGE_EXPIRED] ${m.slug} | no timestamp, no position | status=${m.status}`);
+        continue;
+      }
       m.expired_at_ts = now;
       bumpBucket("health", "expired_ttl_backfilled_timestamp", 1);
       continue;
@@ -1202,7 +1229,9 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     const ageHours = (now - ageTs) / (1000 * 60 * 60);
     
-    if (ageHours > expiredTtlHours) {
+    // Faster purge for expired without open position (1 min vs configured TTL)
+    const effectiveTtlHours = openPositionSlugs.has(m.slug) ? expiredTtlHours : Math.min(expiredTtlHours, 1 / 60);
+    if (ageHours > effectiveTtlHours) {
       // Live event protection: don't TTL-purge if Gamma says it's still live
       if (isGammaLiveProtected(m)) {
         bumpBucket("health", "ttl_purge_blocked_live", 1);
@@ -1235,25 +1264,6 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     state._terminal_purged_slugs = new Set(
       state._terminal_purged_slugs ? Object.keys(state._terminal_purged_slugs) : []
     );
-  }
-
-  // Load open positions to check exclusion (from BOTH open_index and execution_state)
-  let openPositionSlugs;
-  try {
-    const { loadOpenIndex } = await import("../core/journal.mjs");
-    const idx = loadOpenIndex();
-    const fromIndex = Object.values(idx.open || {}).map(p => p.slug);
-    let fromExec = [];
-    try {
-      const { readJson } = await import("../core/state_store.js");
-      const execState = readJson(resolvePath("state/execution_state.json"));
-      fromExec = Object.values(execState?.trades || {})
-        .filter(t => String(t.side).toUpperCase() === "BUY" && t.status === "filled" && !t.closed)
-        .map(t => t.slug);
-    } catch {}
-    openPositionSlugs = new Set([...fromIndex, ...fromExec]);
-  } catch {
-    openPositionSlugs = new Set();
   }
 
   for (const [key, m] of Object.entries(state.watchlist || {})) {
