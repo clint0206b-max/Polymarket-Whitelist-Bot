@@ -648,8 +648,19 @@ export class TradeBridge {
       if (!price || price.yes_best_bid == null) continue;
 
       const bid = Number(price.yes_best_bid);
+      const ask = Number(price.yes_best_ask || 1);
+      const spread = ask - bid;
       const entryPrice = Number(trade.entryPrice || trade.avgFillPrice);
       const shares = Number(trade.filledShares || 0);
+
+      // --- SPREAD SANITY CHECK ---
+      // If spread > 15%, the book is illiquid — bid is unreliable for SL/resolution.
+      // Skip this position until the book normalizes.
+      const maxSpreadForSL = Number(this.cfg?.trading?.max_spread_for_sl ?? 0.15);
+      if (spread > maxSpreadForSL) {
+        console.log(`[POSITION_CHECK] ${trade.slug} | SKIP spread=${spread.toFixed(3)} > ${maxSpreadForSL} (bid=${bid.toFixed(3)} ask=${ask.toFixed(3)}) — book illiquid`);
+        continue;
+      }
 
       // --- RESOLUTION: bid >= 0.995 means market resolved in our favor ---
       if (bid >= resolveThreshold) {
