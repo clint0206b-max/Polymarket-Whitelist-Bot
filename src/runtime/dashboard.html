@@ -234,6 +234,7 @@
             <div class="flex justify-between"><span class="text-slate-400">Cost us</span><span id="to-pw-cost" class="mono text-red-400">—</span></div>
             <div class="flex justify-between"><span class="text-slate-400">Saved us</span><span id="to-pw-saved" class="mono text-emerald-400">—</span></div>
             <div class="flex justify-between"><span class="text-slate-400">Lost PnL</span><span id="to-pw-pnl" class="mono text-red-400">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Saved PnL</span><span id="to-pw-saved-pnl" class="mono text-emerald-400">—</span></div>
           </div>
           <!-- Confirmation Filters -->
           <div class="text-xs text-slate-500 uppercase tracking-wide mb-1">Confirmation Filters</div>
@@ -242,6 +243,7 @@
             <div class="flex justify-between"><span class="text-slate-400">Cost us</span><span id="to-cf-cost" class="mono text-red-400">—</span></div>
             <div class="flex justify-between"><span class="text-slate-400">Saved us</span><span id="to-cf-saved" class="mono text-emerald-400">—</span></div>
             <div class="flex justify-between"><span class="text-slate-400">Lost PnL</span><span id="to-cf-pnl" class="mono text-red-400">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Saved PnL</span><span id="to-cf-saved-pnl" class="mono text-emerald-400">—</span></div>
           </div>
           <div id="to-cf-reasons" class="text-xs text-slate-500"></div>
         </div>
@@ -553,11 +555,13 @@
       $('to-pw-cost').textContent = pw.cost ?? 0;
       $('to-pw-saved').textContent = pw.saved ?? 0;
       $('to-pw-pnl').textContent = pw.lost_pnl ? `-$${pw.lost_pnl.toFixed(2)}` : '$0';
+      $('to-pw-saved-pnl').textContent = pw.saved_pnl ? `+$${pw.saved_pnl.toFixed(2)}` : '$0';
       const cf = s.timeouts_confirmation || {};
       $('to-cf-total').textContent = cf.total ?? 0;
       $('to-cf-cost').textContent = cf.cost ?? 0;
       $('to-cf-saved').textContent = cf.saved ?? 0;
       $('to-cf-pnl').textContent = cf.lost_pnl ? `-$${cf.lost_pnl.toFixed(2)}` : '$0';
+      $('to-cf-saved-pnl').textContent = cf.saved_pnl ? `+$${cf.saved_pnl.toFixed(2)}` : '$0';
       // Sub-reason breakdown
       const reasons = cf.by_reason || {};
       const reasonStr = Object.entries(reasons).sort((a,b) => b[1]-a[1]).map(([r,c]) => `${r.replace('fail_','')}: ${c}`).join(' · ');

@@ -949,6 +949,7 @@ export function startHealthServer(state, opts = {}) {
           saved: priceWindowResolved.filter(r => r.verdict === "filter_saved_us").length,
           pending: priceWindowTimeouts.length - priceWindowResolved.length,
           lost_pnl: +priceWindowResolved.filter(r => r.verdict === "filter_cost_us").reduce((s, r) => s + (r.hypothetical_pnl_usd || 0), 0).toFixed(2),
+          saved_pnl: +priceWindowResolved.filter(r => r.verdict === "filter_saved_us").reduce((s, r) => s + Math.abs(r.hypothetical_pnl_usd || 0), 0).toFixed(2),
         },
         timeouts_confirmation: {
           total: confirmFilterTimeouts.length,
@@ -956,6 +957,7 @@ export function startHealthServer(state, opts = {}) {
           saved: confirmFilterResolved.filter(r => r.verdict === "filter_saved_us").length,
           pending: confirmFilterTimeouts.length - confirmFilterResolved.length,
           lost_pnl: +confirmFilterResolved.filter(r => r.verdict === "filter_cost_us").reduce((s, r) => s + (r.hypothetical_pnl_usd || 0), 0).toFixed(2),
+          saved_pnl: +confirmFilterResolved.filter(r => r.verdict === "filter_saved_us").reduce((s, r) => s + Math.abs(r.hypothetical_pnl_usd || 0), 0).toFixed(2),
           by_reason: confirmReasonCounts,
         },
       },
