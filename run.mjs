@@ -459,28 +459,57 @@ try {
               });
               const sellResult = await tradeBridge.handleSignalClose(sig);
 
-              // Mark close_pending in open_index (don't move to closed yet)
+              // Update open_index immediately after sell
               if (sellResult && sellResult.ok) {
                 try {
                   const idx = loadOpenIndex();
                   const entry = idx.open?.[sig.signal_id];
                   if (entry && !entry.close_status) {
-                    entry.close_status = "sell_executed";
-                    entry.close_ts = Date.now();
-                    entry.close_reason = sig.close_reason || "unknown";
-                    entry.close_fill = {
-                      filledShares: sellResult.filledShares ?? 0,
-                      avgFillPrice: sellResult.avgFillPrice ?? null,
-                      receivedUsd: sellResult.spentUsd ?? null,
-                      isPartial: sellResult.isPartial || false,
-                      orderID: sellResult.orderID || null,
-                      priceProvisional: sellResult.priceProvisional || false,
-                    };
-                    saveOpenIndex(idx);
-                    console.log(`[CLOSE_PENDING] ${sig.slug} | sell executed, marked close_pending | partial=${sellResult.isPartial || false}`);
+                    if (!sellResult.isPartial) {
+                      // Full fill → close immediately
+                      const buyKey = `buy:${sig.signal_id}`;
+                      const buyTrade = tradeBridge.execState.trades[buyKey];
+                      const receivedUsd = sellResult.spentUsd ?? 0;
+                      const spentUsd = buyTrade?.spentUsd ?? 0;
+                      const pnl = receivedUsd - spentUsd;
+                      const roi = spentUsd > 0 ? pnl / spentUsd : 0;
+
+                      addClosed(idx, sig.signal_id, {
+                        slug: entry.slug, title: entry.title || null,
+                        ts_open: entry.ts_open, ts_close: Date.now(),
+                        league: entry.league || "",
+                        entry_price: entry.entry_price,
+                        paper_notional_usd: entry.paper_notional_usd,
+                        entry_outcome_name: entry.entry_outcome_name || null,
+                        close_reason: sig.close_reason || "resolved",
+                        resolve_method: "clob_position_check",
+                        win: pnl >= 0,
+                        pnl_usd: Math.round(pnl * 100) / 100,
+                        roi: Math.round(roi * 10000) / 10000,
+                        price_provisional: sellResult.priceProvisional || false,
+                      });
+                      removeOpen(idx, sig.signal_id);
+                      saveOpenIndex(idx);
+                      console.log(`[CLOSED] ${sig.slug} | full fill | PnL=$${pnl.toFixed(2)}${sellResult.priceProvisional ? " (provisional)" : ""}`);
+                    } else {
+                      // Partial fill → mark pending, reconcile later
+                      entry.close_status = "sell_executed";
+                      entry.close_ts = Date.now();
+                      entry.close_reason = sig.close_reason || "unknown";
+                      entry.close_fill = {
+                        filledShares: sellResult.filledShares ?? 0,
+                        avgFillPrice: sellResult.avgFillPrice ?? null,
+                        receivedUsd: sellResult.spentUsd ?? null,
+                        isPartial: true,
+                        orderID: sellResult.orderID || null,
+                        priceProvisional: sellResult.priceProvisional || false,
+                      };
+                      saveOpenIndex(idx);
+                      console.log(`[CLOSE_PENDING] ${sig.slug} | partial fill (${sellResult.filledShares} shares) | awaiting reconciliation`);
+                    }
                   }
                 } catch (idxErr) {
-                  console.error(`[CLOSE_PENDING] failed to update open_index for ${sig.slug}: ${idxErr.message}`);
+                  console.error(`[CLOSE_UPDATE] failed to update open_index for ${sig.slug}: ${idxErr.message}`);
                 }
               }
             } catch (e) {

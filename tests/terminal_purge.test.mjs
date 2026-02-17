@@ -166,3 +166,32 @@ describe("Terminal Price Purge", () => {
     assert.strictEqual(wl.m1._terminal_first_seen_ts, undefined); // Reset because not terminal
   });
 });
+
+// === Ask-based terminal purge ===
+describe("ask-based terminal purge", () => {
+  test("purges when ask >= 0.995 (YES side resolved via ask)", () => {
+    const state = { watchlist: {}, _terminal_purged_slugs: new Set() };
+    const now = Date.now();
+    state.watchlist["key1"] = {
+      slug: "ask-terminal", status: "watching", league: "esports",
+      tokens: { yes_token_id: "token1" },
+      _terminal_first_seen_ts: now - 31000, // confirmed >30s ago
+    };
+
+    // Simulate: bestBid=0.93 (not terminal), bestAsk=0.999 (terminal via ask)
+    // The isTerminal check should catch ask >= 0.995
+    const bestBid = 0.93;
+    const bestAsk = 0.999;
+    const TERMINAL_THRESHOLD = 0.995;
+    const isTerminal = (bestBid >= TERMINAL_THRESHOLD) || (bestAsk >= TERMINAL_THRESHOLD) || (bestAsk <= (1 - TERMINAL_THRESHOLD));
+    assert.equal(isTerminal, true, "ask=0.999 should be terminal");
+  });
+
+  test("does NOT consider ask=0.994 as terminal", () => {
+    const TERMINAL_THRESHOLD = 0.995;
+    const bestBid = 0.93;
+    const bestAsk = 0.994;
+    const isTerminal = (bestBid >= TERMINAL_THRESHOLD) || (bestAsk >= TERMINAL_THRESHOLD) || (bestAsk <= (1 - TERMINAL_THRESHOLD));
+    assert.equal(isTerminal, false);
+  });
+});

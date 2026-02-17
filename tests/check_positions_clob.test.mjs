@@ -415,3 +415,57 @@ describe("checkPositionsFromCLOB", () => {
     });
   });
 });
+
+// === Ask-based resolution trigger ===
+describe("ask-based resolution trigger", () => {
+  it("triggers resolution when ask >= 0.999 and bid >= 0.90", () => {
+    const trade = makeBuyTrade("ask-resolve", { signal_id: "1|ask-resolve" });
+    const bridge = makeBridge({ trades: { "buy:1|ask-resolve": trade } });
+    const prices = new Map([["ask-resolve", { yes_best_bid: 0.93, yes_best_ask: 0.999 }]]);
+    const signals = check(bridge, prices);
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0].close_reason, "resolved");
+    assert.equal(signals[0].slug, "ask-resolve");
+  });
+
+  it("triggers when ask = 1.00 and bid = 0.95", () => {
+    const trade = makeBuyTrade("ask-1", { signal_id: "1|ask-1" });
+    const bridge = makeBridge({ trades: { "buy:1|ask-1": trade } });
+    const prices = new Map([["ask-1", { yes_best_bid: 0.95, yes_best_ask: 1.00 }]]);
+    const signals = check(bridge, prices);
+    assert.equal(signals.length, 1);
+  });
+
+  it("does NOT trigger RESOLUTION when ask >= 0.999 but bid < 0.90 (garbage bid)", () => {
+    const trade = makeBuyTrade("low-bid", { signal_id: "1|low-bid" });
+    const bridge = makeBridge({ trades: { "buy:1|low-bid": trade } });
+    const prices = new Map([["low-bid", { yes_best_bid: 0.85, yes_best_ask: 0.999 }]]);
+    const signals = check(bridge, prices);
+    // bid=0.85 is above SL (0.70) but below ask guard (0.90) → no signal at all
+    assert.equal(signals.length, 0);
+  });
+
+  it("does NOT trigger when ask = 0.998 (just below threshold)", () => {
+    const trade = makeBuyTrade("below-ask", { signal_id: "1|below-ask" });
+    const bridge = makeBridge({ trades: { "buy:1|below-ask": trade } });
+    const prices = new Map([["below-ask", { yes_best_bid: 0.93, yes_best_ask: 0.998 }]]);
+    const signals = check(bridge, prices);
+    assert.equal(signals.length, 0);
+  });
+
+  it("bid-based still works independently of ask", () => {
+    const trade = makeBuyTrade("bid-only", { signal_id: "1|bid-only" });
+    const bridge = makeBridge({ trades: { "buy:1|bid-only": trade } });
+    const prices = new Map([["bid-only", { yes_best_bid: 0.996, yes_best_ask: 0.999 }]]);
+    const signals = check(bridge, prices);
+    assert.equal(signals.length, 1);
+  });
+
+  it("handles missing ask gracefully (null)", () => {
+    const trade = makeBuyTrade("no-ask", { signal_id: "1|no-ask" });
+    const bridge = makeBridge({ trades: { "buy:1|no-ask": trade } });
+    const prices = new Map([["no-ask", { yes_best_bid: 0.93, yes_best_ask: null }]]);
+    const signals = check(bridge, prices);
+    assert.equal(signals.length, 0);
+  });
+});

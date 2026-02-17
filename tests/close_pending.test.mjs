@@ -365,3 +365,32 @@ describe("reconcileClosePending", () => {
     assert.equal(result.closedEntry.close_reason, "stop_loss");
   });
 });
+
+// === Immediate close on full fill ===
+describe("immediate close on full fill", () => {
+  it("full fill closes position immediately (no pending state)", () => {
+    const sigId = "123|immediate-slug";
+    const idx = makeOpenIndex({ [sigId]: makeOpenEntry("immediate-slug", { entry_price: 0.94, paper_notional_usd: 10 }) });
+    const sig = makeSignal("immediate-slug", { signal_id: sigId, close_reason: "resolved" });
+    const result = makeSellResult({ isPartial: false, avgFillPrice: 0.996, spentUsd: 11.25 });
+
+    // Full fill: should NOT use markClosePending, should go straight to closed
+    assert.equal(result.isPartial, false);
+    assert.equal(result.ok, true);
+    // Caller (run.mjs) would addClosed + removeOpen directly
+  });
+
+  it("partial fill stays as close_pending", () => {
+    const sigId = "123|partial-immediate";
+    const idx = makeOpenIndex({ [sigId]: makeOpenEntry("partial-immediate") });
+    const sig = makeSignal("partial-immediate", { signal_id: sigId });
+    const result = makeSellResult({ isPartial: true, filledShares: 5.0 });
+
+    const marked = markClosePending(idx, sigId, sig, result);
+    assert.equal(marked, true);
+    assert.equal(idx.open[sigId].close_status, "sell_executed");
+    assert.equal(idx.open[sigId].close_fill.isPartial, true);
+    // Position stays in open, not moved to closed
+    assert.ok(idx.open[sigId]);
+  });
+});

@@ -1270,7 +1270,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     const wsPrice = wsClient.getPrice(yesToken);
     if (!wsPrice) continue;
 
-    const isTerminal = (wsPrice.bestBid >= TERMINAL_THRESHOLD) || (wsPrice.bestAsk <= (1 - TERMINAL_THRESHOLD));
+    const isTerminal = (wsPrice.bestBid >= TERMINAL_THRESHOLD) || (wsPrice.bestAsk >= TERMINAL_THRESHOLD) || (wsPrice.bestAsk <= (1 - TERMINAL_THRESHOLD));
     if (!isTerminal) {
       // Reset confirmation timer if price drops back
       if (m._terminal_first_seen_ts) delete m._terminal_first_seen_ts;
