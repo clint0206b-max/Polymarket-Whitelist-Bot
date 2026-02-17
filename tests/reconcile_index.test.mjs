@@ -15,6 +15,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
+import { realpathSync, mkdirSync as mkdirSyncFs } from "node:fs";
 import { tmpdir } from "node:os";
 
 // === ISOLATED TEST DIRECTORY (under OS tmpdir, never under project) ===
@@ -22,11 +23,26 @@ const TEST_ROOT = join(tmpdir(), `polymarket-test-reconcile-${process.pid}`);
 const TEST_STATE = join(TEST_ROOT, "state");
 const TEST_JOURNAL = join(TEST_STATE, "journal");
 
-// Safety: absolute path validation — aborts if path escapes test dir
+// Safety: path MUST resolve inside TEST_ROOT after symlink resolution.
+// Uses realpathSync on the closest existing ancestor to catch symlink escapes.
 function assertSafePath(absPath) {
-  const rel = relative(TEST_ROOT, resolve(absPath));
-  if (rel.startsWith("..") || resolve(absPath) === resolve(process.cwd())) {
-    throw new Error(`SAFETY ABORT: path "${absPath}" escapes test root "${TEST_ROOT}"`);
+  const resolved = resolve(absPath);
+  // Find closest existing ancestor for realpath check
+  let check = resolved;
+  while (!existsSync(check)) {
+    const parent = resolve(check, "..");
+    if (parent === check) break; // filesystem root
+    check = parent;
+  }
+  const real = existsSync(check) ? realpathSync(check) : resolved;
+  const testRootReal = existsSync(TEST_ROOT) ? realpathSync(TEST_ROOT) : resolve(TEST_ROOT);
+
+  // Must start with TEST_ROOT (which is under OS tmpdir)
+  if (!real.startsWith(testRootReal) && !resolved.startsWith(resolve(TEST_ROOT))) {
+    throw new Error(
+      `SAFETY ABORT: path "${absPath}" (real: "${real}") is outside test root "${testRootReal}". ` +
+      `All test I/O must be inside tmpdir. NEVER write to project or state dirs.`
+    );
   }
 }
 

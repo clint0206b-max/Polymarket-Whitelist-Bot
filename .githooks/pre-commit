@@ -1,0 +1,23 @@
+#!/bin/sh
+# Pre-commit hook: block state files from entering git
+# State is runtime data. If lost, reconstruct from blockchain.
+
+BLOCKED=$(git diff --cached --name-only | grep -E '^state/|^state-' | grep -v '\.keep$')
+
+if [ -n "$BLOCKED" ]; then
+  echo ""
+  echo "❌ BLOCKED: state/runtime files cannot be committed to git."
+  echo ""
+  echo "Files blocked:"
+  echo "$BLOCKED" | sed 's/^/  /'
+  echo ""
+  echo "State files are gitignored for safety. If you need to back up state,"
+  echo "use: cp -r state/ /path/to/backup/"
+  echo ""
+  echo "To unstage: git reset HEAD <file>"
+  echo ""
+  exit 1
+fi
+
+# Also run tests
+node --test tests/*.test.mjs

@@ -123,8 +123,22 @@ export function readJsonWithFallback(path) {
  */
 export function resolvePath(...parts) {
   const shadowId = process.env.SHADOW_ID || "";
-  if (shadowId && parts.length > 0 && parts[0] === "state") {
-    return resolve(process.cwd(), `state-${shadowId}`, ...parts.slice(1));
+  if (shadowId && parts.length > 0) {
+    const first = String(parts[0]);
+    // Guardrail: if SHADOW_ID is active and first arg is a compound path starting
+    // with "state/" or "state\", throw. Callers must use separate args:
+    //   resolvePath("state", "file.json")  ← correct
+    //   resolvePath("state/file.json")     ← WRONG, bypasses shadow isolation
+    const normalized = first.replace(/\\/g, "/");
+    if (normalized.startsWith("state/") || normalized === "./state" || normalized.startsWith("./state/")) {
+      throw new Error(
+        `resolvePath: compound state path "${first}" with SHADOW_ID="${shadowId}" active. ` +
+        `Use separate args: resolvePath("state", "subpath") to ensure shadow isolation.`
+      );
+    }
+    if (first === "state") {
+      return resolve(process.cwd(), `state-${shadowId}`, ...parts.slice(1));
+    }
   }
   return resolve(process.cwd(), ...parts);
 }
