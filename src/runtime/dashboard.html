@@ -328,6 +328,15 @@
       return `<span class="text-xs ${colors[l] || 'text-slate-400'}">${(l||'?').toUpperCase()}</span>`;
     }
     function truncSlug(s, max=40) { return s && s.length > max ? s.slice(0, max) + '…' : s || '—'; }
+    function formatMarketTitle(m) {
+      const base = m.title || truncSlug(m.slug, 35);
+      const slug = m.slug || '';
+      const gameMatch = slug.match(/[-_](game|map)(\d+)$/i);
+      if (gameMatch) return base + ` <span class="text-blue-400 font-medium">— ${gameMatch[1].charAt(0).toUpperCase() + gameMatch[1].slice(1)} ${gameMatch[2]}</span>`;
+      // Check if it's a series main market (has sub-markets) — no suffix needed, but mark it
+      if (m.market_kind === 'match_series') return base + ' <span class="text-slate-500">(Series)</span>';
+      return base;
+    }
 
     // Render functions
     function renderAlerts(h) {
@@ -602,7 +611,7 @@
         const reject = m.last_reject?.reason || '';
         return `<tr class="hover:bg-slate-800/50">
           <td class="px-3 py-1.5">${statusBadge(m.status)}</td>
-          <td class="px-3 py-1.5 text-xs" title="${m.slug}">${m.title || truncSlug(m.slug, 35)}</td>
+          <td class="px-3 py-1.5 text-xs" title="${m.slug}">${formatMarketTitle(m)}</td>
           <td class="px-3 py-1.5">${leagueBadge(m.league)}</td>
           <td class="px-3 py-1.5 text-right mono text-xs">${bid != null ? bid.toFixed(3) : '—'}</td>
           <td class="px-3 py-1.5 text-right mono text-xs">${ask != null ? ask.toFixed(3) : '—'}</td>

@@ -1081,6 +1081,7 @@ export function startHealthServer(state, opts = {}) {
       items: Object.values(wl).map(m => ({
         slug: m.slug, status: m.status, league: m.league || "",
         title: m.title || m.question || null,
+        market_kind: m.market_kind || null,
         last_price: m.last_price || {},
         last_reject: m.last_reject || {},
         first_seen_ts: m.first_seen_ts,
