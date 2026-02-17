@@ -1091,17 +1091,28 @@ export function startHealthServer(state, opts = {}) {
   // API: build watchlist response
   function buildWatchlistResponse() {
     const wl = state?.watchlist || {};
-    return {
-      as_of_ts: Date.now(),
-      items: Object.values(wl).map(m => ({
-        slug: m.slug, status: m.status, league: m.league || "",
-        title: m.title || m.question || null,
-        market_kind: m.market_kind || null,
-        last_price: m.last_price || {},
-        last_reject: m.last_reject || {},
-        first_seen_ts: m.first_seen_ts,
-      })),
-    };
+    const items = Object.values(wl).map(m => ({
+      slug: m.slug, status: m.status, league: m.league || "",
+      title: m.title || m.question || null,
+      market_kind: m.market_kind || null,
+      last_price: m.last_price || {},
+      last_reject: m.last_reject || {},
+      first_seen_ts: m.first_seen_ts,
+    }));
+
+    // Sort: signaled/pending first, then by ask descending (closest to entry range on top)
+    const statusOrder = { signaled: 0, pending_signal: 1, pending_entered: 1, watching: 2, expired: 3 };
+    items.sort((a, b) => {
+      const sa = statusOrder[a.status] ?? 9;
+      const sb = statusOrder[b.status] ?? 9;
+      if (sa !== sb) return sa - sb;
+      // Within same status, sort by ask descending (highest ask = closest to signal range)
+      const askA = Number(a.last_price?.yes_best_ask ?? 0);
+      const askB = Number(b.last_price?.yes_best_ask ?? 0);
+      return askB - askA;
+    });
+
+    return { as_of_ts: Date.now(), items };
   }
 
   // API: build config response (safe keys only)
