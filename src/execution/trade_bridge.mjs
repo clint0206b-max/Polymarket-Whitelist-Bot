@@ -373,8 +373,59 @@ export class TradeBridge {
     // If resolved at 1.00, might be redeemable — but we still try to sell first since
     // terminal price (0.995+) means there are bids. Redemption is backup.
     
-    // For SL: use escalating floor to guarantee exit
+    // For SL: fresh CLOB re-check before executing (guard against stale/phantom bids)
     if (isStopLoss) {
+      const slThreshold = Number(this.cfg?.paper?.stop_loss_bid ?? 0.70);
+      try {
+        const freshBook = await this._getFreshCLOBPrice(tokenId);
+        if (freshBook) {
+          const freshBid = freshBook.bid;
+          const freshAsk = freshBook.ask;
+          const freshSpread = (freshAsk || 1) - (freshBid || 0);
+          const maxSpreadForSL = Number(this.cfg?.trading?.max_spread_for_sl ?? 0.15);
+
+          console.log(`[SL_FRESH_CHECK] ${signal.slug} | fresh bid=${freshBid?.toFixed(3)} ask=${freshAsk?.toFixed(3)} spread=${freshSpread.toFixed(3)} | cached_trigger=${signal.sl_trigger_price?.toFixed(3)}`);
+
+          // Abort if fresh bid is above SL threshold
+          if (freshBid != null && freshBid > slThreshold) {
+            console.log(`[SL_ABORT] ${signal.slug} | fresh bid ${freshBid.toFixed(3)} > SL ${slThreshold} — cached price was stale, aborting SL`);
+            appendJsonl("state/journal/executions.jsonl", {
+              type: "sl_aborted_fresh_check",
+              ts: Date.now(),
+              signal_id: signal.signal_id,
+              slug: signal.slug,
+              cached_bid: signal.sl_trigger_price,
+              fresh_bid: freshBid,
+              fresh_ask: freshAsk,
+              fresh_spread: freshSpread,
+              sl_threshold: slThreshold,
+              reason: "fresh_bid_above_sl",
+            });
+            return null;
+          }
+
+          // Abort if spread is too wide (illiquid book)
+          if (freshSpread > maxSpreadForSL) {
+            console.log(`[SL_ABORT] ${signal.slug} | fresh spread ${freshSpread.toFixed(3)} > max ${maxSpreadForSL} — book illiquid, aborting SL`);
+            appendJsonl("state/journal/executions.jsonl", {
+              type: "sl_aborted_fresh_check",
+              ts: Date.now(),
+              signal_id: signal.signal_id,
+              slug: signal.slug,
+              cached_bid: signal.sl_trigger_price,
+              fresh_bid: freshBid,
+              fresh_ask: freshAsk,
+              fresh_spread: freshSpread,
+              max_spread: maxSpreadForSL,
+              reason: "spread_too_wide",
+            });
+            return null;
+          }
+        }
+      } catch (e) {
+        console.warn(`[SL_FRESH_CHECK] ${signal.slug} | error: ${e.message} — proceeding with SL`);
+      }
+
       return this._executeSLSell(signal, buyTrade, sellTradeId);
     }
 
@@ -700,6 +751,31 @@ export class TradeBridge {
       }
     }
     return signals;
+  }
+
+  /**
+   * Fetch fresh CLOB bid/ask directly from API (bypasses cache).
+   * Used as guard-rail before SL execution.
+   */
+  async _getFreshCLOBPrice(tokenId) {
+    const CLOB = "https://clob.polymarket.com";
+    const controller = new AbortController();
+    const to = setTimeout(() => controller.abort(), 3000);
+    try {
+      const [buyRes, sellRes] = await Promise.all([
+        fetch(`${CLOB}/price?token_id=${tokenId}&side=buy`, { signal: controller.signal }).then(r => r.json()),
+        fetch(`${CLOB}/price?token_id=${tokenId}&side=sell`, { signal: controller.signal }).then(r => r.json()),
+      ]);
+      return {
+        ask: Number(buyRes.price),  // buy side = what we'd pay = ask
+        bid: Number(sellRes.price), // sell side = what we'd get = bid
+      };
+    } catch (e) {
+      console.warn(`[FRESH_CLOB] error fetching price for ${tokenId.slice(0, 10)}...: ${e.message}`);
+      return null;
+    } finally {
+      clearTimeout(to);
+    }
   }
 
   getStatus() {
