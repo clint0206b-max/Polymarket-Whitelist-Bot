@@ -610,6 +610,7 @@
         return askB - askA;
       });
 
+      const maxSpread = Number(data?.filters?.max_spread ?? 0.02);
       $('watchlist-body').innerHTML = items.map(m => {
         const lp = m.last_price || {};
         const bid = lp.yes_best_bid;
@@ -622,7 +623,7 @@
           <td class="px-3 py-1.5">${leagueBadge(m.league)}</td>
           <td class="px-3 py-1.5 text-right mono text-xs">${bid != null ? bid.toFixed(3) : '—'}</td>
           <td class="px-3 py-1.5 text-right mono text-xs">${ask != null ? ask.toFixed(3) : '—'}</td>
-          <td class="px-3 py-1.5 text-right mono text-xs ${spread != null && spread > 0.03 ? 'text-yellow-400' : ''}">${spread != null ? spread.toFixed(3) : '—'}</td>
+          <td class="px-3 py-1.5 text-right mono text-xs ${spread != null && spread > maxSpread ? 'text-yellow-400' : ''}">${spread != null ? spread.toFixed(3) : '—'}</td>
           <td class="px-3 py-1.5 text-xs text-slate-500 whitespace-nowrap">${reject}</td>
         </tr>`;
       }).join('');

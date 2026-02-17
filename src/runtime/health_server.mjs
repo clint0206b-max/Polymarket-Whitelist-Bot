@@ -1112,7 +1112,9 @@ export function startHealthServer(state, opts = {}) {
       return askB - askA;
     });
 
-    return { as_of_ts: Date.now(), items };
+    const snap = cachedReadJson(statePath("config-snapshot.json"), 10000);
+    const maxSpread = Number(snap?.filters?.max_spread ?? 0.02);
+    return { as_of_ts: Date.now(), items, filters: { max_spread: maxSpread } };
   }
 
   // API: build config response (safe keys only)
