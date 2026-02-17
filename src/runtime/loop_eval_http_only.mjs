@@ -1230,24 +1230,38 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   const TERMINAL_CONFIRM_MS = 30000; // 30s anti-flicker window
   let terminalPurgedCount = 0;
   // Track purged slugs so Gamma doesn't re-add them
-  if (!state._terminal_purged_slugs) state._terminal_purged_slugs = new Set();
+  // Ensure it's a Set (may be deserialized as plain object from JSON)
+  if (!state._terminal_purged_slugs || !(state._terminal_purged_slugs instanceof Set)) {
+    state._terminal_purged_slugs = new Set(
+      state._terminal_purged_slugs ? Object.keys(state._terminal_purged_slugs) : []
+    );
+  }
 
-  // Load open paper positions to check exclusion
-  let openPaperSlugs;
+  // Load open positions to check exclusion (from BOTH open_index and execution_state)
+  let openPositionSlugs;
   try {
     const { loadOpenIndex } = await import("../core/journal.mjs");
     const idx = loadOpenIndex();
-    openPaperSlugs = new Set(Object.values(idx.open || {}).map(p => p.slug));
+    const fromIndex = Object.values(idx.open || {}).map(p => p.slug);
+    let fromExec = [];
+    try {
+      const { readJson } = await import("../core/state_store.js");
+      const execState = readJson(resolvePath("state/execution_state.json"));
+      fromExec = Object.values(execState?.trades || {})
+        .filter(t => String(t.side).toUpperCase() === "BUY" && t.status === "filled" && !t.closed)
+        .map(t => t.slug);
+    } catch {}
+    openPositionSlugs = new Set([...fromIndex, ...fromExec]);
   } catch {
-    openPaperSlugs = new Set();
+    openPositionSlugs = new Set();
   }
 
   for (const [key, m] of Object.entries(state.watchlist || {})) {
     // Skip non-expired/non-watching (signaled markets need resolution tracker first)
     if (m.status !== "expired" && m.status !== "watching") continue;
 
-    // STRICT EXCLUSION: never purge if paper position is open
-    if (openPaperSlugs.has(m.slug)) continue;
+    // STRICT EXCLUSION: never purge if position is open (paper or live)
+    if (openPositionSlugs.has(m.slug)) continue;
 
     // Check WS cache for terminal price
     const yesToken = m.tokens?.yes_token_id;
@@ -1704,8 +1718,11 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       if (!prevTs || prevTs !== now) bumpBucket("health", "quote_update", 1);
 
       // Terminal price check via HTTP (catches markets without WS data)
-      if (bestBid >= 0.995 && m.status === "watching") {
-        if (!state._terminal_purged_slugs) state._terminal_purged_slugs = new Set();
+      // Never purge if we have an open position
+      if (bestBid >= 0.995 && m.status === "watching" && !(openPositionSlugs && openPositionSlugs.has(m.slug))) {
+        if (!state._terminal_purged_slugs || !(state._terminal_purged_slugs instanceof Set)) {
+          state._terminal_purged_slugs = new Set(state._terminal_purged_slugs ? Object.keys(state._terminal_purged_slugs) : []);
+        }
         state._terminal_purged_slugs.add(m.slug);
         bumpBucket("health", "expired_terminal_http", 1);
         console.log(`[TERMINAL_HTTP] ${m.slug} | bid=${bestBid.toFixed(3)} → deleted`);

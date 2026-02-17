@@ -126,7 +126,8 @@ export function upsertMarket(state, market, now) {
 
   // Skip if this market was purged as terminal (bid >= 0.995 confirmed)
   // _terminal_purged_slugs is a Set maintained by the purge logic in loop_eval
-  if (state._terminal_purged_slugs?.has(market.slug)) {
+  const purgedSlugs = state._terminal_purged_slugs;
+  if (purgedSlugs && (purgedSlugs instanceof Set ? purgedSlugs.has(market.slug) : purgedSlugs[market.slug])) {
     return { changed: false, reason: "terminal_purged" };
   }
 
