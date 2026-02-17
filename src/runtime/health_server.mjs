@@ -997,16 +997,31 @@ export function startHealthServer(state, opts = {}) {
   function buildPositionsResponse() {
     const idx = cachedReadJson(statePath("journal", "open_index.json"), 3000);
     const open = idx?.open || {};
+    const wl = state?.watchlist || {};
     return {
       as_of_ts: Date.now(),
-      items: Object.values(open).map(p => ({
-        slug: p.slug, title: p.title || null,
-        league: p.league || "", market_kind: p.market_kind || null,
-        ts_open: p.ts_open, entry_price: p.entry_price,
-        paper_notional_usd: p.paper_notional_usd,
-        entry_outcome_name: p.entry_outcome_name,
-        price_tracking: p.price_tracking || null,
-      })),
+      items: Object.values(open).map(p => {
+        // Find current price from watchlist
+        const market = Object.values(wl).find(m => m?.slug === p.slug);
+        const currentBid = market?.last_price?.yes_best_bid ?? null;
+        const currentAsk = market?.last_price?.yes_best_ask ?? null;
+        // Unrealized PnL: (currentBid - entryPrice) * shares
+        const entryPrice = p.entry_price || 0;
+        const shares = p.paper_notional_usd ? p.paper_notional_usd / entryPrice : 0;
+        const unrealizedPnl = currentBid != null && entryPrice > 0
+          ? (currentBid - entryPrice) * shares : null;
+        return {
+          slug: p.slug, title: p.title || null,
+          league: p.league || "", market_kind: p.market_kind || null,
+          ts_open: p.ts_open, entry_price: entryPrice,
+          current_bid: currentBid,
+          current_ask: currentAsk,
+          unrealized_pnl: unrealizedPnl != null ? Math.round(unrealizedPnl * 100) / 100 : null,
+          paper_notional_usd: p.paper_notional_usd,
+          entry_outcome_name: p.entry_outcome_name,
+          price_tracking: p.price_tracking || null,
+        };
+      }),
     };
   }
 
