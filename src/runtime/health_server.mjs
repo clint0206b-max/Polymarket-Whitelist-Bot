@@ -173,6 +173,75 @@ function computeRejectReasons(state) {
 }
 
 /**
+ * Build opportunity tracker data for dashboard.
+ * Reads opp_tracker.json (active near misses), latest stage_fail_summary,
+ * and today's opp_closed_tracking entries from opportunities.jsonl.
+ */
+function buildOpportunityTracker() {
+  const now = Date.now();
+  const todayStart = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").getTime();
+
+  // 1. Active near misses from opp_tracker.json
+  const tracker = cachedReadJson(statePath("opp_tracker.json"), 5000);
+  const entries = tracker?.entries || {};
+  const nearMisses = Object.values(entries)
+    .filter(e => e && e.slug)
+    .map(e => ({
+      slug: e.slug,
+      league: e.league || "",
+      reject_reason: e.last_reject_reason || "unknown",
+      ask: e.best_ask_seen ?? null,
+      bid: e.best_bid_seen ?? null,
+      time_tracked_ms: e.observed_time_tracked_ms || 0,
+      ticks: e.total_ticks_tracked || 0,
+      best_ask_with_context: e.best_ask_with_context || null,
+      context_at_first_reject: e.context_at_first_reject || null,
+    }))
+    .sort((a, b) => (b.time_tracked_ms || 0) - (a.time_tracked_ms || 0))
+    .slice(0, 10);
+
+  // 2. Latest stage fail summary from opportunities.jsonl
+  const oppPath = statePath("journal", "opportunities.jsonl");
+  const { items: oppItems } = cachedReadJsonl(oppPath, 5000);
+  let latestStageFails = null;
+  for (let i = oppItems.length - 1; i >= 0; i--) {
+    if (oppItems[i].type === "stage_fail_summary") {
+      latestStageFails = oppItems[i];
+      break;
+    }
+  }
+  const stageFails = latestStageFails?.counts
+    ? Object.entries(latestStageFails.counts)
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+    : [];
+  const stageFailAge = latestStageFails ? Math.round((now - latestStageFails.ts) / 1000) : null;
+
+  // 3. Today's closed tracking entries
+  const closedToday = oppItems
+    .filter(e => e.type === "opp_closed_tracking" && (e.ts || 0) >= todayStart)
+    .map(e => ({
+      slug: e.slug,
+      league: e.league || "",
+      close_reason: e.close_reason || "unknown",
+      best_ask_seen: e.best_ask_seen ?? null,
+      last_reject_reason: e.last_reject_reason || null,
+      tracking_duration_ms: e.tracking_duration_ms || 0,
+      total_ticks: e.total_ticks_tracked || 0,
+    }))
+    .sort((a, b) => (b.tracking_duration_ms || 0) - (a.tracking_duration_ms || 0))
+    .slice(0, 15);
+
+  return {
+    near_misses: nearMisses,
+    stage_fails: stageFails,
+    stage_fail_age_seconds: stageFailAge,
+    closed_today: closedToday,
+  };
+}
+
+/**
  * Compute active-now league summary from watchlist (snapshot).
  */
 function computeLeagueSummary(state) {
@@ -467,6 +536,8 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       other_count: rejectReasons.other_count
     },
 
+    opportunity_tracker: buildOpportunityTracker(),
+
     websocket: (() => {
       const wsMetrics = state?.runtime?.wsClient?.getMetrics();
       if (!wsMetrics) return null;
@@ -730,16 +801,49 @@ function generateDashboardHTML() {
     </div>
 
     <div class="table">
-      <div class="table-title">Top Reject Reasons (Last Cycle)</div>
-      <table id="reject-table">
+      <div class="table-title">🔍 Near Misses (Active)</div>
+      <table id="near-miss-table">
         <thead>
           <tr>
+            <th>Market</th>
             <th>Reason</th>
+            <th>Ask/Bid</th>
+            <th>Tracked</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div id="near-miss-empty" style="color:#64748b;font-size:13px;padding:8px;display:none;">No active near misses</div>
+    </div>
+
+    <div class="table">
+      <div class="table-title">⚡ Stage Fails <span id="stage-fail-age" style="color:#64748b;font-size:12px;"></span></div>
+      <table id="stage-fail-table">
+        <thead>
+          <tr>
+            <th>League : Stage</th>
             <th>Count</th>
           </tr>
         </thead>
         <tbody></tbody>
       </table>
+      <div id="stage-fail-empty" style="color:#64748b;font-size:13px;padding:8px;display:none;">No recent stage fails</div>
+    </div>
+
+    <div class="table">
+      <div class="table-title">📋 Closed Opportunities (Today)</div>
+      <table id="closed-opp-table">
+        <thead>
+          <tr>
+            <th>Market</th>
+            <th>Best Ask</th>
+            <th>Close Reason</th>
+            <th>Duration</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div id="closed-opp-empty" style="color:#64748b;font-size:13px;padding:8px;display:none;">No closed opportunities today</div>
     </div>
   </div>
 
@@ -804,20 +908,74 @@ function generateDashboardHTML() {
           row.insertCell(1).textContent = count;
         }
 
-        // Reject reasons table
-        const rejectTbody = document.getElementById('reject-table').querySelector('tbody');
-        rejectTbody.innerHTML = '';
-        const reasons = data.reject_reasons?.top5 || [];
-        for (const { reason, count } of reasons) {
-          const row = rejectTbody.insertRow();
-          row.insertCell(0).textContent = reason;
-          row.insertCell(1).textContent = count;
+        // Opportunity Tracker — Near Misses
+        const opp = data.opportunity_tracker || {};
+        const nmTbody = document.getElementById('near-miss-table').querySelector('tbody');
+        const nmEmpty = document.getElementById('near-miss-empty');
+        nmTbody.innerHTML = '';
+        const nearMisses = opp.near_misses || [];
+        if (nearMisses.length === 0) {
+          nmEmpty.style.display = 'block';
+          document.getElementById('near-miss-table').querySelector('thead').style.display = 'none';
+        } else {
+          nmEmpty.style.display = 'none';
+          document.getElementById('near-miss-table').querySelector('thead').style.display = '';
+          for (const nm of nearMisses) {
+            const row = nmTbody.insertRow();
+            const slug = nm.slug || '?';
+            row.insertCell(0).textContent = slug.length > 35 ? slug.slice(0, 32) + '...' : slug;
+            row.insertCell(1).textContent = (nm.reject_reason || '').replace(/^(soccer|cbb|nba|esports)_gate:/, '');
+            const ask = nm.best_ask_with_context?.ask ?? nm.ask;
+            const bid = nm.best_ask_with_context?.bid ?? nm.bid;
+            row.insertCell(2).textContent = (ask != null ? ask.toFixed(3) : '?') + ' / ' + (bid != null ? bid.toFixed(3) : '?');
+            const secs = Math.round((nm.time_tracked_ms || 0) / 1000);
+            row.insertCell(3).textContent = secs >= 60 ? Math.floor(secs/60) + 'm ' + (secs%60) + 's' : secs + 's';
+          }
         }
-        const otherCount = data.reject_reasons?.other_count || 0;
-        if (otherCount > 0) {
-          const row = rejectTbody.insertRow();
-          row.insertCell(0).textContent = 'other';
-          row.insertCell(1).textContent = otherCount;
+
+        // Opportunity Tracker — Stage Fails
+        const sfTbody = document.getElementById('stage-fail-table').querySelector('tbody');
+        const sfEmpty = document.getElementById('stage-fail-empty');
+        sfTbody.innerHTML = '';
+        const stageFails = opp.stage_fails || [];
+        const sfAge = opp.stage_fail_age_seconds;
+        document.getElementById('stage-fail-age').textContent = sfAge != null ? '(' + (sfAge >= 60 ? Math.floor(sfAge/60) + 'm ago' : sfAge + 's ago') + ')' : '';
+        if (stageFails.length === 0) {
+          sfEmpty.style.display = 'block';
+          document.getElementById('stage-fail-table').querySelector('thead').style.display = 'none';
+        } else {
+          sfEmpty.style.display = 'none';
+          document.getElementById('stage-fail-table').querySelector('thead').style.display = '';
+          for (const sf of stageFails) {
+            const row = sfTbody.insertRow();
+            row.insertCell(0).textContent = sf.reason;
+            row.insertCell(1).textContent = sf.count;
+          }
+        }
+
+        // Opportunity Tracker — Closed Today
+        const ctTbody = document.getElementById('closed-opp-table').querySelector('tbody');
+        const ctEmpty = document.getElementById('closed-opp-empty');
+        ctTbody.innerHTML = '';
+        const closedToday = opp.closed_today || [];
+        if (closedToday.length === 0) {
+          ctEmpty.style.display = 'block';
+          document.getElementById('closed-opp-table').querySelector('thead').style.display = 'none';
+        } else {
+          ctEmpty.style.display = 'none';
+          document.getElementById('closed-opp-table').querySelector('thead').style.display = '';
+          for (const ct of closedToday) {
+            const row = ctTbody.insertRow();
+            const slug = ct.slug || '?';
+            row.insertCell(0).textContent = slug.length > 30 ? slug.slice(0, 27) + '...' : slug;
+            row.insertCell(1).textContent = ct.best_ask_seen != null ? ct.best_ask_seen.toFixed(3) : '?';
+            const reason = ct.close_reason || '?';
+            const cell = row.insertCell(2);
+            cell.textContent = reason === 'traded' ? '✅ traded' : reason.replace('purged_', '');
+            if (reason === 'traded') cell.style.color = '#10b981';
+            const dur = Math.round((ct.tracking_duration_ms || 0) / 1000);
+            row.insertCell(3).textContent = dur >= 60 ? Math.floor(dur/60) + 'm' : dur + 's';
+          }
         }
       } catch (e) {
         console.error('Failed to fetch health:', e);
