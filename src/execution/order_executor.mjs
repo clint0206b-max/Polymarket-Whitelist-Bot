@@ -111,6 +111,10 @@ export async function getPositions(funder) {
  * Returns weighted average price or null if unavailable.
  * Retries with backoff since trades may not be indexed immediately after fill.
  * Non-blocking: caller should treat null as "keep provisional, try later".
+ *
+ * IMPORTANT: client.getTrades() may return ALL recent trades for the user,
+ * ignoring the orderID parameter. We must filter by taker_order_id or
+ * maker_orders[].order_id to isolate fills for this specific order.
  */
 export async function fetchRealFillPrice(client, orderID, { maxRetries = 2, delayMs = 500 } = {}) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -123,9 +127,36 @@ export async function fetchRealFillPrice(client, orderID, { maxRetries = 2, dela
         }
         return null;
       }
+
+      // Filter trades that belong to this specific order.
+      // Our order can appear as taker_order_id (most common for market orders)
+      // or inside maker_orders[].order_id (if we were the maker side).
+      const matched = trades.filter(t => {
+        if (t.taker_order_id === orderID) return true;
+        if (Array.isArray(t.maker_orders)) {
+          return t.maker_orders.some(m => m.order_id === orderID);
+        }
+        return false;
+      });
+
+      const matchMethod = matched.length > 0
+        ? (matched[0].taker_order_id === orderID ? "taker" : "maker")
+        : "none";
+
+      console.log(`[FILL_PRICE] getTrades returned ${trades.length} trades, ${matched.length} matched orderID (via ${matchMethod})`);
+
+      if (matched.length === 0) {
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+          continue;
+        }
+        console.warn(`[FILL_PRICE] orderID=${orderID} not found in ${trades.length} trades after ${maxRetries + 1} attempts`);
+        return null;
+      }
+
       let totalValue = 0;
       let totalSize = 0;
-      for (const t of trades) {
+      for (const t of matched) {
         const price = Number(t.price);
         const size = Number(t.size);
         if (Number.isFinite(price) && Number.isFinite(size) && size > 0) {
