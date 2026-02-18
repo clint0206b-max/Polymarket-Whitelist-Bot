@@ -213,11 +213,25 @@
           <div id="loop-histogram" class="mt-3 space-y-1"></div>
         </div>
 
-        <!-- Reject Reasons -->
+        <!-- Opportunity Tracker: Near Misses -->
         <div class="bg-card rounded-lg border border-slate-700 p-4">
-          <h3 class="font-semibold text-white text-sm mb-3">🚫 Top Reject Reasons</h3>
-          <div class="space-y-1.5" id="reject-reasons"></div>
-          <div id="reject-empty" class="text-slate-500 text-xs">No data yet</div>
+          <h3 class="font-semibold text-white text-sm mb-3">🔍 Near Misses (Active)</h3>
+          <div class="space-y-1" id="near-misses"></div>
+          <div id="near-miss-empty" class="text-slate-500 text-xs">No active near misses</div>
+        </div>
+
+        <!-- Opportunity Tracker: Stage Fails -->
+        <div class="bg-card rounded-lg border border-slate-700 p-4">
+          <h3 class="font-semibold text-white text-sm mb-3">⚡ Stage Fails <span id="stage-fail-age" class="text-slate-500 text-xs font-normal"></span></h3>
+          <div class="space-y-1" id="stage-fails"></div>
+          <div id="stage-fail-empty" class="text-slate-500 text-xs">No recent stage fails</div>
+        </div>
+
+        <!-- Opportunity Tracker: Closed Today -->
+        <div class="bg-card rounded-lg border border-slate-700 p-4">
+          <h3 class="font-semibold text-white text-sm mb-3">📋 Closed Opportunities (Today)</h3>
+          <div class="space-y-1" id="closed-opps"></div>
+          <div id="closed-opp-empty" class="text-slate-500 text-xs">No closed opportunities today</div>
         </div>
 
         <!-- Timeout Analysis — split by category -->
@@ -433,21 +447,74 @@
         }
       }
 
-      // Reject reasons
-      const rr = h.reject_reasons?.top5 || h.reject_reasons || [];
-      if (Array.isArray(rr) && rr.length) {
-        $('reject-empty').classList.add('hidden');
-        const maxCount = rr[0]?.count || 1;
-        $('reject-reasons').innerHTML = rr.slice(0, 8).map(r => {
-          const pct = Math.round((r.count / maxCount) * 100);
-          return `<div class="flex items-center gap-2">
-            <div class="flex-1 bg-slate-700 rounded-full h-1.5 overflow-hidden">
-              <div class="h-full bg-red-500/60 rounded-full" style="width:${pct}%"></div>
-            </div>
-            <span class="text-xs text-slate-400 whitespace-nowrap">${r.reason}</span>
-            <span class="text-xs mono text-slate-300 w-8 text-right">${r.count}</span>
+      // Opportunity Tracker
+      const opp = h.opportunity_tracker || {};
+
+      // Near Misses
+      const nm = opp.near_misses || [];
+      if (nm.length) {
+        $('near-miss-empty').classList.add('hidden');
+        $('near-misses').innerHTML = nm.map(m => {
+          const slug = (m.slug || '?').length > 30 ? m.slug.slice(0, 27) + '...' : m.slug;
+          const reason = (m.reject_reason || '').replace(/^(soccer|cbb|nba|esports)_gate:/, '');
+          const ask = m.best_ask_with_context?.ask ?? m.ask;
+          const bid = m.best_ask_with_context?.bid ?? m.bid;
+          const secs = Math.round((m.time_tracked_ms || 0) / 1000);
+          const dur = secs >= 60 ? Math.floor(secs/60) + 'm ' + (secs%60) + 's' : secs + 's';
+          return `<div class="flex items-center gap-2 text-xs">
+            <span class="text-slate-300 truncate flex-1" title="${m.slug}">${slug}</span>
+            <span class="text-amber-400 whitespace-nowrap">${reason}</span>
+            <span class="mono text-slate-400 w-16 text-right">${ask != null ? ask.toFixed(3) : '?'}/${bid != null ? bid.toFixed(3) : '?'}</span>
+            <span class="mono text-slate-500 w-12 text-right">${dur}</span>
           </div>`;
         }).join('');
+      } else {
+        $('near-miss-empty').classList.remove('hidden');
+        $('near-misses').innerHTML = '';
+      }
+
+      // Stage Fails
+      const sf = opp.stage_fails || [];
+      const sfAge = opp.stage_fail_age_seconds;
+      $('stage-fail-age').textContent = sfAge != null ? '(' + (sfAge >= 60 ? Math.floor(sfAge/60) + 'm ago' : sfAge + 's ago') + ')' : '';
+      if (sf.length) {
+        $('stage-fail-empty').classList.add('hidden');
+        const maxSf = sf[0]?.count || 1;
+        $('stage-fails').innerHTML = sf.slice(0, 8).map(s => {
+          const pct = Math.round((s.count / maxSf) * 100);
+          return `<div class="flex items-center gap-2">
+            <div class="flex-1 bg-slate-700 rounded-full h-1.5 overflow-hidden">
+              <div class="h-full bg-orange-500/60 rounded-full" style="width:${pct}%"></div>
+            </div>
+            <span class="text-xs text-slate-400 whitespace-nowrap">${s.reason}</span>
+            <span class="text-xs mono text-slate-300 w-8 text-right">${s.count}</span>
+          </div>`;
+        }).join('');
+      } else {
+        $('stage-fail-empty').classList.remove('hidden');
+        $('stage-fails').innerHTML = '';
+      }
+
+      // Closed Opportunities Today
+      const ct = opp.closed_today || [];
+      if (ct.length) {
+        $('closed-opp-empty').classList.add('hidden');
+        $('closed-opps').innerHTML = ct.map(c => {
+          const slug = (c.slug || '?').length > 25 ? c.slug.slice(0, 22) + '...' : c.slug;
+          const reason = c.close_reason || '?';
+          const isTraded = reason === 'traded';
+          const dur = Math.round((c.tracking_duration_ms || 0) / 1000);
+          const durStr = dur >= 60 ? Math.floor(dur/60) + 'm' : dur + 's';
+          return `<div class="flex items-center gap-2 text-xs">
+            <span class="text-slate-300 truncate flex-1" title="${c.slug}">${slug}</span>
+            <span class="mono text-slate-400 w-10 text-right">${c.best_ask_seen != null ? c.best_ask_seen.toFixed(3) : '?'}</span>
+            <span class="${isTraded ? 'text-emerald-400' : 'text-slate-500'} whitespace-nowrap w-20">${isTraded ? '✅ traded' : reason.replace('purged_', '')}</span>
+            <span class="mono text-slate-500 w-10 text-right">${durStr}</span>
+          </div>`;
+        }).join('');
+      } else {
+        $('closed-opp-empty').classList.remove('hidden');
+        $('closed-opps').innerHTML = '';
       }
 
       // Daily utilization — universe funnel per league
