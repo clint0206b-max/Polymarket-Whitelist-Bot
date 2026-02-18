@@ -952,13 +952,21 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         const yesNorm = normTeam(yesOutcomeName);
         const aNorm = normTeam(teamA.name);
         const bNorm = normTeam(teamB.name);
+        // Also try fullName for cases where shortDisplayName is abbreviated (e.g. "E Michigan" vs "Eastern Michigan Eagles")
+        const aFullNorm = teamA.fullName ? normTeam(teamA.fullName) : null;
+        const bFullNorm = teamB.fullName ? normTeam(teamB.fullName) : null;
 
-        // Match: check if yes_outcome contains or is contained in either team name
+        // Match: check if yes_outcome contains or is contained in either team name (short or full)
+        function nameMatch(yesN, teamN) {
+          if (!yesN || !teamN) return false;
+          return yesN === teamN || yesN.includes(teamN) || teamN.includes(yesN);
+        }
+
         let yesIsA = false;
         let yesIsB = false;
         if (yesNorm && aNorm && bNorm) {
-          yesIsA = (yesNorm === aNorm || yesNorm.includes(aNorm) || aNorm.includes(yesNorm));
-          yesIsB = (yesNorm === bNorm || yesNorm.includes(bNorm) || bNorm.includes(yesNorm));
+          yesIsA = nameMatch(yesNorm, aNorm) || nameMatch(yesNorm, aFullNorm);
+          yesIsB = nameMatch(yesNorm, bNorm) || nameMatch(yesNorm, bFullNorm);
         }
 
         if (yesIsA && !yesIsB) {

@@ -602,8 +602,8 @@ export function deriveCbbContextForMarket(market, events, cfg, nowTs) {
       decided_rule: "cbb_v0",
       decided_pass: decided,
       teams: {
-        a: { name: a?.team?.shortDisplayName || a?.team?.displayName || null, score: sa ?? null },
-        b: { name: b?.team?.shortDisplayName || b?.team?.displayName || null, score: sb ?? null }
+        a: { name: a?.team?.shortDisplayName || a?.team?.displayName || null, fullName: a?.team?.displayName || a?.team?.shortDisplayName || null, score: sa ?? null },
+        b: { name: b?.team?.shortDisplayName || b?.team?.displayName || null, fullName: b?.team?.displayName || b?.team?.shortDisplayName || null, score: sb ?? null }
       },
       match: m.match
     }
