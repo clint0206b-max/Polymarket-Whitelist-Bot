@@ -435,6 +435,13 @@
       };
       tmEl.className = 'text-xs px-2 py-0.5 rounded-full mono ' + (tb.paused ? 'bg-red-500/20 text-red-400' : (tmColors[tMode] || tmColors.paper));
 
+      // Balance
+      const lastBal = tb.last_balance;
+      if (lastBal != null) {
+        $('kpi-balance').textContent = '$' + Number(lastBal).toFixed(2);
+        $('kpi-balance').className = 'text-2xl font-bold mono mt-1 text-white';
+      }
+
       $('build').textContent = h.build_commit || '';
       $('uptime').textContent = 'up ' + ago((h.uptime_seconds || 0) * 1000);
 
@@ -658,13 +665,6 @@
       }
 
       $('trades-summary').textContent = `${s.wins_today||0}W / ${s.losses_today||0}L · $${(s.pnl_total||0).toFixed(2)} all-time`;
-
-      // Balance from trade_bridge
-      const lastBal = h.trade_bridge?.last_balance;
-      if (lastBal != null) {
-        $('kpi-balance').textContent = '$' + Number(lastBal).toFixed(2);
-        $('kpi-balance').className = 'text-2xl font-bold mono mt-1 text-white';
-      }
 
       // Timeout stats — split by category
       const pw = s.timeouts_price_window || {};
