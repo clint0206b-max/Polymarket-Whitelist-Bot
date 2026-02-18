@@ -90,6 +90,7 @@ class TestableTracker {
         best_ask_seen: priceSnapshot.ask,
         worst_ask_seen: priceSnapshot.ask,
         best_bid_seen: priceSnapshot.bid,
+        worst_bid_seen: priceSnapshot.bid,
         best_ask_with_context: { ts: now, ask: priceSnapshot.ask, bid: priceSnapshot.bid, spread: priceSnapshot.spread, entry_depth_usd_ask: depthSnapshot?.entry_depth_usd_ask ?? null },
         current_reject_reason: rejectReason,
         reject_reason_counts: { [rejectReason]: 1 },
@@ -178,9 +179,13 @@ class TestableTracker {
       ts: now,
       slug: entry.slug,
       close_reason: "traded",
+      entry_block_reason: entry.current_reject_reason || null,
       tracking_duration_ms: now - entry.first_seen_ts,
       best_ask_seen: entry.best_ask_seen,
       worst_ask_seen: entry.worst_ask_seen,
+      best_bid_seen: entry.best_bid_seen,
+      worst_bid_seen: entry.worst_bid_seen ?? null,
+      last_reject_reason: entry.current_reject_reason,
       reject_reason_counts: { ...entry.reject_reason_counts },
       total_ticks_in_range: entry.observed_ticks_in_range,
       total_ticks_tracked: entry.observed_ticks_tracked || entry.observed_ticks_in_range,
@@ -205,9 +210,13 @@ class TestableTracker {
       ts: now,
       slug: entry.slug,
       close_reason: closeReason,
+      entry_block_reason: entry.current_reject_reason || null,
       tracking_duration_ms: now - entry.first_seen_ts,
       best_ask_seen: entry.best_ask_seen,
       worst_ask_seen: entry.worst_ask_seen,
+      best_bid_seen: entry.best_bid_seen,
+      worst_bid_seen: entry.worst_bid_seen ?? null,
+      last_reject_reason: entry.current_reject_reason,
       reject_reason_counts: { ...entry.reject_reason_counts },
       total_ticks_in_range: entry.observed_ticks_in_range,
       total_ticks_tracked: entry.observed_ticks_tracked || entry.observed_ticks_in_range,
@@ -232,6 +241,7 @@ class TestableTracker {
     }
     if (priceSnapshot.bid != null) {
       if (entry.best_bid_seen == null || priceSnapshot.bid > entry.best_bid_seen) entry.best_bid_seen = priceSnapshot.bid;
+      if (entry.worst_bid_seen == null || priceSnapshot.bid < entry.worst_bid_seen) entry.worst_bid_seen = priceSnapshot.bid;
     }
   }
 
@@ -392,7 +402,7 @@ describe("OpportunityTracker", () => {
   });
 
   describe("price range tracking", () => {
-    it("tracks best and worst ask", () => {
+    it("tracks best and worst ask and bid", () => {
       const m = makeMarket();
       tracker.onGateReject(m, "gate:x", makePrice(0.94, 0.92), makeDepth(), makeContext(), 1000);
       tracker.onGateReject(m, "gate:x", makePrice(0.96, 0.93), makeDepth(), makeContext(), 3000);
@@ -402,6 +412,7 @@ describe("OpportunityTracker", () => {
       assert.equal(entry.best_ask_seen, 0.96);
       assert.equal(entry.worst_ask_seen, 0.93);
       assert.equal(entry.best_bid_seen, 0.93);
+      assert.equal(entry.worst_bid_seen, 0.91);
     });
   });
 
@@ -480,6 +491,19 @@ describe("OpportunityTracker", () => {
       const m = makeMarket();
       tracker.onRemoved(m, "purged_ttl", null, null, 5000);
       assert.equal(tracker.journal.length, 0);
+    });
+
+    it("includes entry_block_reason and worst_bid_seen in closed log", () => {
+      const m = makeMarket();
+      tracker.onGateReject(m, "cbb_gate:winprob_below_threshold", makePrice(0.95, 0.93), makeDepth(), makeContext(), 1000);
+      tracker.onGateReject(m, "cbb_gate:winprob_below_threshold", makePrice(0.94, 0.88), makeDepth(), makeContext(), 3000);
+      tracker.onRemoved(m, "purged_terminal", { ask: 0.999, bid: 0.998 }, null, 60000);
+
+      const closed = tracker.journal.find(j => j.type === "opp_closed_tracking");
+      assert.equal(closed.entry_block_reason, "cbb_gate:winprob_below_threshold");
+      assert.equal(closed.close_reason, "purged_terminal"); // lifecycle unchanged
+      assert.equal(closed.worst_bid_seen, 0.88);
+      assert.equal(closed.best_bid_seen, 0.93);
     });
 
     it("granular close reasons are preserved", () => {

@@ -127,6 +127,7 @@ export class OpportunityTracker {
         best_ask_seen: priceSnapshot.ask,
         worst_ask_seen: priceSnapshot.ask,
         best_bid_seen: priceSnapshot.bid,
+        worst_bid_seen: priceSnapshot.bid,
         // Context at the moment best_ask was observed (prevents overcount of "wins perdidos")
         best_ask_with_context: {
           ts: now,
@@ -341,6 +342,9 @@ export class OpportunityTracker {
       if (entry.best_bid_seen == null || priceSnapshot.bid > entry.best_bid_seen) {
         entry.best_bid_seen = priceSnapshot.bid;
       }
+      if (entry.worst_bid_seen == null || priceSnapshot.bid < entry.worst_bid_seen) {
+        entry.worst_bid_seen = priceSnapshot.bid;
+      }
     }
   }
 
@@ -415,10 +419,12 @@ export class OpportunityTracker {
       league: entry.league,
       conditionId: entry.conditionId,
       close_reason: closeReason,
+      entry_block_reason: entry.current_reject_reason || null,
       tracking_duration_ms: now - entry.first_seen_ts,
       best_ask_seen: entry.best_ask_seen,
       worst_ask_seen: entry.worst_ask_seen,
       best_bid_seen: entry.best_bid_seen,
+      worst_bid_seen: entry.worst_bid_seen ?? null,
       last_reject_reason: entry.current_reject_reason,
       reject_reason_counts: { ...entry.reject_reason_counts },
       time_in_reason_ms: { ...entry.time_in_reason_ms },

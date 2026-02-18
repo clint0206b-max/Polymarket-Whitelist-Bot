@@ -501,15 +501,17 @@
         $('closed-opp-empty').classList.add('hidden');
         $('closed-opps').innerHTML = ct.map(c => {
           const slug = (c.slug || '?').length > 25 ? c.slug.slice(0, 22) + '...' : c.slug;
-          const reason = c.close_reason || '?';
-          const isTraded = reason === 'traded';
-          const dur = Math.round((c.tracking_duration_ms || 0) / 1000);
-          const durStr = dur >= 60 ? Math.floor(dur/60) + 'm' : dur + 's';
+          const block = (c.entry_block_reason || c.close_reason || '?').replace(/^(soccer|cbb|nba|esports)_gate:/, '');
+          const isTraded = c.close_reason === 'traded';
+          const bestAsk = c.best_ask_with_context?.ask ?? c.best_ask_seen;
+          const bestBid = c.best_bid_seen;
+          const worstBid = c.worst_bid_seen;
           return `<div class="flex items-center gap-2 text-xs">
             <span class="text-slate-300 truncate flex-1" title="${c.slug}">${slug}</span>
-            <span class="mono text-slate-400 w-10 text-right">${c.best_ask_seen != null ? c.best_ask_seen.toFixed(3) : '?'}</span>
-            <span class="${isTraded ? 'text-emerald-400' : 'text-slate-500'} whitespace-nowrap w-20">${isTraded ? '✅ traded' : reason.replace('purged_', '')}</span>
-            <span class="mono text-slate-500 w-10 text-right">${durStr}</span>
+            <span class="${isTraded ? 'text-emerald-400' : 'text-amber-400'} whitespace-nowrap">${isTraded ? 'traded' : block}</span>
+            <span class="mono text-slate-400 w-12 text-right" title="best exec ask">${bestAsk != null ? bestAsk.toFixed(3) : '?'}</span>
+            <span class="mono text-emerald-500/70 w-12 text-right" title="peak bid">${bestBid != null ? bestBid.toFixed(3) : '?'}</span>
+            <span class="mono text-red-400/70 w-12 text-right" title="trough bid">${worstBid != null ? worstBid.toFixed(3) : '?'}</span>
           </div>`;
         }).join('');
       } else {
