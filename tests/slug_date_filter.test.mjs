@@ -115,17 +115,17 @@ describe("upsertMarket slug date filter", () => {
     assert.equal(r.existed, true);
   });
 
-  it("boundary: exactly 24h ago is NOT rejected", () => {
-    // Slug date 2026-02-16 00:00 UTC, NOW is 2026-02-17 00:00 UTC = exactly 24h
-    const exactlyNow = new Date("2026-02-17T00:00:00Z").getTime();
+  it("boundary: exactly 36h ago is NOT rejected", () => {
+    // Slug date 2026-02-16 00:00 UTC, NOW is 2026-02-17 12:00 UTC = exactly 36h
+    const exactly36h = new Date("2026-02-17T12:00:00Z").getTime();
     const state = {};
-    const r = upsertMarket(state, makeMarket("epl-test-2026-02-16-foo"), exactlyNow);
-    // 24h exactly = not greater than, so accepted
+    const r = upsertMarket(state, makeMarket("epl-test-2026-02-16-foo"), exactly36h);
+    // 36h exactly = not greater than, so accepted
     assert.equal(r.changed, true);
   });
 
-  it("boundary: 24h + 1ms is rejected", () => {
-    const justOver = new Date("2026-02-17T00:00:01Z").getTime();
+  it("boundary: 36h + 1ms is rejected", () => {
+    const justOver = new Date("2026-02-17T12:00:01Z").getTime();
     const state = {};
     const r = upsertMarket(state, makeMarket("epl-test-2026-02-16-foo"), justOver);
     assert.equal(r.changed, false);

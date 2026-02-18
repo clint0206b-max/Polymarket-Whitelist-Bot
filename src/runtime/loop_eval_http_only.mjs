@@ -1226,7 +1226,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   // Skip markets with open positions (safety).
   {
     const { extractSlugDate } = await import("../strategy/watchlist_upsert.mjs");
-    const SLUG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    const SLUG_MAX_AGE_MS = 36 * 60 * 60 * 1000;
     for (const [key, m] of Object.entries(state.watchlist || {})) {
       if (openPositionSlugs.has(m.slug)) continue;
       const slugDate = extractSlugDate(m.slug);

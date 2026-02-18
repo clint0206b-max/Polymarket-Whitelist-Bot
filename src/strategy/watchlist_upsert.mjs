@@ -153,7 +153,7 @@ export function upsertMarket(state, market, now) {
   // markets that were added when they were fresh.
   if (!existed) {
     const slugDate = extractSlugDate(market.slug);
-    const MAX_SLUG_AGE_MS = 24 * 60 * 60 * 1000; // 24h
+    const MAX_SLUG_AGE_MS = 36 * 60 * 60 * 1000; // 36h (covers late-night US games with UTC date offset)
     if (slugDate && (now - slugDate.getTime()) > MAX_SLUG_AGE_MS) {
       return { changed: false, reason: "slug_date_expired" };
     }
