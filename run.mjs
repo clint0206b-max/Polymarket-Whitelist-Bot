@@ -4,7 +4,7 @@ import { loadConfig, resolveRunner } from "./src/core/config.js";
 import { acquireLock, releaseLock } from "./src/core/lockfile.js";
 import { nowMs, sleepMs } from "./src/core/time.js";
 import { readJsonWithFallback, writeJsonAtomic, resolvePath } from "./src/core/state_store.js";
-import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, addFailedBuy, removeOpen, reconcileIndex } from "./src/core/journal.mjs";
+import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, addClosed, addFailedBuy, removeOpen, reconcileIndex } from "./src/core/journal.mjs";
 import { reconcileExecutionsFromSignals } from "./src/core/reconcile_journals.mjs";
 import { DirtyTracker, detectChanges } from "./src/core/dirty_tracker.mjs";
 import { startHealthServer } from "./src/runtime/health_server.mjs";
