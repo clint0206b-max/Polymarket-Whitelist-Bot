@@ -10,7 +10,8 @@
   "filters": {
     "min_prob": 0.93,
     "max_entry_price": 0.98,
-    "max_spread": 0.04
+    "max_spread": 0.04,
+    "min_entry_depth_usd_ask": 500
   },
   "_deprecated_entry_rules": {
     "_note": "DEAD CONFIG — was never read by pipeline. Moved to filters. Delete after 2026-03-01.",
@@ -33,6 +34,7 @@
     "stop_loss_bid": 0.70
   },
   "context": {
+    "enabled": true,
     "entry_rules": {
       "gate_mode_nba": "blocking",
       "gate_mode_cbb": "blocking"
