@@ -1747,6 +1747,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         detail: (bestAsk == null && bestBid == null) ? "missing_best_ask+missing_best_bid" : (bestAsk == null ? "missing_best_ask" : "missing_best_bid")
       });
       recordPendingConfirmFail("fail_quote_incomplete");
+      // Silent tick: keep tracked market alive without counting as "in range"
+      oppTracker.onSilentTick(m, { ask: bestAsk, bid: bestBid, spread: null }, null, tNow);
 
       // still persist partial last_price for observability
       {
@@ -2030,6 +2032,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       bumpBucket("reject", `reject_by_league:${m.league}:${base.reason}`, 1);
       setReject(m, base.reason);
       oppTracker.recordStageFail(m.league, `stage1:${base.reason}`, tNow);
+      // Silent tick: keep tracked market alive without counting as "in range"
+      oppTracker.onSilentTick(m, { ask: bestAsk, bid: bestBid, spread: bestAsk - bestBid }, { entry_depth_usd_ask: m.liquidity?.entry_depth_usd_ask ?? null, exit_depth_usd_bid: m.liquidity?.exit_depth_usd_bid ?? null }, tNow);
       if (base.reason === "price_out_of_range") recordPendingConfirmFail("fail_base_price_out_of_range");
       else if (base.reason === "spread_above_max") recordPendingConfirmFail("fail_spread_above_max");
       continue;
@@ -2052,6 +2056,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       // Action 2: terminal outcome of tick
       setReject(m, "fail_near_margin");
       oppTracker.recordStageFail(m.league, "stage1:fail_near_margin", tNow);
+      oppTracker.onSilentTick(m, { ask: bestAsk, bid: bestBid, spread: bestAsk - bestBid }, { entry_depth_usd_ask: m.liquidity?.entry_depth_usd_ask ?? null, exit_depth_usd_bid: m.liquidity?.exit_depth_usd_bid ?? null }, tNow);
       if (startedPending) recordPendingConfirmFail("fail_near_margin");
       continue;
     }
@@ -2075,6 +2080,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       bumpBucket("reject", `reject_by_league:${m.league}:${depth.reason}`, 1);
       setReject(m, depth.reason);
       oppTracker.recordStageFail(m.league, `stage2:${depth.reason}`, tNow);
+      oppTracker.onSilentTick(m, { ask: bestAsk, bid: bestBid, spread: bestAsk - bestBid }, { entry_depth_usd_ask: metrics.entry_depth_usd_ask, exit_depth_usd_bid: metrics.exit_depth_usd_bid }, tNow);
       if (depth.reason === "depth_bid_below_min") recordPendingConfirmFail("fail_depth_bid_below_min");
       else if (depth.reason === "depth_ask_below_min") recordPendingConfirmFail("fail_depth_ask_below_min");
       continue;

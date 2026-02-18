@@ -127,11 +127,21 @@ export class OpportunityTracker {
         best_ask_seen: priceSnapshot.ask,
         worst_ask_seen: priceSnapshot.ask,
         best_bid_seen: priceSnapshot.bid,
+        // Context at the moment best_ask was observed (prevents overcount of "wins perdidos")
+        best_ask_with_context: {
+          ts: now,
+          ask: priceSnapshot.ask,
+          bid: priceSnapshot.bid,
+          spread: priceSnapshot.spread,
+          entry_depth_usd_ask: depthSnapshot?.entry_depth_usd_ask ?? null,
+        },
         current_reject_reason: rejectReason,
         reject_reason_counts: { [rejectReason]: 1 },
         time_in_reason_ms: { [rejectReason]: 0 },
-        observed_ticks_in_range: 1,
-        observed_time_in_range_ms: 0,
+        observed_ticks_in_range: 1,      // ticks where market passed basics (gate reject)
+        observed_time_in_range_ms: 0,    // time where market passed basics (gate reject)
+        observed_ticks_tracked: 1,       // all ticks including silent (out of range)
+        observed_time_tracked_ms: 0,     // all time including silent (out of range)
         gap_count: 0,
         context_at_first_reject: { ...contextSnapshot },
         dirty: true,
@@ -150,8 +160,9 @@ export class OpportunityTracker {
     if (tickGap > gapThresholdMs) {
       entry.gap_count++;
     } else {
-      // Accumulate observed time (only if no gap)
+      // Accumulate observed time: both in_range and tracked
       entry.observed_time_in_range_ms += tickGap;
+      entry.observed_time_tracked_ms = (entry.observed_time_tracked_ms || 0) + tickGap;
     }
 
     // Accumulate time in current reason
@@ -162,15 +173,10 @@ export class OpportunityTracker {
 
     entry.last_tick_ts = now;
     entry.observed_ticks_in_range++;
+    entry.observed_ticks_tracked = (entry.observed_ticks_tracked || 0) + 1;
 
-    // Update price range
-    if (priceSnapshot.ask != null) {
-      if (entry.best_ask_seen == null || priceSnapshot.ask > entry.best_ask_seen) entry.best_ask_seen = priceSnapshot.ask;
-      if (entry.worst_ask_seen == null || priceSnapshot.ask < entry.worst_ask_seen) entry.worst_ask_seen = priceSnapshot.ask;
-    }
-    if (priceSnapshot.bid != null) {
-      if (entry.best_bid_seen == null || priceSnapshot.bid > entry.best_bid_seen) entry.best_bid_seen = priceSnapshot.bid;
-    }
+    // Update price range + context at best ask
+    this._updatePriceRange(entry, priceSnapshot, depthSnapshot, now);
 
     // Reason transition → log
     if (rejectReason !== entry.current_reject_reason) {
@@ -184,6 +190,38 @@ export class OpportunityTracker {
       // Same reason — just increment counter
       entry.reject_reason_counts[rejectReason] = (entry.reject_reason_counts[rejectReason] || 0) + 1;
     }
+  }
+
+  /**
+   * Silent tick: market is already tracked but failed stage1 (price_out_of_range)
+   * or quote_incomplete. Keeps continuity alive without logging or changing reason.
+   *
+   * Updates: last_tick_ts, price range, observed_time_tracked_ms, observed_ticks_tracked
+   * Does NOT update: observed_time_in_range_ms, observed_ticks_in_range, reject counters
+   */
+  onSilentTick(market, priceSnapshot, depthSnapshot, now) {
+    if (!this._enabled) return;
+
+    const key = trackingKey(market.conditionId, market.slug);
+    const entry = this._tracked.get(key);
+    if (!entry) return; // not tracked — nothing to do
+
+    const evalIntervalMs = Number(this._cfg?.polling?.clob_eval_seconds || 2) * 1000;
+    const gapThresholdMs = evalIntervalMs * GAP_MULTIPLIER;
+    const tickGap = now - entry.last_tick_ts;
+
+    if (tickGap > gapThresholdMs) {
+      entry.gap_count++;
+    } else {
+      // Only tracked time, NOT in_range time
+      entry.observed_time_tracked_ms = (entry.observed_time_tracked_ms || 0) + tickGap;
+    }
+
+    entry.last_tick_ts = now;
+    entry.observed_ticks_tracked = (entry.observed_ticks_tracked || 0) + 1;
+
+    // Update price range + best_ask context
+    this._updatePriceRange(entry, priceSnapshot, depthSnapshot, now);
   }
 
   /**
@@ -282,6 +320,30 @@ export class OpportunityTracker {
 
   // --- Internal ---
 
+  _updatePriceRange(entry, priceSnapshot, depthSnapshot, now) {
+    if (priceSnapshot.ask != null) {
+      if (entry.best_ask_seen == null || priceSnapshot.ask > entry.best_ask_seen) {
+        entry.best_ask_seen = priceSnapshot.ask;
+        // Snapshot context at the moment of best ask (for truthful analysis)
+        entry.best_ask_with_context = {
+          ts: now,
+          ask: priceSnapshot.ask,
+          bid: priceSnapshot.bid,
+          spread: priceSnapshot.spread,
+          entry_depth_usd_ask: depthSnapshot?.entry_depth_usd_ask ?? null,
+        };
+      }
+      if (entry.worst_ask_seen == null || priceSnapshot.ask < entry.worst_ask_seen) {
+        entry.worst_ask_seen = priceSnapshot.ask;
+      }
+    }
+    if (priceSnapshot.bid != null) {
+      if (entry.best_bid_seen == null || priceSnapshot.bid > entry.best_bid_seen) {
+        entry.best_bid_seen = priceSnapshot.bid;
+      }
+    }
+  }
+
   _hasAnyDirtyEntry() {
     for (const entry of this._tracked.values()) {
       if (entry.dirty) return true;
@@ -361,7 +423,10 @@ export class OpportunityTracker {
       reject_reason_counts: { ...entry.reject_reason_counts },
       time_in_reason_ms: { ...entry.time_in_reason_ms },
       total_ticks_in_range: entry.observed_ticks_in_range,
+      total_ticks_tracked: entry.observed_ticks_tracked || entry.observed_ticks_in_range,
       observed_time_in_range_ms: entry.observed_time_in_range_ms,
+      observed_time_tracked_ms: entry.observed_time_tracked_ms || entry.observed_time_in_range_ms,
+      best_ask_with_context: entry.best_ask_with_context || null,
       gap_count: entry.gap_count,
       last_known_price: lastPrice ? {
         ask: lastPrice.ask ?? lastPrice.yes_best_ask ?? null,

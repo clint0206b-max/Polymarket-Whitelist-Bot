@@ -90,11 +90,14 @@ class TestableTracker {
         best_ask_seen: priceSnapshot.ask,
         worst_ask_seen: priceSnapshot.ask,
         best_bid_seen: priceSnapshot.bid,
+        best_ask_with_context: { ts: now, ask: priceSnapshot.ask, bid: priceSnapshot.bid, spread: priceSnapshot.spread, entry_depth_usd_ask: depthSnapshot?.entry_depth_usd_ask ?? null },
         current_reject_reason: rejectReason,
         reject_reason_counts: { [rejectReason]: 1 },
         time_in_reason_ms: { [rejectReason]: 0 },
         observed_ticks_in_range: 1,
         observed_time_in_range_ms: 0,
+        observed_ticks_tracked: 1,
+        observed_time_tracked_ms: 0,
         gap_count: 0,
         context_at_first_reject: { ...contextSnapshot },
         dirty: true,
@@ -123,6 +126,7 @@ class TestableTracker {
       entry.gap_count++;
     } else {
       entry.observed_time_in_range_ms += tickGap;
+      entry.observed_time_tracked_ms = (entry.observed_time_tracked_ms || 0) + tickGap;
     }
 
     if (entry.current_reject_reason && tickGap <= gapThresholdMs) {
@@ -132,14 +136,10 @@ class TestableTracker {
 
     entry.last_tick_ts = now;
     entry.observed_ticks_in_range++;
+    entry.observed_ticks_tracked = (entry.observed_ticks_tracked || 0) + 1;
 
-    if (priceSnapshot.ask != null) {
-      if (entry.best_ask_seen == null || priceSnapshot.ask > entry.best_ask_seen) entry.best_ask_seen = priceSnapshot.ask;
-      if (entry.worst_ask_seen == null || priceSnapshot.ask < entry.worst_ask_seen) entry.worst_ask_seen = priceSnapshot.ask;
-    }
-    if (priceSnapshot.bid != null) {
-      if (entry.best_bid_seen == null || priceSnapshot.bid > entry.best_bid_seen) entry.best_bid_seen = priceSnapshot.bid;
-    }
+    // Update price range + best_ask context
+    this._updatePriceRange(entry, priceSnapshot, depthSnapshot, now);
 
     if (rejectReason !== entry.current_reject_reason) {
       const prevReason = entry.current_reject_reason;
@@ -183,7 +183,10 @@ class TestableTracker {
       worst_ask_seen: entry.worst_ask_seen,
       reject_reason_counts: { ...entry.reject_reason_counts },
       total_ticks_in_range: entry.observed_ticks_in_range,
+      total_ticks_tracked: entry.observed_ticks_tracked || entry.observed_ticks_in_range,
       observed_time_in_range_ms: entry.observed_time_in_range_ms,
+      observed_time_tracked_ms: entry.observed_time_tracked_ms || entry.observed_time_in_range_ms,
+      best_ask_with_context: entry.best_ask_with_context || null,
       gap_count: entry.gap_count,
     });
     this._tracked.delete(key);
@@ -207,13 +210,50 @@ class TestableTracker {
       worst_ask_seen: entry.worst_ask_seen,
       reject_reason_counts: { ...entry.reject_reason_counts },
       total_ticks_in_range: entry.observed_ticks_in_range,
+      total_ticks_tracked: entry.observed_ticks_tracked || entry.observed_ticks_in_range,
       observed_time_in_range_ms: entry.observed_time_in_range_ms,
+      observed_time_tracked_ms: entry.observed_time_tracked_ms || entry.observed_time_in_range_ms,
+      best_ask_with_context: entry.best_ask_with_context || null,
       gap_count: entry.gap_count,
       last_known_price: lastPrice,
       context_at_close: lastContext,
     });
     this._tracked.delete(key);
     this._dirty = true;
+  }
+
+  _updatePriceRange(entry, priceSnapshot, depthSnapshot, now) {
+    if (priceSnapshot.ask != null) {
+      if (entry.best_ask_seen == null || priceSnapshot.ask > entry.best_ask_seen) {
+        entry.best_ask_seen = priceSnapshot.ask;
+        entry.best_ask_with_context = { ts: now, ask: priceSnapshot.ask, bid: priceSnapshot.bid, spread: priceSnapshot.spread, entry_depth_usd_ask: depthSnapshot?.entry_depth_usd_ask ?? null };
+      }
+      if (entry.worst_ask_seen == null || priceSnapshot.ask < entry.worst_ask_seen) entry.worst_ask_seen = priceSnapshot.ask;
+    }
+    if (priceSnapshot.bid != null) {
+      if (entry.best_bid_seen == null || priceSnapshot.bid > entry.best_bid_seen) entry.best_bid_seen = priceSnapshot.bid;
+    }
+  }
+
+  onSilentTick(market, priceSnapshot, depthSnapshot, now) {
+    if (!this._enabled) return;
+    const key = trackingKey(market.conditionId, market.slug);
+    const entry = this._tracked.get(key);
+    if (!entry) return;
+
+    const evalIntervalMs = Number(this._cfg?.polling?.clob_eval_seconds || 2) * 1000;
+    const gapThresholdMs = evalIntervalMs * 3;
+    const tickGap = now - entry.last_tick_ts;
+
+    if (tickGap > gapThresholdMs) {
+      entry.gap_count++;
+    } else {
+      entry.observed_time_tracked_ms = (entry.observed_time_tracked_ms || 0) + tickGap;
+    }
+
+    entry.last_tick_ts = now;
+    entry.observed_ticks_tracked = (entry.observed_ticks_tracked || 0) + 1;
+    this._updatePriceRange(entry, priceSnapshot, depthSnapshot, now);
   }
 
   recordStageFail(league, stage, now) {
@@ -643,6 +683,117 @@ describe("OpportunityTracker", () => {
       assert.equal(tracker.tracked.size, 0);
       const closed = tracker.journal.find(j => j.type === "opp_closed_tracking");
       assert.equal(closed.close_reason, "traded");
+    });
+  });
+
+  describe("onSilentTick (out-of-range continuity)", () => {
+    it("does nothing for non-tracked markets", () => {
+      const m = makeMarket();
+      tracker.onSilentTick(m, makePrice(0.99), makeDepth(), 1000);
+      assert.equal(tracker.tracked.size, 0);
+      assert.equal(tracker.journal.length, 0);
+    });
+
+    it("updates tracked_ms but NOT in_range_ms", () => {
+      const m = makeMarket();
+      // Gate reject at T+1000
+      tracker.onGateReject(m, "gate:x", makePrice(0.94), makeDepth(), makeContext(), 1000);
+      // Gate reject at T+3000 (in range)
+      tracker.onGateReject(m, "gate:x", makePrice(0.95), makeDepth(), makeContext(), 3000);
+      // Silent tick at T+5000 (out of range, price=0.99)
+      tracker.onSilentTick(m, makePrice(0.99, 0.97), makeDepth(), 5000);
+      // Silent tick at T+7000 (still out of range)
+      tracker.onSilentTick(m, makePrice(0.985, 0.96), makeDepth(), 7000);
+
+      const key = trackingKey("cond123", "cbb-mich-pur-2026-02-17");
+      const entry = tracker.tracked.get(key);
+
+      // in_range: 1000→3000 = 2000ms (only gate reject ticks)
+      assert.equal(entry.observed_time_in_range_ms, 2000);
+      // tracked: 1000→3000 + 3000→5000 + 5000→7000 = 6000ms
+      assert.equal(entry.observed_time_tracked_ms, 6000);
+      // ticks_in_range: 2 (initial + 1 gate reject)
+      assert.equal(entry.observed_ticks_in_range, 2);
+      // ticks_tracked: 4 (2 gate + 2 silent)
+      assert.equal(entry.observed_ticks_tracked, 4);
+    });
+
+    it("updates best_ask_seen from silent tick", () => {
+      const m = makeMarket();
+      tracker.onGateReject(m, "gate:x", makePrice(0.94, 0.92), makeDepth(), makeContext(), 1000);
+      // Price spikes out of range
+      tracker.onSilentTick(m, makePrice(0.99, 0.97), makeDepth(800), 3000);
+
+      const key = trackingKey("cond123", "cbb-mich-pur-2026-02-17");
+      const entry = tracker.tracked.get(key);
+      assert.equal(entry.best_ask_seen, 0.99);
+    });
+
+    it("updates best_ask_with_context when new best", () => {
+      const m = makeMarket();
+      tracker.onGateReject(m, "gate:x", makePrice(0.94, 0.92), makeDepth(600), makeContext(), 1000);
+      tracker.onSilentTick(m, makePrice(0.99, 0.97), makeDepth(200), 3000);
+
+      const key = trackingKey("cond123", "cbb-mich-pur-2026-02-17");
+      const entry = tracker.tracked.get(key);
+      assert.equal(entry.best_ask_with_context.ask, 0.99);
+      assert.equal(entry.best_ask_with_context.bid, 0.97);
+      assert.equal(entry.best_ask_with_context.ts, 3000);
+      assert.equal(entry.best_ask_with_context.entry_depth_usd_ask, 200);
+    });
+
+    it("does NOT update best_ask_with_context when not a new best", () => {
+      const m = makeMarket();
+      tracker.onGateReject(m, "gate:x", makePrice(0.96, 0.93), makeDepth(600), makeContext(), 1000);
+      tracker.onSilentTick(m, makePrice(0.94, 0.92), makeDepth(500), 3000);
+
+      const key = trackingKey("cond123", "cbb-mich-pur-2026-02-17");
+      const entry = tracker.tracked.get(key);
+      // best_ask_with_context should still be from the first (higher) ask
+      assert.equal(entry.best_ask_with_context.ask, 0.96);
+      assert.equal(entry.best_ask_with_context.ts, 1000);
+    });
+
+    it("prevents gap_count when silent ticks fill the gap", () => {
+      const m = makeMarket();
+      tracker.onGateReject(m, "gate:x", makePrice(0.94), makeDepth(), makeContext(), 1000);
+      // Silent ticks every 2s (no gap)
+      tracker.onSilentTick(m, makePrice(0.99), makeDepth(), 3000);
+      tracker.onSilentTick(m, makePrice(0.985), makeDepth(), 5000);
+      // Back in range
+      tracker.onGateReject(m, "gate:x", makePrice(0.95), makeDepth(), makeContext(), 7000);
+
+      const key = trackingKey("cond123", "cbb-mich-pur-2026-02-17");
+      const entry = tracker.tracked.get(key);
+      assert.equal(entry.gap_count, 0); // no gaps — silent ticks maintained continuity
+    });
+
+    it("full lifecycle with silent ticks: in_range < tracked", () => {
+      const m = makeMarket();
+      // T+0: gate reject (in range)
+      tracker.onGateReject(m, "cbb_gate:too_much_time_left", makePrice(0.94, 0.92), makeDepth(600), makeContext(), 0);
+      // T+2000: gate reject (in range)
+      tracker.onGateReject(m, "cbb_gate:too_much_time_left", makePrice(0.95, 0.93), makeDepth(600), makeContext(), 2000);
+      // T+4000: price spikes to 0.99 (silent)
+      tracker.onSilentTick(m, makePrice(0.99, 0.97), makeDepth(100), 4000);
+      // T+6000: still out of range (silent)
+      tracker.onSilentTick(m, makePrice(0.985, 0.96), makeDepth(150), 6000);
+      // T+8000: back in range, gate reject
+      tracker.onGateReject(m, "cbb_gate:too_much_time_left", makePrice(0.95, 0.93), makeDepth(600), makeContext(), 8000);
+      // T+10000: purged terminal
+      tracker.onRemoved(m, "purged_terminal", { ask: 0.999, bid: 0.998 }, null, 10000);
+
+      const closed = tracker.journal.find(j => j.type === "opp_closed_tracking");
+      // in_range: 0→2000 + 6000→8000 = 4000ms (only gate reject periods)
+      assert.equal(closed.observed_time_in_range_ms, 4000);
+      // tracked: 0→2000 + 2000→4000 + 4000→6000 + 6000→8000 = 8000ms
+      assert.equal(closed.observed_time_tracked_ms, 8000);
+      // best_ask from silent tick
+      assert.equal(closed.best_ask_seen, 0.99);
+      assert.ok(closed.best_ask_with_context);
+      assert.equal(closed.best_ask_with_context.ask, 0.99);
+      assert.equal(closed.best_ask_with_context.bid, 0.97);
+      assert.equal(closed.best_ask_with_context.entry_depth_usd_ask, 100);
     });
   });
 });
