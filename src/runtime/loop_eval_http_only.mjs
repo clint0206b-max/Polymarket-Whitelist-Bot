@@ -217,7 +217,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   const wsClient = state.runtime.wsClient;
 
   // Initialize Opportunity Tracker (singleton, persisted)
-  if (!state.runtime.oppTracker) {
+  // Must check instanceof — plain objects from JSON deserialization are truthy but lack methods
+  if (!state.runtime.oppTracker || !(state.runtime.oppTracker instanceof OpportunityTracker)) {
     const bootId = String(state.runtime.boot_ts || Date.now());
     state.runtime.oppTracker = new OpportunityTracker(cfg, bootId);
     state.runtime.oppTracker.load();
