@@ -533,6 +533,12 @@ try {
                       removeOpen(idx, sig.signal_id);
                       saveOpenIndex(idx);
                       console.log(`[CLOSED] ${sig.slug} | full fill | PnL=$${pnl.toFixed(2)}${sellResult.priceProvisional ? " (provisional)" : ""}`);
+
+                      // Remove from watchlist after successful close (SL or resolved)
+                      if (state.watchlist[sig.slug]) {
+                        delete state.watchlist[sig.slug];
+                        console.log(`[WATCHLIST_PURGE] ${sig.slug} | removed after ${sig.close_reason}`);
+                      }
                     } else {
                       // Partial fill → mark pending, reconcile later
                       entry.close_status = "sell_executed";

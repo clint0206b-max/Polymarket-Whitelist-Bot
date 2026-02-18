@@ -44,6 +44,6 @@
     "expired_ttl_minutes": 5
   },
   "opportunity_tracker": {
-    "enabled": false
+    "enabled": true
   }
 }
