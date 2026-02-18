@@ -149,13 +149,13 @@ The bot operates as a deterministic funnel: markets flow from discovery → watc
    - Exit depth (bid side): ≥ $2,000 above 0.70 floor
    - Iterates levels until threshold met or floor hit
 
-6. **Pending Confirmation (6s window)**
+6. **Pending Confirmation (4s window, configurable)**
    - Cooldown: 20s per slug (prevents churning)
    - Timeout tracking: records entry price + bid at timeout
    - Counterfactual analysis: "would we have won?" (filter effectiveness)
 
 7. **Signal Generation**
-   - Promoted after 6s confirmation OR immediate if gate blocking disabled
+   - Promoted after confirmation window OR immediate if gate blocking disabled
    - Logs to `signals.jsonl` (append-only, crash-safe)
    - Updates `open_index.json` (open paper positions)
    - Includes context snapshot (win probability, margin, time left)
@@ -166,6 +166,7 @@ The bot operates as a deterministic funnel: markets flow from discovery → watc
    - SL at 0.70 with escalating floor (5 attempts: -0.00, -0.01, -0.02, -0.03, -0.05)
    - Post-fill verification (conditional balance check)
    - Pause fail-closed on SL sell failure
+   - **Telegram notifications** on BUY/SELL (via `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` env vars)
 
 9. **Resolution Tracker (60s)**
    - Polls Gamma /markets by slug
@@ -577,23 +578,23 @@ Shadow runners allow testing changes with isolated state, separate from producti
 
 ## Current Live Parameters
 
-**Effective config** (defaults + local overrides, as of commit 540451f):
+**Effective config** (defaults + local overrides):
 
 ```
 Polling:
   gamma_discovery_seconds: 30
   clob_eval_seconds: 2
-  pending_window_seconds: 6
-  max_watchlist: 50
+  pending_window_seconds: 4
+  max_watchlist: 200
 
 Filters:
   min_prob: 0.93
   max_entry_price: 0.98
-  max_spread: 0.02
+  max_spread: 0.04
   near_prob_min: 0.945
   near_spread_max: 0.015
   min_exit_depth_usd_bid: 2000
-  min_entry_depth_usd_ask: 1000
+  min_entry_depth_usd_ask: 500
   exit_depth_floor_price: 0.70
 
 Paper:

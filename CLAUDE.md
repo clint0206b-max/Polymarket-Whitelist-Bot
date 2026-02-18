@@ -237,8 +237,8 @@ loadOpenIndex() → for each open position → fetchGammaMarketBySlug()
   polling: {
     gamma_discovery_seconds: 30,
     clob_eval_seconds: 2,
-    pending_window_seconds: 6,
-    max_watchlist: 50,
+    pending_window_seconds: 4,        // local.json override (default: 6)
+    max_watchlist: 200,
     http_max_concurrency: 5,
     eval_max_markets_per_cycle: 20,
     max_token_resolves_per_cycle: 5
@@ -247,11 +247,11 @@ loadOpenIndex() → for each open position → fetchGammaMarketBySlug()
     EPS: 1e-6,               // Floating-point tolerance
     min_prob: 0.93,          // Entry range lower bound
     max_entry_price: 0.98,   // Entry range upper bound
-    max_spread: 0.02,        // 2¢ max
+    max_spread: 0.04,        // local.json override (default: 0.02)
     near_prob_min: 0.945,    // Near margin (ask)
     near_spread_max: 0.015,  // Near margin (spread)
     min_exit_depth_usd_bid: 2000,
-    min_entry_depth_usd_ask: 1000,
+    min_entry_depth_usd_ask: 500,    // local.json override (default: 1000)
     exit_depth_floor_price: 0.70
   },
   gamma: {
@@ -513,10 +513,18 @@ export class TradeBridge {
     
     // LIVE execution
     const result = await executeBuy(this.client, tokenId, shares);
+    // Telegram notification (fire-and-forget, never blocks trading)
+    notifyTelegram(`🟢 BUY ${signal.slug} ...`);
     // ...
   }
 }
 ```
+
+**Telegram Notifications** (`src/notify/telegram.mjs`):
+- Sends BUY/SELL alerts via Telegram Bot API
+- Requires env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+- Never throws — logs warning on failure, trading continues unaffected
+- Set in launchd plist EnvironmentVariables + `.env` (gitignored)
 
 ---
 
