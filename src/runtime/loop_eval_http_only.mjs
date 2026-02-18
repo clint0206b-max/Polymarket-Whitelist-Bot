@@ -12,6 +12,7 @@ import { isSoccerSlug } from "../gamma/gamma_parser.mjs";
 import { loadDailyEvents, saveDailyEvents, recordMarketTick, purgeStaleDates } from "../metrics/daily_events.mjs";
 import { appendJsonl } from "../core/journal.mjs";
 import { selectPriceUpdateUniverse, selectPipelineUniverse } from "./universe.mjs";
+import { OpportunityTracker } from "../metrics/opportunity_tracker.mjs";
 
 function ensure(obj, k, v) { if (obj[k] === undefined) obj[k] = v; }
 
@@ -214,6 +215,15 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     console.log("[WS] Client initialized (lazy mode)");
   }
   const wsClient = state.runtime.wsClient;
+
+  // Initialize Opportunity Tracker (singleton, persisted)
+  if (!state.runtime.oppTracker) {
+    const bootId = String(state.runtime.boot_ts || Date.now());
+    state.runtime.oppTracker = new OpportunityTracker(cfg, bootId);
+    state.runtime.oppTracker.load();
+    console.log(`[OPP_TRACKER] initialized (enabled=${state.runtime.oppTracker.enabled})`);
+  }
+  const oppTracker = state.runtime.oppTracker;
 
   // Eval tick observability
   health.last_eval_tick_ts = now;
@@ -1239,6 +1249,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       if (openPositionSlugs.has(m.slug)) continue;
       const slugDate = extractSlugDate(m.slug);
       if (slugDate && (now - slugDate.getTime()) > SLUG_MAX_AGE_MS) {
+        oppTracker.onRemoved(m, "purged_slug_date", m.last_price, m.context, now);
         delete state.watchlist[key];
         bumpBucket("health", "purge_slug_date_expired", 1);
         console.log(`[PURGE_SLUG_DATE] ${m.slug} | date=${slugDate.toISOString().slice(0,10)} | age=${Math.round((now - slugDate.getTime()) / 3600000)}h`);
@@ -1264,6 +1275,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     if (ageTs == null) {
       // No position open → purge immediately; otherwise backfill and wait for TTL
       if (!openPositionSlugs.has(m.slug)) {
+        oppTracker.onRemoved(m, "purged_ttl", m.last_price, m.context, now);
         delete state.watchlist[key];
         expiredPurgedCount++;
         bumpBucket("health", "expired_purged_no_timestamp", 1);
@@ -1292,6 +1304,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         continue;
       }
       
+      oppTracker.onRemoved(m, "purged_ttl", m.last_price, m.context, now);
       delete state.watchlist[key];
       expiredPurgedCount++;
       bumpBucket("health", "expired_purged_ttl", 1);
@@ -1351,6 +1364,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     if (terminalAge < TERMINAL_CONFIRM_MS) continue; // Not confirmed yet
 
     // Confirmed terminal for ≥30s → purge
+    oppTracker.onRemoved(m, "purged_terminal", { ask: wsPrice.bestAsk, bid: wsPrice.bestBid }, m.context, now);
     state._terminal_purged_slugs.add(m.slug);
     delete state.watchlist[key];
     terminalPurgedCount++;
@@ -1438,6 +1452,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           console.log(`[PURGE] ${purgeReason} | ${m.slug} | ${purgeDetail.stale_minutes}min | spread=${lastPrice.spread?.toFixed(4)} ask=${lastPrice.yes_best_ask?.toFixed(4)} bid=${lastPrice.yes_best_bid?.toFixed(4)} | depth_bid=$${m.liquidity?.exit_depth_usd_bid?.toFixed(0)} depth_ask=$${m.liquidity?.entry_depth_usd_ask?.toFixed(0)}`);
           
           // Delete immediately (no point keeping expired markets)
+          oppTracker.onRemoved(m, `purged_gate:${purgeReason}`, m.last_price, m.context, tNow);
           delete state.watchlist[m.slug];
           continue; // Skip further processing
         }
@@ -1787,6 +1802,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         if (!state._terminal_purged_slugs || !(state._terminal_purged_slugs instanceof Set)) {
           state._terminal_purged_slugs = new Set(state._terminal_purged_slugs ? Object.keys(state._terminal_purged_slugs) : []);
         }
+        oppTracker.onRemoved(m, "purged_terminal", { ask: bestAsk, bid: bestBid }, m.context, tNow);
         state._terminal_purged_slugs.add(m.slug);
         bumpBucket("health", "expired_terminal_http", 1);
         console.log(`[TERMINAL_HTTP] ${m.slug} | bid=${bestBid.toFixed(3)} → deleted`);
@@ -1872,6 +1888,12 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           bumpBucket("reject", `reject_by_league:soccer:soccer_gate_blocked`, 1);
           setReject(m, `soccer_gate:${reason}`);
           if (startedPending) recordPendingConfirmFail(`soccer_gate:${reason}`);
+          // Opportunity tracker: gate reject with price data available
+          oppTracker.onGateReject(m, `soccer_gate:${reason}`,
+            { ask: bestAsk, bid: bestBid, spread: bestAsk - bestBid },
+            { entry_depth_usd_ask: m.liquidity?.entry_depth_usd_ask ?? null, exit_depth_usd_bid: m.liquidity?.exit_depth_usd_bid ?? null },
+            { period: m.soccer_context?.period ?? null, minutes_left: m.soccer_context?.minutes_left ?? null, margin: m.soccer_context?.margin_for_yes ?? null, margin_for_yes: m.context_entry?.margin_for_yes ?? null, win_prob: m.context_entry?.win_prob ?? null, state: m.soccer_context?.state ?? null },
+            tNow);
           continue;
         }
         bumpBucket("health", "soccer_gate_passed", 1);
@@ -1884,6 +1906,12 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           bumpBucket("reject", `reject_by_league:${league}:context_gate_blocked`, 1);
           setReject(m, `${league}_gate:${reason}`);
           if (startedPending) recordPendingConfirmFail(`${league}_gate:${reason}`);
+          // Opportunity tracker: gate reject with price data available
+          oppTracker.onGateReject(m, `${league}_gate:${reason}`,
+            { ask: bestAsk, bid: bestBid, spread: bestAsk - bestBid },
+            { entry_depth_usd_ask: m.liquidity?.entry_depth_usd_ask ?? null, exit_depth_usd_bid: m.liquidity?.exit_depth_usd_bid ?? null },
+            { period: m.context?.period ?? null, minutes_left: m.context?.minutes_left ?? null, margin: m.context?.margin ?? null, margin_for_yes: m.context_entry?.margin_for_yes ?? null, win_prob: m.context_entry?.win_prob ?? null, state: m.context?.state ?? null },
+            tNow);
           continue;
         }
         bumpBucket("health", `${league}_gate_passed`, 1);
@@ -2001,6 +2029,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       bumpBucket("reject", base.reason, 1);
       bumpBucket("reject", `reject_by_league:${m.league}:${base.reason}`, 1);
       setReject(m, base.reason);
+      oppTracker.recordStageFail(m.league, `stage1:${base.reason}`, tNow);
       if (base.reason === "price_out_of_range") recordPendingConfirmFail("fail_base_price_out_of_range");
       else if (base.reason === "spread_above_max") recordPendingConfirmFail("fail_spread_above_max");
       continue;
@@ -2022,6 +2051,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       health.gray_zone_count_last_cycle = (health.gray_zone_count_last_cycle || 0) + 1;
       // Action 2: terminal outcome of tick
       setReject(m, "fail_near_margin");
+      oppTracker.recordStageFail(m.league, "stage1:fail_near_margin", tNow);
       if (startedPending) recordPendingConfirmFail("fail_near_margin");
       continue;
     }
@@ -2044,6 +2074,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       bumpBucket("reject", depth.reason, 1);
       bumpBucket("reject", `reject_by_league:${m.league}:${depth.reason}`, 1);
       setReject(m, depth.reason);
+      oppTracker.recordStageFail(m.league, `stage2:${depth.reason}`, tNow);
       if (depth.reason === "depth_bid_below_min") recordPendingConfirmFail("fail_depth_bid_below_min");
       else if (depth.reason === "depth_ask_below_min") recordPendingConfirmFail("fail_depth_ask_below_min");
       continue;
@@ -2128,6 +2159,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     if (m.status === "pending_signal") {
       // at this point we already know pending is still within window (checked at top)
+      oppTracker.onTraded(m, tNow);
       m.status = "signaled";
       delete m.pending_since_ts;
       m.signals = m.signals || { signal_count: 0, last_signal_ts: null, reason: null };
@@ -2560,6 +2592,10 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     saveDailyEvents(deState);
   }
+
+  // Opportunity tracker: flush stage summary + persist state (debounced, event-driven)
+  oppTracker.maybeFlushStageSummary(now);
+  oppTracker.maybePersist(now);
 
   return { changed };
 }
