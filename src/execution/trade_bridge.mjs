@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { appendJsonl } from "../core/journal.mjs";
 import { resolvePath } from "../core/state_store.js";
+import { notifyTelegram } from "../notify/telegram.mjs";
 import {
   initClient, executeBuy, executeSell,
   getBalance, getConditionalBalance, getPositions,
@@ -251,6 +252,8 @@ export class TradeBridge {
         const slippage = result.avgFillPrice ? ((result.avgFillPrice - entryPrice) / entryPrice * 100).toFixed(2) : "?";
         console.log(`[FILLED_BUY] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4) || "?"} | slippage=${slippage}% | partial=${result.isPartial}`);
 
+        notifyTelegram(`🟢 BUY ${signal.slug}\n$${(result.spentUsd || budget).toFixed(2)} @ ${entryPrice} | ${result.filledShares} shares`).catch(() => {});
+
         appendJsonl("state/journal/executions.jsonl", {
           type: "trade_executed",
           trade_id: tradeId,
@@ -439,6 +442,10 @@ export class TradeBridge {
           const pnl = totalReceivedSoFar - (buyTrade.spentUsd || 0);
           console.log(`[FILLED_SL_SELL] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4)} | total=${totalFilledSoFar}/${shares} | PnL=$${pnl.toFixed(2)} | attempt=${i + 1}${allFilled ? "" : " PARTIAL"}`);
 
+          if (allFilled) {
+            notifyTelegram(`🔴 SELL ${signal.slug}\n-$${Math.abs(pnl).toFixed(2)} | stop_loss`).catch(() => {});
+          }
+
           appendJsonl("state/journal/executions.jsonl", {
             type: "trade_executed",
             trade_id: sellTradeId,
@@ -558,6 +565,10 @@ export class TradeBridge {
 
         const pnl = (receivedUsd || 0) - (buyTrade.spentUsd || 0);
         console.log(`[FILLED_SELL] ${signal.slug} | ${result.filledShares} shares @ $${realAvg?.toFixed(4)}${priceProvisional ? " (provisional)" : ""} | PnL=$${pnl.toFixed(2)}`);
+
+        const pnlEmoji = pnl >= 0 ? "🏆" : "🔴";
+        const pnlSign = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
+        notifyTelegram(`${pnlEmoji} SELL ${signal.slug}\n${pnlSign} | ${signal.close_reason}`).catch(() => {});
 
         appendJsonl("state/journal/executions.jsonl", {
           type: "trade_executed",
