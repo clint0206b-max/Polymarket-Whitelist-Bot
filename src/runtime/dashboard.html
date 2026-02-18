@@ -213,25 +213,55 @@
           <div id="loop-histogram" class="mt-3 space-y-1"></div>
         </div>
 
-        <!-- Opportunity Tracker: Near Misses -->
+        <!-- Opportunity Tracker: Near Misses (Active) -->
         <div class="bg-card rounded-lg border border-slate-700 p-4">
-          <h3 class="font-semibold text-white text-sm mb-3">🔍 Near Misses (Active)</h3>
-          <div class="space-y-1" id="near-misses"></div>
-          <div id="near-miss-empty" class="text-slate-500 text-xs">No active near misses</div>
+          <h3 class="font-semibold text-white text-sm mb-2">🔍 Near Misses <span class="text-slate-500 font-normal" id="nm-count"></span></h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs" id="near-miss-table">
+              <thead class="text-slate-500 text-[10px] uppercase">
+                <tr>
+                  <th class="text-left pb-1 pr-2">Market</th>
+                  <th class="text-left pb-1 pr-2">Block Reason</th>
+                  <th class="text-right pb-1 pr-2">Ask</th>
+                  <th class="text-right pb-1 pr-2">Bid</th>
+                  <th class="text-right pb-1 pr-2">Spread</th>
+                  <th class="text-right pb-1 pr-2">Depth</th>
+                  <th class="text-right pb-1">Time</th>
+                </tr>
+              </thead>
+              <tbody id="near-misses"></tbody>
+            </table>
+          </div>
+          <div id="near-miss-empty" class="text-slate-500 text-xs py-1">No active near misses</div>
         </div>
 
         <!-- Opportunity Tracker: Stage Fails -->
         <div class="bg-card rounded-lg border border-slate-700 p-4">
-          <h3 class="font-semibold text-white text-sm mb-3">⚡ Stage Fails <span id="stage-fail-age" class="text-slate-500 text-xs font-normal"></span></h3>
+          <h3 class="font-semibold text-white text-sm mb-2">⚡ Stage Fails <span id="stage-fail-age" class="text-slate-500 text-xs font-normal"></span></h3>
           <div class="space-y-1" id="stage-fails"></div>
           <div id="stage-fail-empty" class="text-slate-500 text-xs">No recent stage fails</div>
         </div>
 
         <!-- Opportunity Tracker: Closed Today -->
         <div class="bg-card rounded-lg border border-slate-700 p-4">
-          <h3 class="font-semibold text-white text-sm mb-3">📋 Closed Opportunities (Today)</h3>
-          <div class="space-y-1" id="closed-opps"></div>
-          <div id="closed-opp-empty" class="text-slate-500 text-xs">No closed opportunities today</div>
+          <h3 class="font-semibold text-white text-sm mb-2">📋 Closed Today <span class="text-slate-500 font-normal" id="ct-count"></span></h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs" id="closed-opp-table">
+              <thead class="text-slate-500 text-[10px] uppercase">
+                <tr>
+                  <th class="text-left pb-1 pr-2">Market</th>
+                  <th class="text-left pb-1 pr-2">Why Blocked</th>
+                  <th class="text-right pb-1 pr-2">Entry Ask</th>
+                  <th class="text-right pb-1 pr-2">Peak Bid</th>
+                  <th class="text-right pb-1 pr-2">Trough Bid</th>
+                  <th class="text-right pb-1 pr-2">Ticks</th>
+                  <th class="text-right pb-1">Tracked</th>
+                </tr>
+              </thead>
+              <tbody id="closed-opps"></tbody>
+            </table>
+          </div>
+          <div id="closed-opp-empty" class="text-slate-500 text-xs py-1">No closed opportunities today</div>
         </div>
 
         <!-- Timeout Analysis — split by category -->
@@ -449,29 +479,33 @@
 
       // Opportunity Tracker
       const opp = h.opportunity_tracker || {};
+      const fmtDur = s => s >= 3600 ? Math.floor(s/3600)+'h'+Math.floor((s%3600)/60)+'m' : s >= 60 ? Math.floor(s/60)+'m'+('0'+(s%60)).slice(-2)+'s' : s+'s';
+      const fmtP = v => v != null ? v.toFixed(2) : '—';
+      const fmtP3 = v => v != null ? v.toFixed(3) : '—';
+      const stripGate = r => (r || '—').replace(/^(soccer|cbb|nba|esports)_gate:/, '');
 
       // Near Misses
       const nm = opp.near_misses || [];
-      if (nm.length) {
-        $('near-miss-empty').classList.add('hidden');
-        $('near-misses').innerHTML = nm.map(m => {
-          const slug = (m.slug || '?').length > 30 ? m.slug.slice(0, 27) + '...' : m.slug;
-          const reason = (m.reject_reason || '').replace(/^(soccer|cbb|nba|esports)_gate:/, '');
-          const ask = m.best_ask_with_context?.ask ?? m.ask;
-          const bid = m.best_ask_with_context?.bid ?? m.bid;
-          const secs = Math.round((m.time_tracked_ms || 0) / 1000);
-          const dur = secs >= 60 ? Math.floor(secs/60) + 'm ' + (secs%60) + 's' : secs + 's';
-          return `<div class="flex items-center gap-2 text-xs">
-            <span class="text-slate-300 truncate flex-1" title="${m.slug}">${slug}</span>
-            <span class="text-amber-400 whitespace-nowrap">${reason}</span>
-            <span class="mono text-slate-400 w-16 text-right">${ask != null ? ask.toFixed(3) : '?'}/${bid != null ? bid.toFixed(3) : '?'}</span>
-            <span class="mono text-slate-500 w-12 text-right">${dur}</span>
-          </div>`;
-        }).join('');
-      } else {
-        $('near-miss-empty').classList.remove('hidden');
-        $('near-misses').innerHTML = '';
-      }
+      $('nm-count').textContent = nm.length ? `(${nm.length})` : '';
+      $('near-miss-table').style.display = nm.length ? '' : 'none';
+      $('near-miss-empty').style.display = nm.length ? 'none' : '';
+      $('near-misses').innerHTML = nm.map(m => {
+        const ctx = m.best_ask_with_context || {};
+        const ask = ctx.ask ?? m.ask;
+        const bid = ctx.bid ?? m.bid;
+        const spread = ctx.spread ?? (ask != null && bid != null ? ask - bid : null);
+        const depth = ctx.entry_depth_usd_ask;
+        const secs = Math.round((m.time_tracked_ms || 0) / 1000);
+        return `<tr class="border-t border-slate-800 hover:bg-slate-800/50">
+          <td class="py-1 pr-2 text-slate-300 max-w-[180px] truncate" title="${m.slug}">${m.slug}</td>
+          <td class="py-1 pr-2 text-amber-400 whitespace-nowrap">${stripGate(m.reject_reason)}</td>
+          <td class="py-1 pr-2 text-right mono text-slate-300">${fmtP3(ask)}</td>
+          <td class="py-1 pr-2 text-right mono text-slate-400">${fmtP3(bid)}</td>
+          <td class="py-1 pr-2 text-right mono ${spread != null && spread <= 0.02 ? 'text-emerald-400' : 'text-slate-400'}">${spread != null ? spread.toFixed(3) : '—'}</td>
+          <td class="py-1 pr-2 text-right mono ${depth != null && depth >= 500 ? 'text-emerald-400' : 'text-slate-500'}">${depth != null ? '$'+Math.round(depth) : '—'}</td>
+          <td class="py-1 text-right mono text-slate-500">${fmtDur(secs)}</td>
+        </tr>`;
+      }).join('');
 
       // Stage Fails
       const sf = opp.stage_fails || [];
@@ -482,11 +516,12 @@
         const maxSf = sf[0]?.count || 1;
         $('stage-fails').innerHTML = sf.slice(0, 8).map(s => {
           const pct = Math.round((s.count / maxSf) * 100);
+          const label = s.reason.replace(/^(soccer|cbb|nba|esports):/, '');
           return `<div class="flex items-center gap-2">
             <div class="flex-1 bg-slate-700 rounded-full h-1.5 overflow-hidden">
               <div class="h-full bg-orange-500/60 rounded-full" style="width:${pct}%"></div>
             </div>
-            <span class="text-xs text-slate-400 whitespace-nowrap">${s.reason}</span>
+            <span class="text-xs text-slate-400 whitespace-nowrap">${label}</span>
             <span class="text-xs mono text-slate-300 w-8 text-right">${s.count}</span>
           </div>`;
         }).join('');
@@ -497,27 +532,30 @@
 
       // Closed Opportunities Today
       const ct = opp.closed_today || [];
-      if (ct.length) {
-        $('closed-opp-empty').classList.add('hidden');
-        $('closed-opps').innerHTML = ct.map(c => {
-          const slug = (c.slug || '?').length > 25 ? c.slug.slice(0, 22) + '...' : c.slug;
-          const block = (c.entry_block_reason || c.close_reason || '?').replace(/^(soccer|cbb|nba|esports)_gate:/, '');
-          const isTraded = c.close_reason === 'traded';
-          const bestAsk = c.best_ask_with_context?.ask ?? c.best_ask_seen;
-          const bestBid = c.best_bid_seen;
-          const worstBid = c.worst_bid_seen;
-          return `<div class="flex items-center gap-2 text-xs">
-            <span class="text-slate-300 truncate flex-1" title="${c.slug}">${slug}</span>
-            <span class="${isTraded ? 'text-emerald-400' : 'text-amber-400'} whitespace-nowrap">${isTraded ? 'traded' : block}</span>
-            <span class="mono text-slate-400 w-12 text-right" title="best exec ask">${bestAsk != null ? bestAsk.toFixed(3) : '?'}</span>
-            <span class="mono text-emerald-500/70 w-12 text-right" title="peak bid">${bestBid != null ? bestBid.toFixed(3) : '?'}</span>
-            <span class="mono text-red-400/70 w-12 text-right" title="trough bid">${worstBid != null ? worstBid.toFixed(3) : '?'}</span>
-          </div>`;
-        }).join('');
-      } else {
-        $('closed-opp-empty').classList.remove('hidden');
-        $('closed-opps').innerHTML = '';
-      }
+      $('ct-count').textContent = ct.length ? `(${ct.length})` : '';
+      $('closed-opp-table').style.display = ct.length ? '' : 'none';
+      $('closed-opp-empty').style.display = ct.length ? 'none' : '';
+      $('closed-opps').innerHTML = ct.map(c => {
+        const block = stripGate(c.entry_block_reason || c.close_reason);
+        const isTraded = c.close_reason === 'traded';
+        const bestAsk = c.best_ask_with_context?.ask ?? c.best_ask_seen;
+        const peakBid = c.best_bid_seen;
+        const troughBid = c.worst_bid_seen;
+        const ticks = c.total_ticks || 0;
+        const secs = Math.round((c.tracking_duration_ms || 0) / 1000);
+        // Color peak bid: green if resolved (>0.99), red if SL zone (<0.70)
+        const peakCls = peakBid != null && peakBid > 0.99 ? 'text-emerald-400' : 'text-slate-400';
+        const troughCls = troughBid != null && troughBid < 0.70 ? 'text-red-400' : 'text-slate-400';
+        return `<tr class="border-t border-slate-800 hover:bg-slate-800/50">
+          <td class="py-1 pr-2 max-w-[160px] truncate ${isTraded ? 'text-emerald-400' : 'text-slate-300'}" title="${c.slug}">${c.slug}</td>
+          <td class="py-1 pr-2 ${isTraded ? 'text-emerald-400' : 'text-amber-400'} whitespace-nowrap">${isTraded ? '✅ traded' : block}</td>
+          <td class="py-1 pr-2 text-right mono text-slate-300">${fmtP3(bestAsk)}</td>
+          <td class="py-1 pr-2 text-right mono ${peakCls}">${fmtP3(peakBid)}</td>
+          <td class="py-1 pr-2 text-right mono ${troughCls}">${fmtP3(troughBid)}</td>
+          <td class="py-1 pr-2 text-right mono text-slate-500">${ticks}</td>
+          <td class="py-1 text-right mono text-slate-500">${fmtDur(secs)}</td>
+        </tr>`;
+      }).join('');
 
       // Daily utilization — universe funnel per league
       const uf = h.universe_funnel;
