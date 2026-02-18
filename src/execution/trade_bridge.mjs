@@ -660,7 +660,7 @@ export class TradeBridge {
     if (this.mode === "paper" || this.execState.paused) return [];
 
     const slThreshold = Number(this.cfg?.paper?.stop_loss_bid ?? 0.70);
-    const resolveThreshold = 0.995; // bid >= this = market resolved
+    const resolveThreshold = 0.997; // bid > this = market resolved
 
     const openTrades = Object.entries(this.execState.trades)
       .filter(([_, t]) => t.status === "filled" && !t.closed && String(t.side).toUpperCase() === "BUY");
@@ -679,11 +679,10 @@ export class TradeBridge {
       const entryPrice = Number(trade.entryPrice || trade.avgFillPrice);
       const shares = Number(trade.filledShares || 0);
 
-      // --- RESOLUTION: bid >= 0.995 OR (ask >= 0.999 AND bid >= 0.90) ---
-      // ask jumps to 1.00 instantly on esports resolution; bid may lag seconds/minutes.
-      // The bid >= 0.90 guard prevents selling into a garbage bid on a thin book.
-      const resolvedByBid = bid >= resolveThreshold;
-      const resolvedByAsk = ask >= 0.999 && bid >= 0.90;
+      // --- RESOLUTION: bid > 0.997 OR (ask >= 0.999 AND bid > 0.997) ---
+      // Both paths require bid > 0.997 to avoid selling at suboptimal prices.
+      const resolvedByBid = bid > resolveThreshold;
+      const resolvedByAsk = ask >= 0.999 && bid > resolveThreshold;
       if (resolvedByBid || resolvedByAsk) {
         const pnl = shares * (bid - entryPrice);
         const trigger = resolvedByBid ? `bid=${bid.toFixed(3)}` : `ask=${ask.toFixed(3)},bid=${bid.toFixed(3)}`;

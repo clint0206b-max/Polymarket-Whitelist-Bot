@@ -71,8 +71,8 @@ describe("checkPositionsFromCLOB", () => {
 
   // ===================== RESOLUTION =====================
 
-  describe("resolution signals (bid >= 0.995)", () => {
-    it("generates resolved signal when bid >= 0.995", () => {
+  describe("resolution signals (bid > 0.997)", () => {
+    it("generates resolved signal when bid > 0.997", () => {
       const buy = makeBuyTrade("test-slug", { signal_id: "sig1|test-slug" });
       const bridge = makeBridge({ trades: { "buy:sig1|test-slug": buy } });
       const signals = check(bridge, priceMap({ "test-slug": 0.999 }));
@@ -85,10 +85,18 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals[0].signal_id, "sig1|test-slug");
     });
 
-    it("generates resolved signal at exact threshold 0.995", () => {
+    it("does NOT resolve at exact 0.997 (needs > 0.997)", () => {
       const buy = makeBuyTrade("edge-slug", { signal_id: "sig2|edge-slug" });
       const bridge = makeBridge({ trades: { "buy:sig2|edge-slug": buy } });
-      const signals = check(bridge, priceMap({ "edge-slug": 0.995 }));
+      const signals = check(bridge, priceMap({ "edge-slug": 0.997 }));
+
+      assert.equal(signals.length, 0);
+    });
+
+    it("resolves at 0.998 (> 0.997)", () => {
+      const buy = makeBuyTrade("edge-slug2", { signal_id: "sig2b|edge-slug2" });
+      const bridge = makeBridge({ trades: { "buy:sig2b|edge-slug2": buy } });
+      const signals = check(bridge, priceMap({ "edge-slug2": 0.998 }));
 
       assert.equal(signals.length, 1);
       assert.equal(signals[0].close_reason, "resolved");
@@ -182,10 +190,10 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals.length, 0);
     });
 
-    it("no signal at 0.994 (just below 0.995 resolve)", () => {
+    it("no signal at 0.997 (not > 0.997 resolve threshold)", () => {
       const buy = makeBuyTrade("below-res", { signal_id: "sig10|below-res" });
       const bridge = makeBridge({ trades: { "buy:sig10|below-res": buy } });
-      const signals = check(bridge, priceMap({ "below-res": 0.994 }));
+      const signals = check(bridge, priceMap({ "below-res": 0.997 }));
 
       assert.equal(signals.length, 0);
     });
@@ -418,45 +426,44 @@ describe("checkPositionsFromCLOB", () => {
 
 // === Ask-based resolution trigger ===
 describe("ask-based resolution trigger", () => {
-  it("triggers resolution when ask >= 0.999 and bid >= 0.90", () => {
+  it("triggers resolution when ask >= 0.999 and bid > 0.997", () => {
     const trade = makeBuyTrade("ask-resolve", { signal_id: "1|ask-resolve" });
     const bridge = makeBridge({ trades: { "buy:1|ask-resolve": trade } });
-    const prices = new Map([["ask-resolve", { yes_best_bid: 0.93, yes_best_ask: 0.999 }]]);
+    const prices = new Map([["ask-resolve", { yes_best_bid: 0.998, yes_best_ask: 0.999 }]]);
     const signals = check(bridge, prices);
     assert.equal(signals.length, 1);
     assert.equal(signals[0].close_reason, "resolved");
     assert.equal(signals[0].slug, "ask-resolve");
   });
 
-  it("triggers when ask = 1.00 and bid = 0.95", () => {
+  it("triggers when ask = 1.00 and bid = 0.998", () => {
     const trade = makeBuyTrade("ask-1", { signal_id: "1|ask-1" });
     const bridge = makeBridge({ trades: { "buy:1|ask-1": trade } });
-    const prices = new Map([["ask-1", { yes_best_bid: 0.95, yes_best_ask: 1.00 }]]);
+    const prices = new Map([["ask-1", { yes_best_bid: 0.998, yes_best_ask: 1.00 }]]);
     const signals = check(bridge, prices);
     assert.equal(signals.length, 1);
   });
 
-  it("does NOT trigger RESOLUTION when ask >= 0.999 but bid < 0.90 (garbage bid)", () => {
+  it("does NOT trigger when ask >= 0.999 but bid <= 0.997", () => {
     const trade = makeBuyTrade("low-bid", { signal_id: "1|low-bid" });
     const bridge = makeBridge({ trades: { "buy:1|low-bid": trade } });
-    const prices = new Map([["low-bid", { yes_best_bid: 0.85, yes_best_ask: 0.999 }]]);
+    const prices = new Map([["low-bid", { yes_best_bid: 0.997, yes_best_ask: 0.999 }]]);
     const signals = check(bridge, prices);
-    // bid=0.85 is above SL (0.70) but below ask guard (0.90) → no signal at all
     assert.equal(signals.length, 0);
   });
 
-  it("does NOT trigger when ask = 0.998 (just below threshold)", () => {
+  it("does NOT trigger when ask = 0.998 and bid = 0.95 (ask below 0.999, bid below 0.997)", () => {
     const trade = makeBuyTrade("below-ask", { signal_id: "1|below-ask" });
     const bridge = makeBridge({ trades: { "buy:1|below-ask": trade } });
-    const prices = new Map([["below-ask", { yes_best_bid: 0.93, yes_best_ask: 0.998 }]]);
+    const prices = new Map([["below-ask", { yes_best_bid: 0.95, yes_best_ask: 0.998 }]]);
     const signals = check(bridge, prices);
     assert.equal(signals.length, 0);
   });
 
-  it("bid-based still works independently of ask", () => {
+  it("bid-based still works independently of ask (bid > 0.997)", () => {
     const trade = makeBuyTrade("bid-only", { signal_id: "1|bid-only" });
     const bridge = makeBridge({ trades: { "buy:1|bid-only": trade } });
-    const prices = new Map([["bid-only", { yes_best_bid: 0.996, yes_best_ask: 0.999 }]]);
+    const prices = new Map([["bid-only", { yes_best_bid: 0.998, yes_best_ask: 0.999 }]]);
     const signals = check(bridge, prices);
     assert.equal(signals.length, 1);
   });
