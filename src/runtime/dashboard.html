@@ -86,6 +86,10 @@
           <div class="text-xs text-slate-400 uppercase tracking-wide">Since</div>
           <div id="kpi-since" class="text-lg font-bold mono mt-1">—</div>
         </div>
+        <div class="bg-card rounded-lg p-4 border border-slate-700">
+          <div class="text-xs text-slate-400 uppercase tracking-wide">Balance</div>
+          <div id="kpi-balance" class="text-2xl font-bold mono mt-1">—</div>
+        </div>
       </div>
     </div>
 
@@ -390,9 +394,9 @@
       if (loopAge != null && loopAge > 30) alerts.push(`🔴 Loop stale: last cycle ${loopAge}s ago`);
       else if (loopAge != null && loopAge > 10) alerts.push(`🟡 Loop slow: last cycle ${loopAge}s ago`);
 
-      const wsRatio = h.ws?.ws_ratio_pct;
+      const wsRatio = h.websocket?.usage?.ws_ratio_percent ?? null;
       if (wsRatio != null && wsRatio < 50) alerts.push(`🔴 WS degraded: ${wsRatio.toFixed(0)}% ratio`);
-      if (h.ws?.connected === false) alerts.push(`🔴 WebSocket disconnected`);
+      if (h.websocket?.is_connected === false) alerts.push(`🔴 WebSocket disconnected`);
 
       const gammaAge = h.staleness?.gamma_stale_seconds;
       if (gammaAge != null && gammaAge > 300) alerts.push(`🟡 Gamma stale: ${Math.round(gammaAge/60)}min since last poll`);
@@ -438,8 +442,8 @@
       const loopAge = h.loop?.last_cycle_age_seconds;
       $('sem-loop').className = 'w-2.5 h-2.5 rounded-full ' + semColor(loopAge == null ? 'red' : loopAge < 5 ? 'green' : loopAge < 15 ? 'yellow' : 'red');
 
-      const wsRatio = h.ws?.ws_ratio_pct;
-      $('sem-ws').className = 'w-2.5 h-2.5 rounded-full ' + semColor(wsRatio == null ? 'yellow' : wsRatio > 90 ? 'green' : wsRatio > 50 ? 'yellow' : 'red');
+      const wsRatio2 = h.websocket?.usage?.ws_ratio_percent ?? null;
+      $('sem-ws').className = 'w-2.5 h-2.5 rounded-full ' + semColor(wsRatio2 == null ? 'yellow' : wsRatio2 > 90 ? 'green' : wsRatio2 > 50 ? 'yellow' : 'red');
 
       const gammaAge = h.staleness?.gamma_stale_seconds;
       $('sem-gamma').className = 'w-2.5 h-2.5 rounded-full ' + semColor(gammaAge == null ? 'yellow' : gammaAge < 120 ? 'green' : gammaAge < 300 ? 'yellow' : 'red');
@@ -448,7 +452,7 @@
       const perf = h.loop?.performance || {};
       $('loop-avg').textContent = perf.last_loop_ms != null ? perf.last_loop_ms + 'ms' : (h.loop?.cycle_duration_ms_avg != null ? Math.round(h.loop.cycle_duration_ms_avg) + 'ms' : '—');
       $('loop-slow').textContent = perf.slow_loops != null ? perf.slow_loops : '—';
-      $('loop-ws').textContent = wsRatio != null ? wsRatio.toFixed(1) + '%' : '—';
+      $('loop-ws').textContent = wsRatio2 != null ? wsRatio2.toFixed(1) + '%' : '—';
       $('loop-runs').textContent = h.loop?.runs || '—';
 
       // Loop breakdown
@@ -655,6 +659,13 @@
 
       $('trades-summary').textContent = `${s.wins_today||0}W / ${s.losses_today||0}L · $${(s.pnl_total||0).toFixed(2)} all-time`;
 
+      // Balance from trade_bridge
+      const lastBal = h.trade_bridge?.last_balance;
+      if (lastBal != null) {
+        $('kpi-balance').textContent = '$' + Number(lastBal).toFixed(2);
+        $('kpi-balance').className = 'text-2xl font-bold mono mt-1 text-white';
+      }
+
       // Timeout stats — split by category
       const pw = s.timeouts_price_window || {};
       $('to-pw-total').textContent = pw.total ?? 0;
@@ -791,7 +802,6 @@
 
       el.innerHTML = `
         <div class="flex items-center gap-2 mb-2">${modeBadge}${pauseBadge}
-          <span class="text-slate-400 ml-auto">Balance: <span class="text-white mono">${balStr}</span></span>
         </div>
         ${divAlert}
         ${rows}
