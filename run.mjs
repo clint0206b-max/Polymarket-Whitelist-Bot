@@ -535,8 +535,11 @@ try {
                       console.log(`[CLOSED] ${sig.slug} | full fill | PnL=$${pnl.toFixed(2)}${sellResult.priceProvisional ? " (provisional)" : ""}`);
 
                       // Remove from watchlist after successful close (SL or resolved)
-                      if (state.watchlist[sig.slug]) {
-                        delete state.watchlist[sig.slug];
+                      // Watchlist is keyed by conditionId, not slug
+                      const wlKey = sig.conditionId
+                        || Object.keys(state.watchlist).find(k => state.watchlist[k]?.slug === sig.slug);
+                      if (wlKey && state.watchlist[wlKey]) {
+                        delete state.watchlist[wlKey];
                         console.log(`[WATCHLIST_PURGE] ${sig.slug} | removed after ${sig.close_reason}`);
                       }
                     } else {
