@@ -18,6 +18,7 @@ export function loadOpenIndex(relPath = "state/journal/open_index.json") {
   const out = (cur && typeof cur === "object" && !Array.isArray(cur)) ? cur : { v: 1, open: {}, closed: {} };
   if (!out.open || typeof out.open !== "object") out.open = {};
   if (!out.closed || typeof out.closed !== "object") out.closed = {};
+  if (!out.failed_buys || typeof out.failed_buys !== "object") out.failed_buys = {};
   out.v = 1;
   return out;
 }
@@ -38,6 +39,11 @@ export function removeOpen(index, signalId) {
 export function addClosed(index, signalId, row) {
   if (!index.closed || typeof index.closed !== "object") index.closed = {};
   index.closed[String(signalId)] = row;
+}
+
+export function addFailedBuy(index, signalId, row) {
+  if (!index.failed_buys || typeof index.failed_buys !== "object") index.failed_buys = {};
+  index.failed_buys[String(signalId)] = row;
 }
 
 /**
@@ -139,6 +145,54 @@ export function reconcileIndex(index, jsonlRelPath = "state/journal/signals.json
     }
   }
 
-  const reconciled = (added > 0 || removed > 0 || closedAdded > 0);
-  return { reconciled, added, removed, closedAdded };
+  // --- Derive buy_status from executions.jsonl and move failed buys ---
+  let failedMoved = 0;
+  if (!index.failed_buys || typeof index.failed_buys !== "object") index.failed_buys = {};
+  try {
+    const execAbs = resolvePath("state/journal/executions.jsonl");
+    if (existsSync(execAbs)) {
+      const execRaw = readFileSync(execAbs, "utf8");
+      const execLines = execRaw.trim().split("\n").filter(Boolean);
+      // Build map: signal_id -> { has_fill, has_fail }
+      const buyStatusMap = {};
+      for (const line of execLines) {
+        let obj;
+        try { obj = JSON.parse(line); } catch { continue; }
+        const sid = obj.signal_id;
+        if (!sid) continue;
+        if (!buyStatusMap[sid]) buyStatusMap[sid] = { has_fill: false, has_fail: false };
+        if (obj.type === "trade_executed" && String(obj.side).toUpperCase() === "BUY") {
+          buyStatusMap[sid].has_fill = true;
+        } else if (obj.type === "trade_failed" && String(obj.side).toUpperCase() === "BUY") {
+          buyStatusMap[sid].has_fail = true;
+        }
+      }
+      // Move open entries with confirmed failed buys (and no fill) to failed_buys
+      for (const id of Object.keys(index.open)) {
+        const bs = buyStatusMap[id];
+        if (bs && bs.has_fail && !bs.has_fill) {
+          const row = index.open[id];
+          index.failed_buys[id] = {
+            ...row,
+            buy_status: "failed",
+            moved_at: Date.now(),
+          };
+          delete index.open[id];
+          failedMoved++;
+        }
+      }
+    }
+  } catch {}
+
+  // Compact old failed_buys (>7 days)
+  const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
+  for (const [id, row] of Object.entries(index.failed_buys)) {
+    const ts = row.moved_at || row.ts_open || 0;
+    if (ts > 0 && ts < sevenDaysAgo) {
+      delete index.failed_buys[id];
+    }
+  }
+
+  const reconciled = (added > 0 || removed > 0 || closedAdded > 0 || failedMoved > 0);
+  return { reconciled, added, removed, closedAdded, failedMoved };
 }

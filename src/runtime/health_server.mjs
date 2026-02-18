@@ -998,9 +998,12 @@ export function startHealthServer(state, opts = {}) {
     const idx = cachedReadJson(statePath("journal", "open_index.json"), 3000);
     const open = idx?.open || {};
     const wl = state?.watchlist || {};
+    // Filter out positions with pending/unknown buy status (not yet confirmed fills)
+    const confirmedOpen = Object.values(open).filter(p => !p.buy_status || p.buy_status === "filled");
     return {
       as_of_ts: Date.now(),
-      items: Object.values(open).map(p => {
+      failed_buys_count: Object.keys(idx?.failed_buys || {}).length,
+      items: confirmedOpen.map(p => {
         // Find current price from watchlist
         const market = Object.values(wl).find(m => m?.slug === p.slug);
         const currentBid = market?.last_price?.yes_best_bid ?? null;

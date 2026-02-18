@@ -4,7 +4,7 @@ import { loadConfig, resolveRunner } from "./src/core/config.js";
 import { acquireLock, releaseLock } from "./src/core/lockfile.js";
 import { nowMs, sleepMs } from "./src/core/time.js";
 import { readJsonWithFallback, writeJsonAtomic, resolvePath } from "./src/core/state_store.js";
-import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, reconcileIndex } from "./src/core/journal.mjs";
+import { appendJsonl, loadOpenIndex, saveOpenIndex, addOpen, addFailedBuy, removeOpen, reconcileIndex } from "./src/core/journal.mjs";
 import { reconcileExecutionsFromSignals } from "./src/core/reconcile_journals.mjs";
 import { DirtyTracker, detectChanges } from "./src/core/dirty_tracker.mjs";
 import { startHealthServer } from "./src/runtime/health_server.mjs";
@@ -461,15 +461,57 @@ try {
               const entryPrice = Number(s.probAsk);
               const signalId = `${s.ts}|${s.slug}`;
               try {
-                await tradeBridge.handleSignalOpen({
+                const buyResult = await tradeBridge.handleSignalOpen({
                   signal_id: signalId,
                   slug: String(s.slug || ""),
                   entry_price: entryPrice,
                   yes_token: yesToken,
                   league: String(s.league || ""),
                 });
+
+                // --- Post-buy: update open_index based on result ---
+                if (buyResult) {
+                  const isFailed = buyResult.status === "failed" || buyResult.blocked;
+                  const isUnknown = buyResult.error === "order_status_unknown";
+
+                  if (isFailed && !isUnknown) {
+                    // Definitive failure (rejected, cancelled, blocked) → move to failed_buys
+                    const failReason = buyResult.error || buyResult.reason || "unknown";
+                    addFailedBuy(idx, signalId, {
+                      ...idx.open[signalId],
+                      buy_status: "failed",
+                      buy_fail_reason: failReason,
+                      moved_at: Date.now(),
+                    });
+                    removeOpen(idx, signalId);
+                    saveOpenIndex(idx);
+                    console.log(`[BUY_FAILED] ${s.slug} | ${failReason} → moved to failed_buys`);
+                  } else if (isUnknown) {
+                    // Ambiguous — mark for deferred reconciliation
+                    if (idx.open[signalId]) {
+                      idx.open[signalId].buy_status = "unknown";
+                      idx.open[signalId].buy_status_ts = Date.now();
+                      idx.open[signalId]._tokenId = yesToken || null;
+                      saveOpenIndex(idx);
+                      console.log(`[BUY_UNKNOWN] ${s.slug} | order_status_unknown → deferred reconcile`);
+                    }
+                  }
+                  // If buyResult.ok === true (filled), open_index is already correct (position is real)
+                }
               } catch (e) {
                 console.error(`[TRADE_BRIDGE] buy error for ${s.slug}: ${e.message}`);
+                // Exception during buy → move to failed_buys
+                if (idx.open[signalId]) {
+                  addFailedBuy(idx, signalId, {
+                    ...idx.open[signalId],
+                    buy_status: "failed",
+                    buy_fail_reason: `exception: ${e.message}`,
+                    moved_at: Date.now(),
+                  });
+                  removeOpen(idx, signalId);
+                  saveOpenIndex(idx);
+                  console.log(`[BUY_EXCEPTION] ${s.slug} → moved to failed_buys`);
+                }
               }
             }
           }
@@ -569,6 +611,81 @@ try {
           }
         } catch (e) {
           console.error(`[POSITION_CHECK] error: ${e.message}`);
+        }
+      }
+
+      // === DEFERRED UNKNOWN BUY RECONCILIATION ===
+      // Two-stage: 60s soft (check execState), 5min hard (check on-chain balance)
+      if (tradeBridge && tradeBridge.mode !== "paper") {
+        try {
+          const idx = loadOpenIndex();
+          const unknowns = Object.entries(idx.open).filter(([_, row]) => row.buy_status === "unknown");
+          for (const [signalId, row] of unknowns) {
+            const age = Date.now() - (row.buy_status_ts || 0);
+
+            // Stage 1: soft check at 60s — check execState
+            if (age >= 60_000) {
+              const buyKey = `buy:${signalId}`;
+              const buyTrade = tradeBridge.execState.trades[buyKey];
+              const tradeStatus = buyTrade?.status;
+
+              if (tradeStatus === "filled") {
+                // Reconciled: buy actually succeeded
+                delete row.buy_status;
+                delete row.buy_status_ts;
+                delete row._tokenId;
+                saveOpenIndex(idx);
+                console.log(`[UNKNOWN_RECONCILED] ${row.slug} | execState says filled → keeping open`);
+                continue;
+              }
+
+              if (tradeStatus === "failed" || tradeStatus === "error") {
+                // Stage 1 confirms failure
+                addFailedBuy(idx, signalId, {
+                  ...row,
+                  buy_status: "failed",
+                  buy_fail_reason: `deferred:${tradeStatus}:${buyTrade?.error || ""}`,
+                  moved_at: Date.now(),
+                });
+                removeOpen(idx, signalId);
+                saveOpenIndex(idx);
+                console.log(`[UNKNOWN_FAILED] ${row.slug} | execState=${tradeStatus} → moved to failed_buys`);
+                continue;
+              }
+            }
+
+            // Stage 2: hard check at 5min — verify on-chain token balance
+            if (age >= 300_000 && row._tokenId) {
+              try {
+                const { getConditionalBalance } = await import("./src/execution/order_executor.mjs");
+                const balance = await getConditionalBalance(tradeBridge.client, row._tokenId);
+                if (balance > 0) {
+                  // Has real shares — buy actually worked
+                  delete row.buy_status;
+                  delete row.buy_status_ts;
+                  delete row._tokenId;
+                  saveOpenIndex(idx);
+                  console.log(`[UNKNOWN_RECONCILED] ${row.slug} | on-chain balance=${balance} → keeping open`);
+                } else {
+                  // No shares — confirmed failed
+                  addFailedBuy(idx, signalId, {
+                    ...row,
+                    buy_status: "failed",
+                    buy_fail_reason: "deferred:no_balance_after_5min",
+                    moved_at: Date.now(),
+                  });
+                  removeOpen(idx, signalId);
+                  saveOpenIndex(idx);
+                  console.log(`[UNKNOWN_FAILED] ${row.slug} | on-chain balance=0 after 5min → moved to failed_buys`);
+                }
+              } catch (e) {
+                console.warn(`[UNKNOWN_CHECK] ${row.slug} | balance check error: ${e.message}`);
+                // Don't fail-close on balance check error — retry next loop
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`[UNKNOWN_RECONCILE] error: ${e.message}`);
         }
       }
 
