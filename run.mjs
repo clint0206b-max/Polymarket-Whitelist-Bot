@@ -730,6 +730,8 @@ try {
       // Prepare state for serialization: exclude non-serializable runtime objects
       const wsClient = state.runtime?.wsClient;
       if (wsClient) delete state.runtime.wsClient;
+      const oppTracker = state.runtime?.oppTracker;
+      if (oppTracker) delete state.runtime.oppTracker;
 
       // Size guardrail: warn if state exceeds 1MB (regression detection)
       const stateJson = JSON.stringify(state);
@@ -745,8 +747,9 @@ try {
       // Write with atomic tmp+rename + fsync + backup
       writeJsonAtomic(STATE_PATH, state);
       
-      // Restore wsClient after persist
+      // Restore runtime singletons after persist
       if (wsClient) state.runtime.wsClient = wsClient;
+      if (oppTracker) state.runtime.oppTracker = oppTracker;
       
       // Debug: log reasons for observability (BEFORE clear, or reasons are lost)
       const reasons = dirtyTracker.getReasons();
