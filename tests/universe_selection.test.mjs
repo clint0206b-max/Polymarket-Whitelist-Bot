@@ -150,18 +150,21 @@ describe("selectPipelineUniverse", () => {
     assert.equal(result[1].slug, "market-pending-2");
   });
 
-  it("sorts watching by vol desc when no pending", () => {
+  it("sorts watching by entry proximity (closest to range first)", () => {
+    // Default entry range: min_prob=0.93, max_entry_price=0.97
+    // All slugs start with "market" → use default range
     const state = stateWith(
-      market("1", "watching", { gamma_vol24h_usd: 100 }),
-      market("2", "watching", { gamma_vol24h_usd: 500 }),
-      market("3", "watching", { gamma_vol24h_usd: 300 })
+      market("1", "watching", { last_price: { yes_best_ask: 0.80 } }),  // dist=0.13
+      market("2", "watching", { last_price: { yes_best_ask: 0.95 } }),  // dist=0 (inside)
+      market("3", "watching", { last_price: { yes_best_ask: 0.90 } })   // dist=0.03
     );
 
-    const result = selectPipelineUniverse(state, {});
+    const cfg = { filters: { min_prob: 0.93, max_entry_price: 0.97 } };
+    const result = selectPipelineUniverse(state, cfg);
     
-    assert.equal(result[0].gamma_vol24h_usd, 500);
-    assert.equal(result[1].gamma_vol24h_usd, 300);
-    assert.equal(result[2].gamma_vol24h_usd, 100);
+    assert.equal(result[0].slug, "market-2");  // inside range
+    assert.equal(result[1].slug, "market-3");  // 0.03 away
+    assert.equal(result[2].slug, "market-1");  // 0.13 away
   });
 
   it("respects max_markets_per_cycle limit for watching", () => {
