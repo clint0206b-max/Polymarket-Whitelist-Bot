@@ -52,20 +52,20 @@ describe("is_base_signal_candidate — LoL entry [0.87, 0.89]", () => {
 });
 
 describe("LoL SL config values", () => {
-  it("stop_loss_bid_lol=0.40", async () => {
+  it("stop_loss_bid_lol=0.32", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_bid_lol, 0.40);
+    assert.equal(c.paper.stop_loss_bid_lol, 0.32);
   });
-  it("stop_loss_ask_lol=0.45", async () => {
+  it("stop_loss_ask_lol=0.37", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_ask_lol, 0.45);
+    assert.equal(c.paper.stop_loss_ask_lol, 0.37);
   });
-  it("min_entry_price_lol=0.87", async () => {
+  it("min_entry_price_lol=0.80", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.filters.min_entry_price_lol, 0.87);
+    assert.equal(c.filters.min_entry_price_lol, 0.80);
   });
   it("max_entry_price_lol=0.89", async () => {
     const { readFileSync } = await import("node:fs");
