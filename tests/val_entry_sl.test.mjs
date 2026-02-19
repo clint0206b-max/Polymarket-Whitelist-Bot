@@ -46,20 +46,20 @@ describe("is_base_signal_candidate — Val entry [0.89, 0.93]", () => {
 });
 
 describe("Val SL config values", () => {
-  it("stop_loss_bid_val=0.40", async () => {
+  it("stop_loss_bid_val=0.42", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_bid_val, 0.40);
+    assert.equal(c.paper.stop_loss_bid_val, 0.42);
   });
-  it("stop_loss_ask_val=0.45", async () => {
+  it("stop_loss_ask_val=0.47", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_ask_val, 0.45);
+    assert.equal(c.paper.stop_loss_ask_val, 0.47);
   });
-  it("min_entry_price_val=0.89", async () => {
+  it("min_entry_price_val=0.81", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.filters.min_entry_price_val, 0.89);
+    assert.equal(c.filters.min_entry_price_val, 0.81);
   });
   it("max_entry_price_val=0.93", async () => {
     const { readFileSync } = await import("node:fs");
