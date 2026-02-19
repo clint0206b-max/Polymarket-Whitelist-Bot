@@ -93,8 +93,8 @@ export async function getConditionalBalance(client, tokenId) {
     asset_type: AssetType.CONDITIONAL,
     token_id: tokenId,
   });
-  // CLOB API returns balance already normalized (not raw decimals)
-  return Number(bal.balance);
+  // CLOB API returns raw balance in token decimals (6 decimals, same as USDC)
+  return Number(bal.balance) / 1e6;
 }
 
 // Singleton provider — reuses connection, avoids repeated detectNetwork() calls
