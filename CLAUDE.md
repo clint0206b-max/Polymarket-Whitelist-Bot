@@ -132,12 +132,15 @@ selectPipelineUniverse() → ESPN context tagging → stage1 → stage2 → pend
 **Critical invariant:** signaled markets MUST receive price updates (visibility) but MUST NOT re-enter pipeline (prevents duplicate signals).
 
 **Price Update Path:**
-1. Get token IDs (resolve YES/NO if needed via book score comparison)
-2. Check WS cache (instant, <50ms)
-3. If miss/stale → HTTP fallback (/book endpoint, 300-800ms)
-4. Parse book → complementary pricing: `best_ask = min(yes_ask, 1 - no_bid)`
-5. Update `market.last_price = { yes_best_ask, yes_best_bid, spread, updated_ts }`
-6. Cache depth metrics (15s TTL, bust on 3¢ price move)
+1. **Batch HTTP prefetch** (before loop): pre-scan universe, fire parallel HTTP for all WS-stale tokens via queue. Requests are in-flight before the loop starts.
+2. Get token IDs (resolve YES/NO if needed via book score comparison)
+3. Check WS cache (instant, <50ms)
+4. If miss/stale → consume prefetched HTTP (instant await) or fallback to fresh HTTP
+5. Parse book → complementary pricing: `best_ask = min(yes_ask, 1 - no_bid)`
+6. Update `market.last_price = { yes_best_ask, yes_best_bid, spread, updated_ts }`
+7. Cache depth metrics (15s TTL, bust on 3¢ price move)
+
+**Prefetch details:** `getBookOrPrefetch(token, reason)` — consumes from Map (delete-on-consume for 1:1 counting), falls back to queue.enqueue if not prefetched. `.catch()` guard normalizes errors to `{ok:false}`. Health counters: `prefetch_fired`, `prefetch_consumed`.
 
 **Signal Pipeline Path (watching markets only):**
 
@@ -376,6 +379,20 @@ const state = readJsonWithFallback(STATE_PATH) || baseState();
 // Write (atomic + fsync + backup)
 writeJsonAtomic(STATE_PATH, state);
 ```
+
+### Market Price Logger (Backtesting)
+
+**File:** `src/journal/market_price_logger.mjs`
+**Output:** `state/journal/market_prices/YYYY-MM-DD.jsonl`
+
+Logs bid/ask prices for all watched markets. Used for SL alternative backtesting.
+
+- **Delta threshold:** 0.01 (logs when price changes ≥ 1¢)
+- **Heartbeat:** every 5 min even without price change
+- **Active positions** (`status === "signaled"`): logged **every tick** (~2-4s) with `"pos": true`
+- **Resolved positions** (bid ≥ 0.99): logging stops (no backtest value)
+- **Retention:** 30 days (auto-cleanup)
+- **Disk usage:** ~2.5 MB/day
 
 ### Journal (Append-Only)
 
