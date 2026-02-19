@@ -1193,8 +1193,12 @@ export class TradeBridge {
       return Number(c[`${key}_${sport}`] || c[`${key}_${fallbackSport}`] || c[key] || defaultVal);
     };
 
+    // Defense in depth: include orphan_pending with real shares for SL tracking.
+    // Used ONLY for exit management (SLBreachTracker params), not entry decisions.
     const openTrades = Object.entries(this.execState.trades)
-      .filter(([_, t]) => t.status === "filled" && !t.closed && String(t.side).toUpperCase() === "BUY");
+      .filter(([_, t]) => !t.closed && String(t.side).toUpperCase() === "BUY"
+        && Number(t.filledShares) > 0
+        && (t.status === "filled" || t.status === "orphan_pending"));
 
     const results = [];
     for (const [, trade] of openTrades) {
