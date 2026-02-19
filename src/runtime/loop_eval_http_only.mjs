@@ -46,7 +46,7 @@ function parseTeamsFromTitle(title) {
 
 function parseBoFromScoreOrPeriod(scoreRaw, periodRaw) {
   const s = String(scoreRaw || "");
-  const m = s.match(/\bBo\s*(3|5)\b/i);
+  const m = s.match(/\bBo\s*(2|3|5)\b/i);
   if (m) return Number(m[1]);
 
   const p = String(periodRaw || "");
@@ -89,7 +89,8 @@ function computeEsportsDerived(m, cfg) {
   };
 
   const bo = parseBoFromScoreOrPeriod(ev?.score_raw, ev?.period_raw);
-  if (bo === 3) { out.series_format = "bo3"; out.required_wins = 1; }
+  if (bo === 2) { out.series_format = "bo2"; out.required_wins = null; } // Bo2 can draw — blacklisted
+  else if (bo === 3) { out.series_format = "bo3"; out.required_wins = 1; }
   else if (bo === 5) { out.series_format = "bo5"; out.required_wins = 2; }
   else { out.series_format = "unknown"; out.required_wins = null; }
 
@@ -1495,6 +1496,15 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         const rs = String(m.esports_ctx.derived?.guard_reason || "unknown");
         bumpBucket("health", `esports_series_guard_status:${st}`, 1);
         bumpBucket("health", `esports_series_guard_reason:${rs}`, 1);
+      }
+
+      // --- Bo2 BLACKLIST: reject ALL markets (series + maps) from Bo2 events ---
+      // Bo2 series can draw, causing correlated double-loss on game2 + series.
+      const fmt = String(m.esports_ctx.derived?.series_format || "unknown");
+      if (fmt === "bo2" && m.status === "watching") {
+        bumpBucket("reject", "bo2_blacklisted", 1);
+        bumpBucket("health", "bo2_blacklisted", 1);
+        continue; // skip entire pipeline evaluation for this market
       }
     }
 
