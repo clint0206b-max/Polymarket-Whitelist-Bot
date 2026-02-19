@@ -355,18 +355,110 @@ try {
           }
 
           const idx = loadOpenIndex();
-          for (const s of newOnes) {
+
+          // --- MAX RE-ENTRY GUARD: skip slugs that already have 2+ SL losses ---
+          const MAX_SL_PER_SLUG = 2;
+          const slCountBySlug = new Map();
+          for (const [, row] of Object.entries(idx.closed || {})) {
+            if (row?.close_reason === "stop_loss" && row?.slug) {
+              slCountBySlug.set(row.slug, (slCountBySlug.get(row.slug) || 0) + 1);
+            }
+          }
+
+          // Filter out blocked slugs BEFORE both journal + trade loops
+          const filteredNewOnes = newOnes.filter(s => {
+            const slug = String(s.slug || "");
+            const slCount = slCountBySlug.get(slug) || 0;
+            if (slCount >= MAX_SL_PER_SLUG) {
+              console.log(`[RE-ENTRY_BLOCKED] ${slug} | ${slCount} SL losses already — skipping`);
+              // Blacklist slug so Gamma doesn't re-add it
+              const wlKey = Object.keys(state.watchlist || {}).find(k => state.watchlist[k]?.slug === slug);
+              if (wlKey && state.watchlist[wlKey]) {
+                state._terminal_purged_slugs = state._terminal_purged_slugs || new Set();
+                if (!(state._terminal_purged_slugs instanceof Set)) {
+                  state._terminal_purged_slugs = new Set(Object.keys(state._terminal_purged_slugs));
+                }
+                state._terminal_purged_slugs.add(slug);
+                delete state.watchlist[wlKey];
+              }
+              return false;
+            }
+            return true;
+          });
+
+          // Helper: build signal_open row for JSONL
+          const buildSignalOpenRow = (s, signalId, entryPrice, paperNotional, entryOutcome, marketTitle) => ({
+            type: "signal_open",
+            runner_id: RUNNER_ID,
+            schema_version: SCHEMA_VERSION,
+            build_commit: BUILD_COMMIT,
+            signal_id: signalId,
+            ts_open: Number(s.ts),
+            slug: String(s.slug),
+            title: marketTitle,
+            conditionId: String(s.conditionId || ""),
+            league: String(s.league || ""),
+            market_kind: s.market_kind || null,
+            signal_type: String(s.signal_type || ""),
+            near_by: String(s.near_by || ""),
+            entry_price: entryPrice,
+            spread: Number(s.spread),
+            entry_depth_usd_ask: Number(s.entryDepth || 0),
+            exit_depth_usd_bid: Number(s.exitDepth || 0),
+            paper_notional_usd: paperNotional,
+            paper_shares: (entryPrice > 0) ? (paperNotional / entryPrice) : null,
+            entry_outcome_name: entryOutcome,
+            would_gate_apply: (s.would_gate_apply === true),
+            would_gate_block: (s.would_gate_block === true),
+            would_gate_reason: String(s.would_gate_reason || "not_applicable"),
+            tp_bid_target: Number(s.tp_bid_target ?? null),
+            tp_min_profit_per_share: Number(s.tp_min_profit_per_share ?? null),
+            tp_fees_roundtrip: Number(s.tp_fees_roundtrip ?? null),
+            tp_max_entry_dynamic: (s.tp_max_entry_dynamic == null ? null : Number(s.tp_max_entry_dynamic)),
+            tp_math_margin: (s.tp_math_margin == null ? null : Number(s.tp_math_margin)),
+            tp_math_allowed: (s.tp_math_allowed === true),
+            tp_math_reason: String(s.tp_math_reason || "no_data"),
+            ctx: s.ctx || null,
+            esports: s.esports || null,
+            status: "open"
+          });
+
+          // Helper: build open_index row
+          const buildOpenIndexRow = (s, entryPrice, paperNotional, entryOutcome, marketTitle) => ({
+            slug: String(s.slug),
+            title: marketTitle,
+            ts_open: Number(s.ts),
+            league: String(s.league || ""),
+            market_kind: s.market_kind || null,
+            entry_price: entryPrice,
+            paper_notional_usd: paperNotional,
+            entry_outcome_name: entryOutcome,
+            would_gate_apply: (s.would_gate_apply === true),
+            would_gate_block: (s.would_gate_block === true),
+            would_gate_reason: String(s.would_gate_reason || "not_applicable"),
+            tp_math_allowed: (s.tp_math_allowed === true),
+            tp_math_reason: String(s.tp_math_reason || "no_data"),
+            context_entry: s.ctx?.entry_gate ? {
+              win_prob: s.ctx.entry_gate.win_prob ?? null,
+              margin_for_yes: s.ctx.entry_gate.margin_for_yes ?? null,
+              entry_allowed: s.ctx.entry_gate.entry_allowed ?? null,
+              entry_blocked_reason: s.ctx.entry_gate.entry_blocked_reason ?? null,
+              ev_edge: s.ctx.entry_gate.ev_edge ?? null,
+            } : null
+          });
+
+          const isLiveMode = tradeBridge && tradeBridge.mode !== "paper";
+
+          for (const s of filteredNewOnes) {
             const signalId = `${Number(s.ts)}|${String(s.slug)}`;
             const entryPrice = Number(s.probAsk);
             const paperNotional = Number(cfg?.paper?.notional_usd ?? 10);
 
             // Derive entry_outcome_name for ALL leagues (not just esports)
             let entryOutcome = null;
-            // Try esports derived first
             if (s?.esports?.yes_outcome_name) {
               entryOutcome = String(s.esports.yes_outcome_name);
             }
-            // Fallback: derive from watchlist outcomes + clobTokenIds + yes_token_id
             if (!entryOutcome) {
               const wm = wlBySlug.get(String(s.slug || ""));
               if (wm) {
@@ -380,86 +472,20 @@ try {
               }
             }
 
-            // Get market title for readability
             const marketTitle = (() => {
               const wm = wlBySlug.get(String(s.slug || ""));
               return wm?.title || wm?.question || null;
             })();
 
-            appendJsonl("state/journal/signals.jsonl", {
-              type: "signal_open",
-              runner_id: RUNNER_ID,
-              schema_version: SCHEMA_VERSION,
-              build_commit: BUILD_COMMIT,
-              signal_id: signalId,
-              ts_open: Number(s.ts),
-              slug: String(s.slug),
-              title: marketTitle,
-              conditionId: String(s.conditionId || ""),
-              league: String(s.league || ""),
-              market_kind: s.market_kind || null,
-              signal_type: String(s.signal_type || ""),
-              near_by: String(s.near_by || ""),
-              entry_price: entryPrice,
-              spread: Number(s.spread),
-              entry_depth_usd_ask: Number(s.entryDepth || 0),
-              exit_depth_usd_bid: Number(s.exitDepth || 0),
-              paper_notional_usd: paperNotional,
-              paper_shares: (entryPrice > 0) ? (paperNotional / entryPrice) : null,
-              entry_outcome_name: entryOutcome,
-
-              would_gate_apply: (s.would_gate_apply === true),
-              would_gate_block: (s.would_gate_block === true),
-              would_gate_reason: String(s.would_gate_reason || "not_applicable"),
-
-              tp_bid_target: Number(s.tp_bid_target ?? null),
-              tp_min_profit_per_share: Number(s.tp_min_profit_per_share ?? null),
-              tp_fees_roundtrip: Number(s.tp_fees_roundtrip ?? null),
-              tp_max_entry_dynamic: (s.tp_max_entry_dynamic == null ? null : Number(s.tp_max_entry_dynamic)),
-              tp_math_margin: (s.tp_math_margin == null ? null : Number(s.tp_math_margin)),
-              tp_math_allowed: (s.tp_math_allowed === true),
-              tp_math_reason: String(s.tp_math_reason || "no_data"),
-
-              ctx: s.ctx || null,
-              esports: s.esports || null,
-              status: "open"
-            });
-
-            addOpen(idx, signalId, {
-              slug: String(s.slug),
-              title: marketTitle,
-              ts_open: Number(s.ts),
-              league: String(s.league || ""),
-              market_kind: s.market_kind || null,
-              entry_price: entryPrice,
-              paper_notional_usd: paperNotional,
-              entry_outcome_name: entryOutcome,
-              would_gate_apply: (s.would_gate_apply === true),
-              would_gate_block: (s.would_gate_block === true),
-              would_gate_reason: String(s.would_gate_reason || "not_applicable"),
-              tp_math_allowed: (s.tp_math_allowed === true),
-              tp_math_reason: String(s.tp_math_reason || "no_data"),
-              // Context entry gate snapshot (for resolution analysis)
-              context_entry: s.ctx?.entry_gate ? {
-                win_prob: s.ctx.entry_gate.win_prob ?? null,
-                margin_for_yes: s.ctx.entry_gate.margin_for_yes ?? null,
-                entry_allowed: s.ctx.entry_gate.entry_allowed ?? null,
-                entry_blocked_reason: s.ctx.entry_gate.entry_blocked_reason ?? null,
-                ev_edge: s.ctx.entry_gate.ev_edge ?? null,
-              } : null
-            });
-            // Human-readable log
-            console.log(`[SIGNAL] ${String(s.league || "").toUpperCase()} | ${marketTitle || s.slug} | ${entryOutcome || "?"} @ ${entryPrice.toFixed(2)} | spread=${Number(s.spread).toFixed(3)} | ${String(s.signal_type || "")}`);
-          }
-          saveOpenIndex(idx);
-
-          // === TRADE BRIDGE: execute buys for new signals ===
-          if (tradeBridge && tradeBridge.mode !== "paper") {
-            for (const s of newOnes) {
+            if (!isLiveMode) {
+              // Paper mode: write signal_open immediately (no buy to confirm)
+              appendJsonl("state/journal/signals.jsonl", buildSignalOpenRow(s, signalId, entryPrice, paperNotional, entryOutcome, marketTitle));
+              addOpen(idx, signalId, buildOpenIndexRow(s, entryPrice, paperNotional, entryOutcome, marketTitle));
+              console.log(`[SIGNAL] ${String(s.league || "").toUpperCase()} | ${marketTitle || s.slug} | ${entryOutcome || "?"} @ ${entryPrice.toFixed(2)} | spread=${Number(s.spread).toFixed(3)} | ${String(s.signal_type || "")}`);
+            } else {
+              // Live mode: buy FIRST, only write signal_open if confirmed
               const wm = wlBySlug.get(String(s.slug || ""));
               const yesToken = wm?.tokens?.yes_token_id;
-              const entryPrice = Number(s.probAsk);
-              const signalId = `${s.ts}|${s.slug}`;
               try {
                 const buyResult = await tradeBridge.handleSignalOpen({
                   signal_id: signalId,
@@ -469,52 +495,39 @@ try {
                   league: String(s.league || ""),
                 });
 
-                // --- Post-buy: update open_index based on result ---
-                if (buyResult) {
-                  const isFailed = buyResult.status === "failed" || buyResult.blocked;
-                  const isUnknown = buyResult.error === "order_status_unknown";
-
-                  if (isFailed && !isUnknown) {
-                    // Definitive failure (rejected, cancelled, blocked) → move to failed_buys
-                    const failReason = buyResult.error || buyResult.reason || "unknown";
-                    addFailedBuy(idx, signalId, {
-                      ...idx.open[signalId],
-                      buy_status: "failed",
-                      buy_fail_reason: failReason,
-                      moved_at: Date.now(),
-                    });
-                    removeOpen(idx, signalId);
-                    saveOpenIndex(idx);
-                    console.log(`[BUY_FAILED] ${s.slug} | ${failReason} → moved to failed_buys`);
-                  } else if (isUnknown) {
-                    // Ambiguous — mark for deferred reconciliation
-                    if (idx.open[signalId]) {
-                      idx.open[signalId].buy_status = "unknown";
-                      idx.open[signalId].buy_status_ts = Date.now();
-                      idx.open[signalId]._tokenId = yesToken || null;
-                      saveOpenIndex(idx);
-                      console.log(`[BUY_UNKNOWN] ${s.slug} | order_status_unknown → deferred reconcile`);
-                    }
-                  }
-                  // If buyResult.ok === true (filled), open_index is already correct (position is real)
+                if (buyResult && buyResult.ok) {
+                  // Buy confirmed → NOW write signal_open + open_index
+                  appendJsonl("state/journal/signals.jsonl", buildSignalOpenRow(s, signalId, entryPrice, paperNotional, entryOutcome, marketTitle));
+                  addOpen(idx, signalId, buildOpenIndexRow(s, entryPrice, paperNotional, entryOutcome, marketTitle));
+                  saveOpenIndex(idx);
+                  console.log(`[SIGNAL] ${String(s.league || "").toUpperCase()} | ${marketTitle || s.slug} | ${entryOutcome || "?"} @ ${entryPrice.toFixed(2)} | spread=${Number(s.spread).toFixed(3)} | ${String(s.signal_type || "")}`);
+                } else if (buyResult && buyResult.error === "order_status_unknown") {
+                  // Ambiguous — write signal_open but mark unknown for deferred reconcile
+                  appendJsonl("state/journal/signals.jsonl", buildSignalOpenRow(s, signalId, entryPrice, paperNotional, entryOutcome, marketTitle));
+                  addOpen(idx, signalId, { ...buildOpenIndexRow(s, entryPrice, paperNotional, entryOutcome, marketTitle), buy_status: "unknown", buy_status_ts: Date.now(), _tokenId: yesToken || null });
+                  saveOpenIndex(idx);
+                  console.log(`[BUY_UNKNOWN] ${s.slug} | order_status_unknown → deferred reconcile`);
+                } else {
+                  // Buy failed or blocked → do NOT write signal_open
+                  const failReason = buyResult?.error || buyResult?.reason || "unknown";
+                  addFailedBuy(idx, signalId, {
+                    slug: String(s.slug), league: String(s.league || ""), entry_price: entryPrice,
+                    buy_status: "failed", buy_fail_reason: failReason, moved_at: Date.now(),
+                  });
+                  saveOpenIndex(idx);
+                  console.log(`[BUY_FAILED] ${s.slug} | ${failReason}`);
                 }
               } catch (e) {
-                console.error(`[TRADE_BRIDGE] buy error for ${s.slug}: ${e.message}`);
-                // Exception during buy → move to failed_buys
-                if (idx.open[signalId]) {
-                  addFailedBuy(idx, signalId, {
-                    ...idx.open[signalId],
-                    buy_status: "failed",
-                    buy_fail_reason: `exception: ${e.message}`,
-                    moved_at: Date.now(),
-                  });
-                  removeOpen(idx, signalId);
-                  saveOpenIndex(idx);
-                  console.log(`[BUY_EXCEPTION] ${s.slug} → moved to failed_buys`);
-                }
+                console.error(`[BUY_EXCEPTION] ${s.slug} | ${e.message}`);
+                addFailedBuy(idx, signalId, {
+                  slug: String(s.slug), league: String(s.league || ""), entry_price: entryPrice,
+                  buy_status: "failed", buy_fail_reason: `exception: ${e.message}`, moved_at: Date.now(),
+                });
+                saveOpenIndex(idx);
               }
             }
           }
+          saveOpenIndex(idx);
 
           // Mark CRITICAL dirty: new paper positions opened (must persist immediately)
           dirtyTracker.mark(`eval:signals_generated:${newOnes.length}`, true);
@@ -525,23 +538,50 @@ try {
       // Gamma is NOT used for any trading decisions in live mode.
       if (tradeBridge && tradeBridge.mode !== "paper") {
         try {
-          // Build price map from watchlist state (updated by WS/HTTP in eval loop)
+          // Build price map + context map from watchlist state
           const pricesBySlug = new Map();
+          const contextBySlug = new Map();
           for (const m of Object.values(state.watchlist || {})) {
             if (m?.slug && m?.last_price) {
               pricesBySlug.set(m.slug, m.last_price);
             }
+            if (m?.slug && m?.context) {
+              contextBySlug.set(m.slug, {
+                context: m.context,
+                context_entry: m.context_entry || null,
+              });
+            }
           }
-          const closeSignals = tradeBridge.checkPositionsFromCLOB(pricesBySlug);
+          const closeSignals = tradeBridge.checkPositionsFromCLOB(pricesBySlug, contextBySlug);
           for (const sig of closeSignals) {
             try {
               const { appendJsonl } = await import("./src/core/journal.mjs");
-              appendJsonl("state/journal/signals.jsonl", {
-                ...sig,
-                runner_id: process.env.SHADOW_ID || "prod",
-                source: "clob_position_check",
-              });
               const sellResult = await tradeBridge.handleSignalClose(sig);
+
+              // Only log signal_close AFTER sell attempt completes
+              // If sell failed completely, mark it as such so dashboard doesn't show fake PnL
+              const sellFailed = sig.close_reason === "stop_loss" && (!sellResult || !sellResult.ok);
+              if (sellFailed) {
+                appendJsonl("state/journal/signals.jsonl", {
+                  ...sig,
+                  runner_id: process.env.SHADOW_ID || "prod",
+                  source: "clob_position_check",
+                  executed: false,
+                  pnl_usd: 0,
+                  sell_error: "sl_sell_failed",
+                });
+                console.log(`[SL_JOURNAL] ${sig.slug} | sell FAILED — logged with executed=false, pnl=0`);
+              } else {
+                // Sell succeeded (or resolved/paper) — log with real PnL
+                const realPnl = (sellResult && sellResult.pnlUsd != null) ? sellResult.pnlUsd : sig.pnl_usd;
+                appendJsonl("state/journal/signals.jsonl", {
+                  ...sig,
+                  pnl_usd: realPnl ?? sig.pnl_usd,
+                  runner_id: process.env.SHADOW_ID || "prod",
+                  source: "clob_position_check",
+                  executed: true,
+                });
+              }
 
               // Update open_index immediately after sell
               if (sellResult && sellResult.ok) {
