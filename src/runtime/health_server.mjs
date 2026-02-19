@@ -585,6 +585,11 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       };
     })(),
 
+    sl_breach_tracker: (() => {
+      const tracker = state?.runtime?._slBreachTracker;
+      return tracker?.getStats?.() || null;
+    })(),
+
     depth_cache: (() => {
       const dc = state?.runtime?._depthCache;
       if (!dc) return null;

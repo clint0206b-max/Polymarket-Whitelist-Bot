@@ -1138,4 +1138,40 @@ export class TradeBridge {
       last_reconcile_ts: this.execState.last_reconcile_ts || null,
     };
   }
+
+  /**
+   * Returns SL params per open position for the SLBreachTracker.
+   * Maps tokenId → { slBid, spreadMax, emergencyBid, slug }
+   * @param {Object} watchlist - state.watchlist to look up tokenIds
+   */
+  getPositionSLParams(watchlist) {
+    if (this.mode === "paper") return [];
+    const c = this.cfg?.paper || {};
+    const resolve = (sport, key, fallbackSport, defaultVal) => {
+      return Number(c[`${key}_${sport}`] || c[`${key}_${fallbackSport}`] || c[key] || defaultVal);
+    };
+
+    const openTrades = Object.entries(this.execState.trades)
+      .filter(([_, t]) => t.status === "filled" && !t.closed && String(t.side).toUpperCase() === "BUY");
+
+    const results = [];
+    for (const [, trade] of openTrades) {
+      const slug = trade.slug || "";
+      const prefix = slug.split("-")[0];
+      const isEsports = ["cs2", "dota2", "lol", "val"].includes(prefix);
+      const fb = isEsports ? "esports" : "default";
+
+      const slBid = resolve(prefix, "stop_loss_bid", fb, 0.70);
+      const spreadMax = resolve(prefix, "stop_loss_spread_max", fb, 0.50);
+      const emergencyBid = resolve(prefix, "stop_loss_emergency_bid", fb, 0.15);
+
+      // Look up tokenId from watchlist
+      const wm = watchlist ? Object.values(watchlist).find(m => m?.slug === slug) : null;
+      const tokenId = wm?.yes_token_id || wm?.tokenId;
+      if (tokenId) {
+        results.push({ tokenId: String(tokenId), slBid, spreadMax, emergencyBid, slug });
+      }
+    }
+    return results;
+  }
 }

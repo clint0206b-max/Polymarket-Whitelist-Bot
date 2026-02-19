@@ -213,6 +213,10 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   // Initialize WebSocket client (singleton pattern, lazy connect)
   if (!state.runtime.wsClient) {
     state.runtime.wsClient = new CLOBWebSocketClient(cfg);
+    // Attach SL breach tracker if available
+    if (state.runtime._slBreachTracker) {
+      state.runtime.wsClient.slBreachTracker = state.runtime._slBreachTracker;
+    }
     // Don't call connect() here - let it connect on first subscribe() call
     console.log("[WS] Client initialized (lazy mode)");
   }

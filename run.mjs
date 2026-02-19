@@ -9,6 +9,7 @@ import { reconcileExecutionsFromSignals } from "./src/core/reconcile_journals.mj
 import { DirtyTracker, detectChanges } from "./src/core/dirty_tracker.mjs";
 import { startHealthServer } from "./src/runtime/health_server.mjs";
 import { TradeBridge, validateBootConfig } from "./src/execution/trade_bridge.mjs";
+import { SLBreachTracker } from "./src/clob/sl_breach_tracker.mjs";
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -258,6 +259,11 @@ let tradeBridge = null;
   }
   
   tradeBridge = new TradeBridge(cfg, state);
+
+  // SL breach tracker: measures WS→loop latency for SL detection
+  const slBreachTracker = new SLBreachTracker();
+  state.runtime._slBreachTracker = slBreachTracker;
+
   const cbbGateMode = String(cfg?.context?.entry_rules?.gate_mode_cbb ?? globalGateMode);
   console.log(`[BOOT] trading.mode=${tradingMode} | gates: nba=${nbaGateMode} cbb=${cbbGateMode} soccer=always | SL=${cfg?.paper?.stop_loss_bid || "none"} | max_pos=$${cfg?.trading?.max_position_usd || "?"}`);
   
@@ -569,7 +575,29 @@ try {
               });
             }
           }
+          // Configure SL breach tracker with current position params
+          if (state.runtime._slBreachTracker) {
+            try {
+              const slParams = tradeBridge.getPositionSLParams(state.watchlist);
+              state.runtime._slBreachTracker.configure(slParams);
+            } catch { /* non-critical */ }
+          }
+
           const closeSignals = tradeBridge.checkPositionsFromCLOB(pricesBySlug, contextBySlug);
+
+          // Record SL breach latency for acted signals
+          if (state.runtime._slBreachTracker) {
+            for (const sig of closeSignals) {
+              if (sig.close_reason === "stop_loss" || sig.close_reason === "context_sl") {
+                const wm = Object.values(state.watchlist || {}).find(m => m?.slug === sig.slug);
+                const tokenId = wm?.yes_token_id || wm?.tokenId;
+                if (tokenId) {
+                  state.runtime._slBreachTracker.onLoopSLDetected(String(tokenId));
+                }
+              }
+            }
+          }
+
           for (const sig of closeSignals) {
             try {
               const { appendJsonl } = await import("./src/core/journal.mjs");
