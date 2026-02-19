@@ -48,10 +48,10 @@ describe("is_base_signal_candidate — CWBB entry [0.86, 0.90] + spread ≤ 0.02
 });
 
 describe("CWBB config values in local.json", () => {
-  it("min_entry_price_cwbb=0.86", async () => {
+  it("min_entry_price_cwbb=0.80", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.filters.min_entry_price_cwbb, 0.86);
+    assert.equal(c.filters.min_entry_price_cwbb, 0.80);
   });
   it("max_entry_price_cwbb=0.90", async () => {
     const { readFileSync } = await import("node:fs");
@@ -68,10 +68,10 @@ describe("CWBB config values in local.json", () => {
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.context.entry_rules.max_minutes_left_cwbb, 10);
   });
-  it("CWBB SL bid=0.45, ask=0.50", async () => {
+  it("CWBB SL bid=0.40, ask=0.45", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_bid_cwbb, 0.45);
-    assert.equal(c.paper.stop_loss_ask_cwbb, 0.50);
+    assert.equal(c.paper.stop_loss_bid_cwbb, 0.40);
+    assert.equal(c.paper.stop_loss_ask_cwbb, 0.45);
   });
 });

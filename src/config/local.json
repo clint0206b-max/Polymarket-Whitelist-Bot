@@ -31,7 +31,7 @@
     "max_spread_cbb": 0.02,
     "min_entry_price_nba": 0.83,
     "max_entry_price_nba": 0.87,
-    "min_entry_price_cwbb": 0.86,
+    "min_entry_price_cwbb": 0.80,
     "max_entry_price_cwbb": 0.9,
     "max_spread_cwbb": 0.02
   },
@@ -69,8 +69,8 @@
     "stop_loss_ask_nba": 0.5,
     "stop_loss_bid_cbb": 0.45,
     "stop_loss_ask_cbb": 0.5,
-    "stop_loss_bid_cwbb": 0.45,
-    "stop_loss_ask_cwbb": 0.5
+    "stop_loss_bid_cwbb": 0.40,
+    "stop_loss_ask_cwbb": 0.45
   },
   "context": {
     "enabled": true,
