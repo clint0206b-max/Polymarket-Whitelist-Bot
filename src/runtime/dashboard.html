@@ -435,10 +435,12 @@
       };
       tmEl.className = 'text-xs px-2 py-0.5 rounded-full mono ' + (tb.paused ? 'bg-red-500/20 text-red-400' : (tmColors[tMode] || tmColors.paper));
 
-      // Balance
+      // Balance (cash + open positions = total portfolio value)
       const lastBal = tb.last_balance;
+      const exposure = tb.total_exposure_usd || 0;
       if (lastBal != null) {
-        $('kpi-balance').textContent = '$' + Number(lastBal).toFixed(2);
+        const totalBalance = Number(lastBal) + Number(exposure);
+        $('kpi-balance').textContent = '$' + totalBalance.toFixed(2);
         $('kpi-balance').className = 'text-2xl font-bold mono mt-1 text-white';
       }
 
@@ -629,7 +631,7 @@
       $('positions-empty').classList.add('hidden');
       const now = Date.now();
       $('positions-body').innerHTML = items.map(p => {
-        const curPrice = p.price_tracking?.price_last ?? null;
+        const curPrice = p.current_bid ?? p.price_tracking?.price_last ?? null;
         const pnl = curPrice != null ? ((curPrice - p.entry_price) / p.entry_price * p.paper_notional_usd) : null;
         const ageMs = now - (p.ts_open || now);
         return `<tr class="hover:bg-slate-800/50">
