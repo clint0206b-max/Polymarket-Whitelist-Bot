@@ -760,7 +760,7 @@ export class TradeBridge {
     if (this.mode === "paper" || !this.client) return;
     
     const now = Date.now();
-    const interval = 5 * 60 * 1000; // every 5 min
+    const interval = 2 * 60 * 1000; // every 2 min
     if (now - (this.execState.last_reconcile_ts || 0) < interval) return;
 
     try {
@@ -848,7 +848,40 @@ export class TradeBridge {
         resolved++;
         
         const slug = tradeId.split("|")[1] || tradeId;
+        const win = pnl >= 0;
         console.log(`[ORPHAN_RECONCILE] ${slug} → sell@${sellPrice} size=${sellSize} pnl=$${pnl.toFixed(2)}`);
+
+        // Write signal_close to journal so dashboard picks it up
+        appendJsonl("state/journal/signals.jsonl", {
+          type: "signal_close",
+          signal_id: trade.signal_id || tradeId,
+          slug,
+          ts_close: sellTime,
+          close_reason: "manual_sell",
+          resolved_price: sellPrice,
+          win,
+          pnl_usd: pnl,
+          roi: (trade.spentUsd > 0) ? pnl / trade.spentUsd : 0,
+          executed: true,
+          orphan_reconciled: true,
+        });
+
+        // Write execution entry for the sell
+        appendJsonl("state/journal/executions.jsonl", {
+          type: "sell",
+          trade_id: `sell:orphan:${trade.signal_id || tradeId}`,
+          signal_id: trade.signal_id || tradeId,
+          slug,
+          side: "SELL",
+          mode: trade.mode || "live",
+          status: "filled",
+          avgFillPrice: sellPrice,
+          shares: sellSize,
+          receivedUsd: sellSize * sellPrice,
+          ts: sellTime,
+          close_reason: "manual_sell",
+          orphan_reconciled: true,
+        });
       } else {
         trade.orphan_attempts = (trade.orphan_attempts || 0) + 1;
         const ageMs = now - (trade.orphan_detected_ts || now);
