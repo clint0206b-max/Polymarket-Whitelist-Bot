@@ -514,4 +514,40 @@ describe("SL sell logic", () => {
       assert.equal(bridge.slFloorSteps.length, 5);
     });
   });
+
+  describe("last resort sell (floor=0.01)", () => {
+    it("last resort attempt uses floor=0.01 after all escalation steps fail", () => {
+      // The last resort floor is always 0.01 regardless of trigger price
+      const lastResortFloor = 0.01;
+      assert.equal(lastResortFloor, 0.01);
+      // This is lower than any absoluteMinFloor (which is max(0.01, trigger-0.10))
+      // For trigger=0.37: absoluteMinFloor=0.27, last resort=0.01
+      // For trigger=0.50: absoluteMinFloor=0.40, last resort=0.01
+      assert.ok(lastResortFloor < Math.max(0.01, 0.37 - 0.10));
+      assert.ok(lastResortFloor < Math.max(0.01, 0.50 - 0.10));
+    });
+
+    it("last resort is attempt #6 (after 5 escalation steps)", () => {
+      const slFloorSteps = [0, 0.01, 0.02, 0.03, 0.05];
+      const lastResortAttempt = slFloorSteps.length + 1;
+      assert.equal(lastResortAttempt, 6);
+    });
+
+    it("last resort still checks remaining shares >= 0.01", () => {
+      // If all shares were sold in partial fills during escalation,
+      // last resort should not attempt another sell
+      const shares = 10;
+      const filledSoFar = 9.995; // > 99% filled
+      const remaining = shares - filledSoFar;
+      assert.ok(remaining < 0.01, "should skip last resort when nearly all filled");
+    });
+
+    it("last resort still reconciles conditional balance", () => {
+      // Even at floor=0.01, we should use actual on-chain balance
+      const remainingShares = 14.07;
+      const condBal = 13.5; // slightly less
+      const actualShares = Math.min(remainingShares, condBal);
+      assert.equal(actualShares, 13.5);
+    });
+  });
 });

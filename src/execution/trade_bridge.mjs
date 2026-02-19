@@ -565,7 +565,76 @@ export class TradeBridge {
       }
     }
 
-    // All attempts failed — mark this sell as failed, but keep trading other positions
+    // Last resort: market sell with floor=0.01 (sell at ANY price rather than hold a crashing position)
+    {
+      const remainingShares = shares - (this.execState.trades[sellTradeId]?.filledShares || 0);
+      if (remainingShares >= 0.01) {
+        console.warn(`[SL_SELL_LAST_RESORT] ${signal.slug} | floor=0.01 | remaining=${remainingShares.toFixed(2)} — selling at any price`);
+        try {
+          let actualShares = remainingShares;
+          try {
+            const condBal = await getConditionalBalance(this.client, tokenId);
+            if (condBal < remainingShares * 0.99) {
+              actualShares = Math.min(remainingShares, condBal);
+            }
+          } catch {}
+
+          const result = await executeSell(this.client, tokenId, actualShares, 0.01);
+          if (result.ok && result.filledShares > 0) {
+            const totalFilledSoFar = (this.execState.trades[sellTradeId].filledShares || 0) + result.filledShares;
+            const totalReceivedSoFar = (this.execState.trades[sellTradeId].receivedUsd || 0) + (result.spentUsd || 0);
+            const allFilled = totalFilledSoFar >= shares * 0.99;
+
+            this.execState.trades[sellTradeId] = {
+              ...this.execState.trades[sellTradeId],
+              status: allFilled ? "filled" : "partial",
+              filledShares: totalFilledSoFar,
+              avgFillPrice: totalReceivedSoFar / totalFilledSoFar,
+              receivedUsd: totalReceivedSoFar,
+              isPartial: !allFilled,
+              orderID: result.orderID,
+              floor_used: 0.01,
+              attempt: this.slFloorSteps.length + 1,
+              ts_filled: Date.now(),
+              last_resort: true,
+            };
+            if (allFilled) buyTrade.closed = true;
+            saveExecutionState(this.execState);
+
+            const pnl = totalReceivedSoFar - (buyTrade.spentUsd || 0);
+            console.log(`[FILLED_SL_LAST_RESORT] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4)} | PnL=$${pnl.toFixed(2)}`);
+            notifyTelegram(`🆘 LAST RESORT SELL ${signal.slug}\n-$${Math.abs(pnl).toFixed(2)} | floor=0.01`).catch(() => {});
+
+            appendJsonl("state/journal/executions.jsonl", {
+              type: "trade_executed",
+              trade_id: sellTradeId,
+              mode: this.mode,
+              side: "SELL",
+              close_reason: "stop_loss_last_resort",
+              ts: Date.now(),
+              signal_id: signal.signal_id,
+              slug: signal.slug,
+              tokenId,
+              orderID: result.orderID,
+              filledShares: result.filledShares,
+              totalFilledShares: totalFilledSoFar,
+              avgFillPrice: result.avgFillPrice,
+              receivedUsd: result.spentUsd,
+              pnl_usd: pnl,
+              floor_used: 0.01,
+              attempt: this.slFloorSteps.length + 1,
+              last_resort: true,
+            });
+
+            if (allFilled) return result;
+          }
+        } catch (e) {
+          console.error(`[SL_SELL_LAST_RESORT] ${signal.slug} | error: ${e.message}`);
+        }
+      }
+    }
+
+    // All attempts including last resort failed
     this.execState.trades[sellTradeId].status = "failed_all_attempts";
     saveExecutionState(this.execState);
     console.error(`[SL_SELL_FAILED] ${signal.slug} | ALL ${this.slFloorSteps.length} attempts failed — position remains open`);
