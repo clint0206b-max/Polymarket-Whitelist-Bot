@@ -10,7 +10,7 @@ import { ethers } from "ethers";
 import { readFileSync } from "node:fs";
 
 const CLOB_URL = "https://clob.polymarket.com";
-const POLYGON_RPC = "https://polygon.drpc.org";
+const POLYGON_RPC = "https://1rpc.io/matic";
 const SIGNATURE_TYPE = 2; // POLY_GNOSIS_SAFE
 const USDC_POLYGON = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 const USDC_ABI = ["function balanceOf(address) view returns (uint256)"];
@@ -294,91 +294,4 @@ export function parseFillResult(res, final, requestedAmount, side) {
     priceProvisional,
     raw: { res, final },
   };
-}
-
-// ── Redeem resolved positions on-chain ──────────────────────────
-const CTF_CONDITIONAL_TOKENS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
-
-/**
- * Redeem winning shares for a resolved market directly on-chain via the CTF contract.
- * Works for non-neg-risk markets. For neg-risk, the NegRiskAdapter would be needed.
- *
- * @param {ethers.Wallet} signer - wallet that holds the conditional tokens
- * @param {string} conditionId - bytes32 conditionId of the resolved market
- * @returns {{ ok: boolean, txHash?: string, error?: string }}
- */
-export async function redeemPositions(signer, conditionId) {
-  if (!conditionId) return { ok: false, error: "missing conditionId" };
-
-  const abi = [
-    "function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets) external",
-    "function payoutNumerators(bytes32 conditionId, uint256 index) view returns (uint256)",
-  ];
-
-  const provider = getPolygonProvider();
-  const connected = signer.connect(provider);
-  const ctf = new ethers.Contract(CTF_CONDITIONAL_TOKENS, abi, connected);
-
-  // Check if market is actually resolved by reading payout
-  try {
-    const payout0 = await ctf.payoutNumerators(conditionId, 0);
-    const payout1 = await ctf.payoutNumerators(conditionId, 1);
-    if (payout0.isZero() && payout1.isZero()) {
-      return { ok: false, error: "market not resolved yet (payouts are 0)" };
-    }
-  } catch (e) {
-    return { ok: false, error: `payout check failed: ${e.message}` };
-  }
-
-  const parentCollectionId = ethers.constants.HashZero;
-  // indexSets: [1, 2] redeems both YES (index 0 → 2^0=1) and NO (index 1 → 2^1=2)
-  const indexSets = [1, 2];
-
-  try {
-    // Fetch current gas price from network and add 20% buffer
-    const feeData = await connected.provider.getFeeData();
-    const baseFee = feeData.lastBaseFeePerGas || feeData.gasPrice || ethers.utils.parseUnits("500", "gwei");
-    const maxFee = baseFee.mul(150).div(100); // 1.5x base fee
-    const maxPriority = ethers.utils.parseUnits("30", "gwei");
-    const gasOpts = {
-      maxFeePerGas: maxFee.gt(maxPriority) ? maxFee : maxPriority,
-      maxPriorityFeePerGas: maxPriority,
-    };
-    const tx = await ctf.redeemPositions(USDC_POLYGON, parentCollectionId, conditionId, indexSets, gasOpts);
-    const receipt = await tx.wait(1);
-    return {
-      ok: true,
-      txHash: receipt?.transactionHash || tx.hash,
-      status: receipt?.status,
-    };
-  } catch (e) {
-    return { ok: false, error: `redeem tx failed: ${e.message}` };
-  }
-}
-
-/**
- * Check if a market is resolved on-chain via the CTF payout numerators.
- * @returns {{ resolved: boolean, winningIndex?: number, error?: string }}
- */
-export async function checkMarketResolved(conditionId) {
-  if (!conditionId) return { resolved: false, error: "missing conditionId" };
-
-  const abi = [
-    "function payoutNumerators(bytes32 conditionId, uint256 index) view returns (uint256)",
-  ];
-
-  const provider = getPolygonProvider();
-  const ctf = new ethers.Contract(CTF_CONDITIONAL_TOKENS, abi, provider);
-
-  try {
-    const payout0 = await ctf.payoutNumerators(conditionId, 0);
-    const payout1 = await ctf.payoutNumerators(conditionId, 1);
-    if (payout0.isZero() && payout1.isZero()) {
-      return { resolved: false };
-    }
-    const winningIndex = payout0.gt(0) ? 0 : 1;
-    return { resolved: true, winningIndex };
-  } catch (e) {
-    return { resolved: false, error: e.message };
-  }
 }

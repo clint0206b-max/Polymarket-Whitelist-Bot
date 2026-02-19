@@ -510,7 +510,6 @@ try {
                   entry_price: entryPrice,
                   yes_token: yesToken,
                   league: String(s.league || ""),
-                  conditionId: wm?.conditionId || null,
                 });
 
                 if (buyResult && buyResult.ok) {
@@ -778,18 +777,6 @@ try {
             
             // Periodic reconciliation
             await tradeBridge.reconcilePositions();
-
-            // Check for redeemable resolved positions (orphans, empty books)
-            try {
-              const redeemResults = await tradeBridge.checkAndRedeemResolved();
-              for (const r of redeemResults) {
-                if (r.ok) {
-                  console.log(`[REDEEM_LOOP] ✅ ${r.slug} | won=${r.won} | payout=$${r.payout?.toFixed(2)} | pnl=$${r.pnl?.toFixed(2)}`);
-                }
-              }
-            } catch (e) {
-              console.warn(`[REDEEM_LOOP_ERR] ${e.message}`);
-            }
 
             // === Reconcile close_pending entries in open_index ===
             // Check if on-chain position is zero → move to closed

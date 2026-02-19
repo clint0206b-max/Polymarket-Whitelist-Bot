@@ -23,7 +23,6 @@ import {
   initClient, executeBuy, executeSell,
   getBalance, getConditionalBalance, getOnChainUSDCBalance, getPositions,
   fetchRealFillPrice,
-  redeemPositions, checkMarketResolved,
 } from "./order_executor.mjs";
 import { createBalanceCache } from "./balance_cache.mjs";
 
@@ -127,7 +126,6 @@ export class TradeBridge {
 
     const { client, wallet, funder } = initClient(credPath, this.funder);
     this.client = client;
-    this.wallet = wallet;
 
     // Wire up balance cache with live fetch function
     this.balanceCache = createBalanceCache({
@@ -261,7 +259,6 @@ export class TradeBridge {
       slug: signal.slug,
       side: "BUY",
       tokenId,
-      conditionId: signal.conditionId || null,
       requestedUsd: budget,
       estimatedShares,
       entryPrice,
@@ -755,147 +752,6 @@ export class TradeBridge {
       console.error(`[ERROR_SELL] ${signal.slug} | ${e.message}`);
       throw e;
     }
-  }
-
-  // --- Redeem resolved positions on-chain ---
-
-  /**
-   * Attempt to redeem a resolved position on-chain.
-   * Called for positions where the market has been purged from watchlist
-   * or where the orderbook is empty (bid ≈ 0).
-   *
-   * @param {object} trade - buy trade from execState
-   * @param {string} tradeId - key in execState.trades
-   * @returns {{ ok: boolean, txHash?: string, error?: string }}
-   */
-  async handleRedeem(trade, tradeId) {
-    if (!this.wallet || this.mode === "paper") return { ok: false, error: "not live" };
-
-    const conditionId = trade.conditionId;
-    if (!conditionId) {
-      // Try to fetch conditionId from Gamma API
-      try {
-        const resp = await fetch(`https://gamma-api.polymarket.com/markets?clob_token_ids=${trade.tokenId}`);
-        const data = await resp.json();
-        const market = Array.isArray(data) ? data[0] : data;
-        if (market?.conditionId) {
-          trade.conditionId = market.conditionId;
-          saveExecutionState(this.execState);
-        } else {
-          return { ok: false, error: "conditionId not found in Gamma" };
-        }
-      } catch (e) {
-        return { ok: false, error: `gamma fetch failed: ${e.message}` };
-      }
-    }
-
-    // Check if actually resolved on-chain
-    const resolution = await checkMarketResolved(trade.conditionId);
-    if (!resolution.resolved) {
-      return { ok: false, error: resolution.error || "market not resolved yet" };
-    }
-
-    console.log(`[REDEEM] Attempting redeem for ${trade.slug} | conditionId=${trade.conditionId.slice(0, 10)}... | winningIndex=${resolution.winningIndex}`);
-
-    const result = await redeemPositions(this.wallet, trade.conditionId);
-
-    if (result.ok) {
-      const shares = Number(trade.filledShares || 0);
-      const entryPrice = Number(trade.entryPrice || trade.avgFillPrice || 0);
-      // Winning side: payout = shares * 1.00, losing side: 0
-      // We always bet YES (index 0), so if winningIndex === 0, we win
-      const won = resolution.winningIndex === 0;
-      const payout = won ? shares : 0;
-      const pnl = payout - (trade.spentUsd || shares * entryPrice);
-
-      trade.status = "redeemed";
-      trade.closed = true;
-      trade.redeem_ts = Date.now();
-      trade.redeem_txHash = result.txHash;
-      trade.redeem_won = won;
-      trade.redeem_payout = payout;
-      trade.redeem_pnl = pnl;
-      saveExecutionState(this.execState);
-
-      console.log(`[REDEEMED] ✅ ${trade.slug} | ${won ? "WON" : "LOST"} | payout=$${payout.toFixed(2)} | pnl=$${pnl.toFixed(2)} | tx=${result.txHash}`);
-
-      notifyTelegram(`${won ? "✅" : "❌"} REDEEMED ${trade.slug}\n${won ? "WON" : "LOST"} | payout=$${payout.toFixed(2)} | pnl=$${pnl.toFixed(2)}`).catch(() => {});
-
-      appendJsonl("state/journal/executions.jsonl", {
-        type: "redeemed",
-        trade_id: tradeId,
-        ts: Date.now(),
-        slug: trade.slug,
-        conditionId: trade.conditionId,
-        won,
-        payout,
-        pnl,
-        txHash: result.txHash,
-        shares,
-        entryPrice,
-      });
-
-      return { ok: true, won, payout, pnl, txHash: result.txHash };
-    } else {
-      console.warn(`[REDEEM_FAILED] ${trade.slug} | ${result.error}`);
-      appendJsonl("state/journal/executions.jsonl", {
-        type: "redeem_failed",
-        trade_id: tradeId,
-        ts: Date.now(),
-        slug: trade.slug,
-        conditionId: trade.conditionId,
-        error: result.error,
-      });
-      return result;
-    }
-  }
-
-  /**
-   * Check all open positions for redeemability (no price data or bid ≈ 0).
-   * Called periodically from the main loop (e.g., every reconciliation cycle).
-   * Returns array of redeem results.
-   */
-  async checkAndRedeemResolved() {
-    if (this.mode === "paper" || !this.wallet) return [];
-
-    const now = Date.now();
-    const interval = 60_000; // check every 60s max
-    if (now - (this._lastRedeemCheckTs || 0) < interval) return [];
-    this._lastRedeemCheckTs = now;
-
-    // Include: filled+open positions, AND orphan_closed that haven't been redeemed yet
-    const openBuys = Object.entries(this.execState.trades)
-      .filter(([_, t]) => {
-        if (String(t.side).toUpperCase() !== "BUY") return false;
-        if (t.status === "redeemed") return false;
-        if (t.status === "filled" && !t.closed) return true;
-        if (t.status === "orphan_closed") return true; // may still have shares on-chain
-        return false;
-      });
-
-    if (openBuys.length === 0) return [];
-
-    const results = [];
-    for (const [tradeId, trade] of openBuys) {
-      // Only try redeem for positions without active price data
-      // (they'll be handled by normal sell flow otherwise)
-      const hasPrice = this._currentPricesBySlug?.get(trade.slug);
-      if (hasPrice && Number(hasPrice.yes_best_bid) > 0.01) continue;
-
-      // Throttle per-trade: don't retry redeem more than once per 5 min
-      if (trade._lastRedeemAttempt && now - trade._lastRedeemAttempt < 300_000) continue;
-      trade._lastRedeemAttempt = now;
-
-      try {
-        const result = await this.handleRedeem(trade, tradeId);
-        results.push({ tradeId, slug: trade.slug, ...result });
-      } catch (e) {
-        console.warn(`[REDEEM_ERROR] ${trade.slug} | ${e.message}`);
-        results.push({ tradeId, slug: trade.slug, ok: false, error: e.message });
-      }
-    }
-
-    return results;
   }
 
   // --- Reconciliation ---
