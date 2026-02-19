@@ -93,9 +93,8 @@ export async function getConditionalBalance(client, tokenId) {
     asset_type: AssetType.CONDITIONAL,
     token_id: tokenId,
   });
-  const raw = Number(bal.balance);
-  const denom = 10 ** Number(CONDITIONAL_TOKEN_DECIMALS || 6);
-  return raw / denom;
+  // CLOB API returns balance already normalized (not raw decimals)
+  return Number(bal.balance);
 }
 
 // Singleton provider — reuses connection, avoids repeated detectNetwork() calls
