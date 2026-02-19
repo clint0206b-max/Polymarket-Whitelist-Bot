@@ -585,6 +585,8 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       };
     })(),
 
+    context_match_issues: state?.runtime?._contextMatchIssues || [],
+
     sl_breach_tracker: (() => {
       const tracker = state?.runtime?._slBreachTracker;
       return tracker?.getStats?.() || null;

@@ -7,6 +7,7 @@ import { createHttpQueue } from "./http_queue.mjs";
 import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWindow3, mergeScoreboardEventsByWindow } from "../context/espn_cbb_scoreboard.mjs";
 import { fetchEspnNbaScoreboardForDate, deriveNbaContextForMarket } from "../context/espn_nba_scoreboard.mjs";
 import { estimateWinProb, checkContextEntryGate, checkSoccerEntryGate, soccerWinProb } from "../strategy/win_prob_table.mjs";
+import { loadTeamOverrides, applyOutcomeOverride } from "../config/team_overrides.mjs";
 import { fetchSoccerScoreboard, matchMarketToGame, deriveSoccerContext, ESPN_LEAGUE_IDS, SLUG_PREFIX_TO_LEAGUE, resetScoreHistory, purgeStaleScoreHistory, extractSlugTeamSuffix, resolveYesTeamFromSlug } from "../context/espn_soccer_scoreboard.mjs";
 import { isSoccerSlug } from "../gamma/gamma_parser.mjs";
 import { loadDailyEvents, saveDailyEvents, recordMarketTick, purgeStaleDates } from "../metrics/daily_events.mjs";
@@ -203,6 +204,16 @@ function getTokenPair(m) {
   const t = m?.tokens;
   const ids = t?.clobTokenIds;
   return isValidTokenPair(ids) ? ids : null;
+}
+
+// Team overrides (loaded once at module level, shared across all loop iterations)
+let _outcomeOverrides = null;
+function getOutcomeOverrides() {
+  if (_outcomeOverrides === null) {
+    const ov = loadTeamOverrides();
+    _outcomeOverrides = ov.outcomeEntries;
+  }
+  return _outcomeOverrides;
 }
 
 export async function loopEvalHttpOnly(state, cfg, now) {
@@ -875,6 +886,23 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           if (state.runtime.last_context_cbb_no_match_examples.length > 5) {
             state.runtime.last_context_cbb_no_match_examples = state.runtime.last_context_cbb_no_match_examples.slice(-5);
           }
+
+          // Record title_match issue for dashboard exposure
+          state.runtime._contextMatchIssues = state.runtime._contextMatchIssues || [];
+          const titleIssue = {
+            ts: tNow,
+            slug: String(m.slug || ""),
+            system: "title_match",
+            title: String(m.title || m.question || ""),
+            fail_reason: ctx.reason,
+            market_tokens: ctx.debug?.marketTeams ? [ctx.debug.marketTeams.a_school, ctx.debug.marketTeams.b_school] : null,
+            espn_candidates: (ctx.debug?.top || []).slice(0, 3),
+          };
+          const cmi = state.runtime._contextMatchIssues;
+          const eidx = cmi.findIndex(x => x.slug === titleIssue.slug && x.system === "title_match");
+          if (eidx >= 0) cmi[eidx] = titleIssue;
+          else cmi.push(titleIssue);
+          if (cmi.length > 10) cmi.splice(0, cmi.length - 10);
         }
       }
     }
@@ -970,7 +998,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
       if (yesOutcomeName && teamA?.name && teamB?.name &&
           teamA.score != null && teamB.score != null) {
-        const yesNorm = normTeam(yesOutcomeName);
+        // Apply outcome_team_overrides before matching (word-boundary safe)
+        const yesNorm = applyOutcomeOverride(normTeam(yesOutcomeName), getOutcomeOverrides());
         const aNorm = normTeam(teamA.name);
         const bNorm = normTeam(teamB.name);
         // Also try fullName for cases where shortDisplayName is abbreviated (e.g. "E Michigan" vs "Eastern Michigan Eagles")
@@ -998,6 +1027,43 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           // Ambiguous or no match — can't determine direction
           bumpBucket("health", `context_entry_team_match_fail:${sport}`, 1);
         }
+      }
+
+      // Distinguish team_match_fail from true no_context:
+      // If we have live game context (state=in, period known) but marginForYes is null,
+      // that means ESPN has the game but we can't resolve which team is "Yes".
+      if (marginForYes == null && m.context?.state === "in" && m.context?.period != null) {
+        // Record suggestion for outcome_match issue BEFORE setting context_entry
+        const suggestion = {
+          ts: tNow,
+          slug: String(m.slug || ""),
+          system: "outcome_match",
+          yes_outcome_name: yesOutcomeName || null,
+          yes_outcome_norm: yesOutcomeName ? applyOutcomeOverride(normTeam(yesOutcomeName), getOutcomeOverrides()) : null,
+          espn_team_a: teamA?.name || null,
+          espn_team_a_full: teamA?.fullName || null,
+          espn_team_b: teamB?.name || null,
+          espn_team_b_full: teamB?.fullName || null,
+        };
+        // Store in runtime for dashboard exposure (keep last 10, dedupe by slug)
+        state.runtime._contextMatchIssues = state.runtime._contextMatchIssues || [];
+        const issues = state.runtime._contextMatchIssues;
+        const existingIdx = issues.findIndex(x => x.slug === suggestion.slug && x.system === "outcome_match");
+        if (existingIdx >= 0) issues[existingIdx] = suggestion;
+        else issues.push(suggestion);
+        if (issues.length > 10) issues.splice(0, issues.length - 10);
+
+        m.context_entry = {
+          yes_outcome_name: yesOutcomeName,
+          margin_for_yes: null,
+          win_prob: null,
+          entry_allowed: false,
+          entry_blocked_reason: "team_match_fail",
+        };
+        bumpBucket("health", `context_entry_evaluated:${sport}`, 1);
+        bumpBucket("health", `context_entry_blocked:${sport}`, 1);
+        bumpBucket("health", `context_entry_blocked_reason:${sport}:team_match_fail`, 1);
+        continue;
       }
 
       // Check entry gate — per-sport overrides for max_minutes_left and min_win_prob

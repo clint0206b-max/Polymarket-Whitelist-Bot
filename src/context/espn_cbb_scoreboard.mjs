@@ -1,6 +1,24 @@
 // CBB context feed (D2 v0) — ESPN scoreboard
 // Tag-only: no strategy changes, only observability fields.
 
+import { loadTeamOverrides, applyTitleOverride } from "../config/team_overrides.mjs";
+
+// Load overrides once at module init
+let _titleIndex = null;
+function getTitleIndex() {
+  if (_titleIndex === null) {
+    const ov = loadTeamOverrides();
+    _titleIndex = ov.titleIndex;
+  }
+  return _titleIndex;
+}
+
+/** Re-load overrides from disk (call after hot-editing team-overrides.json). */
+export function reloadTeamOverrides() {
+  const ov = loadTeamOverrides();
+  _titleIndex = ov.titleIndex;
+}
+
 function toNum(x) {
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
@@ -223,6 +241,10 @@ function schoolToken(name) {
   // 1) normalize punctuation
   let t = norm(name);
   if (!t) return "";
+
+  // 0) Check title_school_overrides — exact match bypasses all tokenization
+  const override = applyTitleOverride(t, getTitleIndex());
+  if (override) return override;
 
   // 2) remove mascots/descriptor tails deterministically
   t = stripMascotTail(t);
