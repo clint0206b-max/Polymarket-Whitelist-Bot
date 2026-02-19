@@ -774,9 +774,10 @@ export class TradeBridge {
       const onChainStr = onChainBalance != null ? `$${onChainBalance.toFixed(2)}` : "unavailable";
       console.log(`[RECONCILE] ${positions.length} positions | clob=$${clobBalance.toFixed(2)} | onchain=${onChainStr}`);
       
-      // Check for orphaned trades (filled but position gone)
+      // Check for orphaned trades (filled BUY but position gone from CLOB)
+      // Only BUY trades can be orphaned — SELL trades are expected to remove the position.
       const openTrades = Object.entries(this.execState.trades)
-        .filter(([_, t]) => t.status === "filled" && !t.closed);
+        .filter(([id, t]) => t.status === "filled" && !t.closed && String(t.side).toUpperCase() === "BUY");
       
       for (const [tradeId, trade] of openTrades) {
         const hasPosition = positions.some(p => p.asset === trade.tokenId && Number(p.size) > 0.01);
