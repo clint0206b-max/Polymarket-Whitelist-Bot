@@ -4,7 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 export async function fetchLiveEvents(cfg) {
   const base = String(cfg?.gamma?.gamma_base_url || "https://gamma-api.polymarket.com").replace(/\/+$/, "");
-  const tags = Array.isArray(cfg?.gamma?.gamma_tags) ? cfg.gamma.gamma_tags : ["esports", "nba", "ncaa-basketball"];
+  const tags = Array.isArray(cfg?.gamma?.gamma_tags) ? cfg.gamma.gamma_tags : ["esports", "nba", "ncaa-basketball", "cwbb"];
   const limitDefault = Number(cfg?.gamma?.max_events_per_fetch || 30);
   const limitByTag = (cfg?.gamma?.max_events_per_fetch_by_tag && typeof cfg.gamma.max_events_per_fetch_by_tag === "object")
     ? cfg.gamma.max_events_per_fetch_by_tag
@@ -19,6 +19,7 @@ export async function fetchLiveEvents(cfg) {
   const leagueFromTag = (tag) => {
     if (tag === "nba") return "nba";
     if (tag === "ncaa-basketball") return "cbb";
+    if (tag === "cwbb") return "cwbb";
     if (tag === "esports") return "esports";
     return String(tag || "");
   };

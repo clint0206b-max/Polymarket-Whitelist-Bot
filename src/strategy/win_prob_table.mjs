@@ -248,7 +248,7 @@ export function checkContextEntryGate(opts) {
   const s = String(sport || "").toLowerCase();
 
   // Period check
-  if (s === "cbb") {
+  if (s === "cbb" || s === "cwbb") {
     // Must be in 2nd half or OT
     if (period < 2) return { allowed: false, reason: "not_final_period", win_prob: null };
   } else if (s === "nba") {

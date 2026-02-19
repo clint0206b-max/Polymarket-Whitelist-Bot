@@ -21,7 +21,7 @@ import { resolvePath } from "../core/state_store.js";
 import { notifyTelegram } from "../notify/telegram.mjs";
 import {
   initClient, executeBuy, executeSell,
-  getBalance, getConditionalBalance, getPositions,
+  getBalance, getConditionalBalance, getOnChainUSDCBalance, getPositions,
   fetchRealFillPrice,
 } from "./order_executor.mjs";
 
@@ -118,9 +118,21 @@ export class TradeBridge {
     const { client, wallet, funder } = initClient(credPath, this.funder);
     this.client = client;
     
-    // Log effective settings at boot
-    const balance = await getBalance(client);
-    console.log(`[TRADE_BRIDGE] mode=${this.mode} | funder=${this.funder} | balance=$${balance.toFixed(2)}`);
+    // Log effective settings at boot — both balance sources are best-effort
+    let balance = null;
+    let onChainBal = null;
+    try {
+      [balance, onChainBal] = await Promise.all([
+        getBalance(client).catch(() => null),
+        getOnChainUSDCBalance(this.funder),
+      ]);
+    } catch (e) {
+      console.warn(`[TRADE_BRIDGE] balance fetch error at boot: ${e.message}`);
+    }
+    this.execState.last_balance = onChainBal ?? balance;
+    const clobStr = balance != null ? `$${balance.toFixed(2)}` : "unavailable";
+    const onChainStr = onChainBal != null ? `$${onChainBal.toFixed(2)}` : "unavailable";
+    console.log(`[TRADE_BRIDGE] mode=${this.mode} | funder=${this.funder} | clob=${clobStr} | onchain=${onChainStr}`);
     console.log(`[TRADE_BRIDGE] guards: max_pos=$${this.maxPositionUsd} max_exposure=$${this.maxTotalExposure} max_concurrent=${this.maxConcurrent} max_daily=${this.maxDailyTrades}`);
     const slBid = this.cfg?.paper?.stop_loss_bid;
     const slAsk = this.cfg?.paper?.stop_loss_ask;
@@ -622,9 +634,14 @@ export class TradeBridge {
 
     try {
       const positions = await getPositions(this.funder);
-      const balance = await getBalance(this.client);
+      const [clobBalance, onChainBalance] = await Promise.all([
+        getBalance(this.client),
+        getOnChainUSDCBalance(this.funder),
+      ]);
+      const effectiveBalance = onChainBalance ?? clobBalance;
       
-      console.log(`[RECONCILE] ${positions.length} positions | balance=$${balance.toFixed(2)}`);
+      const onChainStr = onChainBalance != null ? `$${onChainBalance.toFixed(2)}` : "unavailable";
+      console.log(`[RECONCILE] ${positions.length} positions | clob=$${clobBalance.toFixed(2)} | onchain=${onChainStr}`);
       
       // Check for orphaned trades (filled but position gone)
       const openTrades = Object.entries(this.execState.trades)
@@ -641,7 +658,7 @@ export class TradeBridge {
       }
 
       this.execState.last_reconcile_ts = now;
-      this.execState.last_balance = balance;
+      this.execState.last_balance = effectiveBalance;
       this.execState.last_position_count = positions.length;
       saveExecutionState(this.execState);
       

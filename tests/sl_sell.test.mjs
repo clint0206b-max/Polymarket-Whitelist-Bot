@@ -45,7 +45,7 @@ function createMockBridge({
   const bridge = Object.create(TradeBridge.prototype);
   bridge.mode = mode;
   bridge.execState = { trades: { ...trades }, paused, daily_counts: {} };
-  bridge.cfg = { paper: { stop_loss_bid: 0.70 }, ...cfg };
+  bridge.cfg = { paper: { stop_loss_bid: 0.85 }, ...cfg };
   bridge.client = {}; // dummy
   bridge.funder = "0xtest";
   bridge.maxPositionUsd = 10;

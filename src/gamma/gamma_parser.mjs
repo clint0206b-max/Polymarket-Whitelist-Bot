@@ -50,7 +50,7 @@ function pickMarketsForEvent(tag, e, cfg) {
   active.sort((a, b) => gammaVol24hUsd(b) - gammaVol24hUsd(a));
 
   // NBA/CBB: choose main (or 1 top non-total)
-  if (tag === "nba" || tag === "ncaa-basketball") {
+  if (tag === "nba" || tag === "ncaa-basketball" || tag === "cwbb") {
     const main = active.find(m => s(m.slug) === s(e.slug));
     if (main && !isSpreadOrTotalSlug(main.slug)) return [main];
     return active.filter(m => !isSpreadOrTotalSlug(m.slug)).slice(0, 1);
@@ -88,6 +88,7 @@ function pickMarketsForEvent(tag, e, cfg) {
 function leagueFromTag(tag) {
   if (tag === "nba") return "nba";
   if (tag === "ncaa-basketball") return "cbb";
+  if (tag === "cwbb") return "cwbb";
   if (tag === "esports") return "esports";
   if (tag === "soccer") return "soccer";
   return tag;

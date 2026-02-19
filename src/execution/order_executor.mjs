@@ -10,8 +10,10 @@ import { ethers } from "ethers";
 import { readFileSync } from "node:fs";
 
 const CLOB_URL = "https://clob.polymarket.com";
-const POLYGON_RPC = "https://polygon-rpc.com";
+const POLYGON_RPC = "https://1rpc.io/matic";
 const SIGNATURE_TYPE = 2; // POLY_GNOSIS_SAFE
+const USDC_POLYGON = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+const USDC_ABI = ["function balanceOf(address) view returns (uint256)"];
 
 /**
  * Initialize authenticated ClobClient from credentials file.
@@ -94,6 +96,39 @@ export async function getConditionalBalance(client, tokenId) {
   const raw = Number(bal.balance);
   const denom = 10 ** Number(CONDITIONAL_TOKEN_DECIMALS || 6);
   return raw / denom;
+}
+
+// Singleton provider — reuses connection, avoids repeated detectNetwork() calls
+let _polygonProvider = null;
+function getPolygonProvider() {
+  if (!_polygonProvider) {
+    _polygonProvider = new ethers.providers.JsonRpcProvider(POLYGON_RPC);
+  }
+  return _polygonProvider;
+}
+
+/**
+ * Get on-chain USDC balance for an address on Polygon.
+ * Reads directly from the USDC contract — no cache, no delay.
+ * Falls back to null if RPC is unreachable (caller should use CLOB balance).
+ * @param {string} address - wallet/proxy address
+ * @returns {number|null} USDC balance (human-readable, 6 decimals) or null on failure
+ */
+export async function getOnChainUSDCBalance(address) {
+  try {
+    const provider = getPolygonProvider();
+    const usdc = new ethers.Contract(USDC_POLYGON, USDC_ABI, provider);
+    const raw = await Promise.race([
+      usdc.balanceOf(address),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("RPC timeout")), 5000)),
+    ]);
+    return Number(raw) / 1e6;
+  } catch (e) {
+    console.warn(`[ONCHAIN_BALANCE] failed: ${e.message}`);
+    // Reset provider on network errors so next call retries fresh
+    if (e.code === "NETWORK_ERROR") _polygonProvider = null;
+    return null;
+  }
 }
 
 /**

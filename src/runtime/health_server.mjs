@@ -369,6 +369,7 @@ function computeDailyUtilization(state) {
       d.signaled_slugs.add(s.slug);
       d.discovered_slugs.add(s.slug); // signaled ⊂ discovered
     } else if (s.type === "signal_close") {
+      if (s.executed === false) continue; // skip failed SL sells — position still open
       if (s.win === true) { d.wins++; d.pnl += (s.pnl_usd || 0); }
       else if (s.win === false) { d.losses++; d.pnl += (s.pnl_usd || 0); }
     } else if (s.type === "signal_timeout") {
@@ -1031,7 +1032,7 @@ export function startHealthServer(state, opts = {}) {
     const todayStr = new Date().toISOString().slice(0, 10);
     const todayStart = new Date(todayStr + "T00:00:00Z").getTime();
 
-    const closes = signals.filter(s => s.type === "signal_close");
+    const closes = signals.filter(s => s.type === "signal_close" && s.executed !== false);
     const closesToday = closes.filter(s => (s.ts_close || 0) >= todayStart);
     const wins = closesToday.filter(s => s.win === true);
     const losses = closesToday.filter(s => s.win === false);
@@ -1208,7 +1209,7 @@ export function startHealthServer(state, opts = {}) {
     const signalsPath = statePath("journal", "signals.jsonl");
     const { items: signals } = cachedReadJsonl(signalsPath, 5000);
     const signalOpensToday = signals.filter(s => s.type === "signal_open" && (s.ts_open || 0) >= todayStart);
-    const signalClosesToday = signals.filter(s => s.type === "signal_close" && (s.ts_close || 0) >= todayStart);
+    const signalClosesToday = signals.filter(s => s.type === "signal_close" && s.executed !== false && (s.ts_close || 0) >= todayStart);
 
     const executedBuyTradeIds = new Set(buys.map(e => e.trade_id));
     const executedBuySignalIds = new Set(buys.map(e => e.signal_id).filter(Boolean));

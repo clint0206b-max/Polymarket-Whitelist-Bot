@@ -10,16 +10,17 @@ import { is_base_signal_candidate } from "../src/strategy/stage1.mjs";
 
 describe("stage1 respects cfg.filters (not hardcoded)", () => {
   // Custom config matching local.json overrides
+  // Current local.json config
   const cfg = {
     filters: {
       min_prob: 0.93,
-      max_entry_price: 0.98,
+      max_entry_price: 0.97,
       max_spread: 0.04,
       EPS: 1e-6,
     },
   };
 
-  // Defaults config (what the bot was accidentally using)
+  // Defaults config (from defaults.json)
   const cfgDefaults = {
     filters: {
       min_prob: 0.94,
@@ -65,19 +66,19 @@ describe("stage1 respects cfg.filters (not hardcoded)", () => {
   });
 
   // --- max_entry_price ---
-  it("probAsk 0.98 passes with max_entry_price=0.98", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.98, spread: 0.01 }, cfg);
+  it("probAsk 0.97 passes with max_entry_price=0.97", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.97, spread: 0.01 }, cfg);
     assert.equal(r.pass, true);
   });
 
-  it("probAsk 0.98 FAILS with default max_entry_price=0.97", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.98, spread: 0.01 }, cfgDefaults);
+  it("probAsk 0.98 FAILS with max_entry_price=0.97", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.98, spread: 0.01 }, cfg);
     assert.equal(r.pass, false);
     assert.equal(r.reason, "price_out_of_range");
   });
 
-  it("probAsk 0.981 FAILS with max_entry_price=0.98", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.981, spread: 0.01 }, cfg);
+  it("probAsk 0.971 FAILS with max_entry_price=0.97", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.971, spread: 0.01 }, cfg);
     assert.equal(r.pass, false);
     assert.equal(r.reason, "price_out_of_range");
   });
@@ -110,14 +111,14 @@ describe("config merge produces correct filter values", () => {
       },
     };
     const local = {
-      filters: { min_prob: 0.93, max_entry_price: 0.98, max_spread: 0.04 },
+      filters: { min_prob: 0.93, max_entry_price: 0.97, max_spread: 0.04 },
     };
 
     const merged = deepMerge(defaults, local);
 
     // Overridden
     assert.equal(merged.filters.min_prob, 0.93);
-    assert.equal(merged.filters.max_entry_price, 0.98);
+    assert.equal(merged.filters.max_entry_price, 0.97);
     assert.equal(merged.filters.max_spread, 0.04);
 
     // Preserved from defaults

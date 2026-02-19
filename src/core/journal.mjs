@@ -196,3 +196,36 @@ export function reconcileIndex(index, jsonlRelPath = "state/journal/signals.json
   const reconciled = (added > 0 || removed > 0 || closedAdded > 0 || failedMoved > 0);
   return { reconciled, added, removed, closedAdded, failedMoved };
 }
+
+/**
+ * Read signals.jsonl and return slugs that have signal_open but no signal_close.
+ * Used as purge protection — most reliable source since signal_open is written before buy.
+ * @param {string} relPath
+ * @returns {string[]} array of slugs with open signals
+ */
+export function readSignalsOpenSlugs(relPath = "state/journal/signals.jsonl") {
+  const abs = resolvePath(relPath);
+  if (!existsSync(abs)) return [];
+  let raw;
+  try { raw = readFileSync(abs, "utf8"); } catch { return []; }
+
+  const openSlugs = new Map();  // signal_id -> slug
+  const closedIds = new Set();
+
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    if (obj.type === "signal_open" && obj.signal_id && obj.slug) {
+      openSlugs.set(obj.signal_id, obj.slug);
+    } else if (obj.type === "signal_close" && obj.signal_id) {
+      closedIds.add(obj.signal_id);
+    }
+  }
+
+  const result = [];
+  for (const [id, slug] of openSlugs) {
+    if (!closedIds.has(id)) result.push(slug);
+  }
+  return result;
+}
