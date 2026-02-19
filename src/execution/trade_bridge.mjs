@@ -248,7 +248,7 @@ export class TradeBridge {
 
     console.log(`[SIZING] ${signal.slug} | budget=$${budget.toFixed(2)} | method=${sizing.method} | total=$${sizing.totalBalance ?? "?"} | cash=$${sizing.cashAvailable ?? "?"} | positions=$${sizing.positionsValue ?? "?"} | ${sizing.detail || ""}`);
 
-    const shares = Math.floor((budget / entryPrice) * 100) / 100;
+    const estimatedShares = Math.floor((budget / entryPrice) * 100) / 100;
     const tokenId = signal.yes_token || signal.tokenId;
 
     if (!tokenId) {
@@ -263,7 +263,8 @@ export class TradeBridge {
       slug: signal.slug,
       side: "BUY",
       tokenId,
-      requestedShares: shares,
+      requestedUsd: budget,
+      estimatedShares,
       entryPrice,
       budget,
       ts_queued: Date.now(),
@@ -279,13 +280,13 @@ export class TradeBridge {
         status: "shadow",
         signal_id: signal.signal_id,
         slug: signal.slug,
-        would_buy_shares: shares,
         would_spend_usd: budget,
+        estimated_shares: estimatedShares,
         balance_usd: balance,
         tokenId,
       };
       
-      console.log(`[SHADOW_BUY] ${signal.slug} | ${shares} shares @ ${entryPrice} | balance=$${typeof balance === 'number' ? balance.toFixed(2) : balance}`);
+      console.log(`[SHADOW_BUY] ${signal.slug} | $${budget.toFixed(2)} (~${estimatedShares} shares) @ ${entryPrice} | balance=$${typeof balance === 'number' ? balance.toFixed(2) : balance}`);
       
       appendJsonl("state/journal/executions.jsonl", {
         type: "shadow_buy",
@@ -301,13 +302,13 @@ export class TradeBridge {
     }
 
     // === LIVE EXECUTION ===
-    console.log(`[LIVE_BUY] ${signal.slug} | ${shares} shares @ ${entryPrice} | tokenId=${tokenId.slice(0, 10)}...`);
+    console.log(`[LIVE_BUY] ${signal.slug} | $${budget.toFixed(2)} (~${estimatedShares} shares) @ ${entryPrice} | tokenId=${tokenId.slice(0, 10)}...`);
     
     try {
       this.execState.trades[tradeId].status = "sent";
       saveExecutionState(this.execState);
 
-      const result = await executeBuy(this.client, tokenId, shares);
+      const result = await executeBuy(this.client, tokenId, budget);
       
       if (result.ok) {
         this.execState.trades[tradeId] = {
@@ -342,7 +343,8 @@ export class TradeBridge {
           slug: signal.slug,
           tokenId,
           orderID: result.orderID,
-          requestedShares: shares,
+          requestedUsd: budget,
+          estimatedShares,
           filledShares: result.filledShares,
           avgFillPrice: result.avgFillPrice,
           spentUsd: result.spentUsd,

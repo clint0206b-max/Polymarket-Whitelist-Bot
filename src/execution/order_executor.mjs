@@ -41,8 +41,8 @@ export function initClient(credentialsPath, funder) {
  * Execute a BUY market order (Fill-And-Kill).
  * Returns fill details or error.
  */
-export async function executeBuy(client, tokenId, shares) {
-  const amount = roundDown(shares, 2);
+export async function executeBuy(client, tokenId, amountUsd) {
+  const amount = roundDown(amountUsd, 2);
   if (!(amount >= 0.01)) return { ok: false, error: "amount_too_small", amount };
 
   const res = await client.createAndPostMarketOrder(
