@@ -162,6 +162,7 @@
               <th class="px-4 py-2 text-right">PnL</th>
               <th class="px-4 py-2 text-right">ROI</th>
               <th class="px-4 py-2 text-right">Duration</th>
+              <th class="px-4 py-2 text-right">Closed</th>
             </tr>
           </thead>
           <tbody id="trades-body" class="divide-y divide-slate-700/50"></tbody>
@@ -706,6 +707,7 @@
           <td class="px-4 py-2 text-right mono text-xs ${pnlColor(t.pnl_usd)}">${pnlStr(t.pnl_usd)}</td>
           <td class="px-4 py-2 text-right mono text-xs">${t.roi != null ? (t.roi * 100).toFixed(1) + '%' : '—'}</td>
           <td class="px-4 py-2 text-right text-xs text-slate-400">${dur(durMs)}</td>
+          <td class="px-4 py-2 text-right text-xs text-slate-400">${t.ts_close ? ago(Date.now() - t.ts_close) : '—'}</td>
         </tr>`;
       }).join('');
     }
