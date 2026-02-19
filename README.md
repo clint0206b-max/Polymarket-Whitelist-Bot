@@ -582,14 +582,15 @@ Shadow runners allow testing changes with isolated state, separate from producti
 
 ```
 Polling:
-  gamma_discovery_seconds: 30
+  gamma_discovery_seconds: 20
   clob_eval_seconds: 2
-  pending_window_seconds: 4
+  pending_max_checks: 1 (check-based, not time-based)
   max_watchlist: 200
+  eval_max_markets_per_cycle: 20
 
-Filters:
+Filters (default):
   min_prob: 0.93
-  max_entry_price: 0.98
+  max_entry_price: 0.97
   max_spread: 0.04
   near_prob_min: 0.945
   near_spread_max: 0.015
@@ -599,30 +600,69 @@ Filters:
 
 Paper:
   notional_usd: 10
-  stop_loss_bid: 0.70
+  stop_loss_bid: 0.85 (default)
+  stop_loss_ask: 0.90 (default)
 
 Trading (LIVE):
   mode: live
   max_position_usd: 10
-  max_total_exposure_usd: 50
-  max_concurrent_positions: 5
-  max_trades_per_day: 50
+  max_total_exposure_usd: 9999 (effectively unlimited)
+  max_concurrent_positions: 100
+  max_trades_per_day: 9999 (effectively unlimited)
 
 Context (ESPN gates):
   enabled: true
   gate_mode: tag_only (default)
-  gate_mode_nba: blocking (required for live)
-  gate_mode_cbb: blocking (required for live)
-  min_win_prob: 0.90
-  max_minutes_left: 5
-  min_margin: 1
+  gate_mode_nba: blocking
+  gate_mode_cbb: blocking
+  min_win_prob: 0.90 (disabled per-sport: nba=0, cbb=0, cwbb=0)
+  max_minutes_left: 5 (per-sport: nba=10, cbb=10, cwbb=10)
+  min_margin: 1 (entry gate)
+  min_margin_hold: 3 (context SL for open positions)
 
 Purge:
   stale_book_minutes: 15
   stale_quote_incomplete_minutes: 10
   stale_tradeability_minutes: 12
+  wide_spread_minutes: 2 (spread > 0.80)
   expired_ttl_minutes: 30
 ```
+
+### Per-Sport Parameters
+
+Each sport has optimized entry ranges and stop-loss levels based on backtesting
+against historical Polymarket price data (thousands of markets per sport).
+
+| Sport | Entry (ask) | Max Spread | SL bid/ask | E/trade (sp=0.02) | Context |
+|-------|------------|-----------|-----------|-------------------|---------|
+| Dota2 | 0.86-0.92 | 0.04 | 0.45/0.50 | $0.49 | — |
+| CS2   | 0.87-0.93 | 0.02 | 0.40/0.45 | $0.25 | — |
+| LoL   | 0.87-0.89 | 0.04 | 0.40/0.45 | $0.36 | — |
+| Val   | 0.89-0.93 | 0.04 | 0.40/0.45 | $0.21 | — |
+| NBA   | 0.83-0.87 | 0.04 | 0.45/0.50 | $1.06 | Q4, ≤10min, ahead ≥1 |
+| CBB   | 0.90-0.93 | 0.02 | 0.45/0.50 | $0.43 | H2, ≤10min, ahead ≥1 |
+| CWBB  | 0.86-0.90 | 0.02 | 0.45/0.50 | — | H2, ≤10min, ahead ≥1 |
+| Default | 0.93-0.97 | 0.04 | 0.85/0.90 | — | — |
+
+**Key insight:** SL cliff at 0.45-0.50 is consistent across ALL sports. Any SL
+above 0.50 generates significantly more false stops than it prevents true losses.
+
+### Stop Loss Layers
+
+1. **Price SL** (all sports): bid ≤ per-sport threshold AND ask ≤ ask threshold → sell
+2. **Context SL** (CBB, CWBB, NBA only): ESPN margin_for_yes < `min_margin_hold` (default 3) → sell
+3. Price SL takes priority if both trigger simultaneously
+
+Context SL uses live ESPN scores to detect when our team loses the lead. After selling,
+the market is re-discovered by Gamma (~20s) and can re-enter if price returns to entry range.
+
+### Performance Optimizations
+
+- **Pipeline sort by entry proximity** (not volume) — markets closest to entry range evaluated first
+- **Low-ask throttle**: watching markets with ask < 0.60 get price updates every 30s instead of every tick
+- **Wide spread purge**: markets with spread > 0.80 for 2+ min are purged (re-discovered if they normalize)
+- **Gamma discovery**: every 20s
+- **Pending confirmation**: check-based (1 confirmation tick), not time-based
 
 ---
 
@@ -710,14 +750,19 @@ const p = resolvePath("state", "watchlist.json");
 // shadow: /Users/andres/.openclaw/workspace/polymarket-watchlist-v1/state-test01/watchlist.json
 ```
 
-### Universe Selection (centralized)
+### Universe Selection (centralized, v1.1)
 ```javascript
 const priceUpdateUniverse = selectPriceUpdateUniverse(state, cfg);
 // Returns: watching + pending_signal + signaled
 
 const pipelineUniverse = selectPipelineUniverse(state, cfg);
-// Returns: watching + pending_signal (NO signaled to prevent re-entry)
+// Returns: pending_signal (priority) OR top N watching (sorted by entry proximity)
 ```
+
+**Priority logic:**
+1. If ANY `pending_signal` exists → ONLY pending markets enter pipeline (confirmation window priority)
+2. Otherwise → watching markets sorted by proximity to per-sport entry range (closest first)
+3. Limited to `eval_max_markets_per_cycle` (default 20)
 
 **Critical invariant:** signaled markets MUST receive price updates (visibility) but MUST NOT re-enter signal pipeline (prevents duplicate entries).
 
