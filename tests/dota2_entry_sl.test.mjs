@@ -129,22 +129,22 @@ describe("is_base_signal_candidate — non-dota2 uses defaults", () => {
 
 describe("Dota2 SL config values", () => {
   // Read from local.json to verify config values
-  it("local.json has stop_loss_bid_dota2=0.45", async () => {
+  it("local.json has stop_loss_bid_dota2=0.37", async () => {
     const { readFileSync } = await import("node:fs");
     const cfg = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(cfg.paper.stop_loss_bid_dota2, 0.45);
+    assert.equal(cfg.paper.stop_loss_bid_dota2, 0.37);
   });
 
-  it("local.json has stop_loss_ask_dota2=0.50", async () => {
+  it("local.json has stop_loss_ask_dota2=0.42", async () => {
     const { readFileSync } = await import("node:fs");
     const cfg = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(cfg.paper.stop_loss_ask_dota2, 0.50);
+    assert.equal(cfg.paper.stop_loss_ask_dota2, 0.42);
   });
 
-  it("local.json has min_entry_price_dota2=0.86", async () => {
+  it("local.json has min_entry_price_dota2=0.80", async () => {
     const { readFileSync } = await import("node:fs");
     const cfg = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(cfg.filters.min_entry_price_dota2, 0.86);
+    assert.equal(cfg.filters.min_entry_price_dota2, 0.80);
   });
 
   it("local.json has max_entry_price_dota2=0.92", async () => {
