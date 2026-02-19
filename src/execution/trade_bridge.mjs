@@ -24,6 +24,7 @@ import {
   getBalance, getConditionalBalance, getOnChainUSDCBalance, getPositions,
   fetchRealFillPrice,
 } from "./order_executor.mjs";
+import { createBalanceCache } from "./balance_cache.mjs";
 
 // Resolves to state/execution_state.json (prod) or state-{SHADOW_ID}/execution_state.json (shadow)
 const EXECUTION_STATE_PATH = resolvePath("state", "execution_state.json");
@@ -104,6 +105,14 @@ export class TradeBridge {
     // Price tick logging: throttled per signal_id
     this._priceTickLastTs = new Map(); // signal_id → last log timestamp
     this._priceTickIntervalMs = 30_000; // log every 30s per position
+
+    // Balance cache for dynamic sizing
+    this.balanceCache = createBalanceCache({
+      maxAgeMs: Number(cfg?.sizing?.balance_max_age_ms ?? 300000),
+      fallbackUsd: Number(cfg?.sizing?.fallback_fixed_usd ?? 10),
+      getBalanceFn: null, // set in init() when client is available
+    });
+    this._currentPricesBySlug = new Map(); // updated each loop for sizing
   }
 
   async init() {
@@ -117,6 +126,13 @@ export class TradeBridge {
 
     const { client, wallet, funder } = initClient(credPath, this.funder);
     this.client = client;
+
+    // Wire up balance cache with live fetch function
+    this.balanceCache = createBalanceCache({
+      maxAgeMs: Number(this.cfg?.sizing?.balance_max_age_ms ?? 300000),
+      fallbackUsd: Number(this.cfg?.sizing?.fallback_fixed_usd ?? 10),
+      getBalanceFn: () => getBalance(client),
+    });
     
     // Log effective settings at boot — both balance sources are best-effort
     let balance = null;
@@ -141,6 +157,32 @@ export class TradeBridge {
     console.log(`[TRADE_BRIDGE] SL=${slBid || "none"}${slAsk ? ` (ask≤${slAsk})` : ""}${slBidE ? ` | esports: SL=${slBidE} (ask≤${slAskE || slAsk})` : ""} | allowlist=${this.allowlist ? this.allowlist.length + " markets" : "all"}`);
     
     return { balance };
+  }
+
+  /**
+   * Refresh balance cache. Call once per loop.
+   */
+  async refreshBalance() {
+    if (this.mode === "paper") return;
+    const result = await this.balanceCache.refresh();
+    if (result.error) {
+      console.warn(`[BALANCE_CACHE] refresh error: ${result.error} | using cached=$${result.cashUsd?.toFixed(2) ?? "null"}`);
+    }
+    return result;
+  }
+
+  /**
+   * Update current prices map for sizing calculations. Call once per loop.
+   */
+  updatePricesForSizing(pricesBySlug) {
+    this._currentPricesBySlug = pricesBySlug || new Map();
+  }
+
+  /**
+   * Get open trades (filled, not closed).
+   */
+  _getOpenTrades() {
+    return Object.values(this.execState.trades).filter(t => t.status === "filled" && !t.closed);
   }
 
   // --- Entry (signal_open → buy) ---
@@ -190,9 +232,22 @@ export class TradeBridge {
       return { blocked: true, reason: "exposure_limit" };
     }
 
-    // Calculate shares to buy
+    // Calculate shares to buy — dynamic sizing
     const entryPrice = Number(signal.entry_price);
-    const budget = this.maxPositionUsd;
+    const sizing = this.balanceCache.calculateTradeSize(
+      this.cfg?.sizing,
+      openTrades,
+      this._currentPricesBySlug,
+    );
+    const budget = sizing.budgetUsd;
+
+    if (budget <= 0) {
+      console.log(`[TRADE_BRIDGE] BLOCKED no budget: method=${sizing.method} detail=${sizing.detail}`);
+      return { blocked: true, reason: "no_budget", sizing };
+    }
+
+    console.log(`[SIZING] ${signal.slug} | budget=$${budget.toFixed(2)} | method=${sizing.method} | total=$${sizing.totalBalance ?? "?"} | cash=$${sizing.cashAvailable ?? "?"} | positions=$${sizing.positionsValue ?? "?"} | ${sizing.detail || ""}`);
+
     const shares = Math.floor((budget / entryPrice) * 100) / 100;
     const tokenId = signal.yes_token || signal.tokenId;
 
@@ -268,6 +323,9 @@ export class TradeBridge {
         };
         this.execState.daily[day] = (this.execState.daily[day] || 0) + 1;
         saveExecutionState(this.execState);
+
+        // Record spend for intra-loop cash tracking
+        this.balanceCache.recordSpend(result.spentUsd || budget);
 
         const slippage = result.avgFillPrice ? ((result.avgFillPrice - entryPrice) / entryPrice * 100).toFixed(2) : "?";
         console.log(`[FILLED_BUY] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4) || "?"} | slippage=${slippage}% | partial=${result.isPartial}`);

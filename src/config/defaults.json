@@ -8,11 +8,9 @@
     "depth_cache_ttl_seconds": 15,
     "pending_window_seconds": 6,
     "max_watchlist": 200,
-
     "http_max_concurrency": 4,
     "http_queue_max": 50,
     "http_timeout_ms": 2500,
-
     "eval_max_markets_per_cycle": 20,
     "max_token_resolves_per_cycle": 5,
     "min_resolves_per_cycle_by_league": {
@@ -24,15 +22,18 @@
   "gamma": {
     "gamma_base_url": "https://gamma-api.polymarket.com",
     "gamma_timeout_ms": 8000,
-    "gamma_tags": ["esports", "nba", "ncaa-basketball", "soccer"],
-
+    "gamma_tags": [
+      "esports",
+      "nba",
+      "ncaa-basketball",
+      "soccer"
+    ],
     "only_live_default": true,
     "only_live_by_league": {
       "cbb": true,
       "nba": true,
       "esports": true
     },
-
     "max_events_per_fetch": 30,
     "max_events_per_fetch_by_tag": {
       "ncaa-basketball": 200,
@@ -41,7 +42,6 @@
     },
     "events_max_markets_per_event": 6,
     "min_vol24h_usd": 200,
-
     "keep_missing_date": false,
     "min_days_delta_keep_by_league": {
       "cbb": -1,
@@ -55,7 +55,7 @@
     }
   },
   "filters": {
-    "EPS": 0.000001,
+    "EPS": 1e-06,
     "min_prob": 0.94,
     "max_entry_price": 0.97,
     "max_spread": 0.02,
@@ -63,7 +63,7 @@
     "near_spread_max": 0.015,
     "min_exit_depth_usd_bid": 2000,
     "min_entry_depth_usd_ask": 1000,
-    "exit_depth_floor_price": 0.70,
+    "exit_depth_floor_price": 0.7,
     "max_levels_considered": 50
   },
   "esports": {
@@ -103,7 +103,7 @@
   "context": {
     "enabled": false,
     "entry_rules": {
-      "min_win_prob": 0.90,
+      "min_win_prob": 0.9,
       "max_minutes_left": 5,
       "min_margin": 1,
       "gate_mode": "tag_only"
@@ -132,5 +132,12 @@
     "enabled": true,
     "port": 3210,
     "host": "127.0.0.1"
+  },
+  "sizing": {
+    "mode": "fixed",
+    "fixed_usd": 10,
+    "percent": 10,
+    "fallback_fixed_usd": 10,
+    "balance_max_age_ms": 300000
   }
 }

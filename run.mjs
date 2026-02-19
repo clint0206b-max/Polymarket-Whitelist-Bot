@@ -283,6 +283,11 @@ try {
     // Initialize loop timing buckets
     const loopTimings = { gamma_ms: 0, eval_ms: 0, journal_ms: 0, resolution_ms: 0, persist_ms: 0 };
 
+    // Refresh balance cache for dynamic sizing (once per loop, non-blocking)
+    if (tradeBridge && tradeBridge.mode !== "paper") {
+      tradeBridge.refreshBalance().catch(() => {});
+    }
+
     // --- Phase 1: Gamma discovery loop ---
     const lastGamma = Number(state.runtime.last_gamma_fetch_ts || 0);
     const gammaEveryMs = Number(cfg.polling?.gamma_discovery_seconds || 60) * 1000;
@@ -449,10 +454,22 @@ try {
 
           const isLiveMode = tradeBridge && tradeBridge.mode !== "paper";
 
+          // Update prices for dynamic sizing before processing buys
+          if (isLiveMode) {
+            const sizingPrices = new Map();
+            for (const m of Object.values(state.watchlist || {})) {
+              if (m?.slug && m?.last_price) sizingPrices.set(m.slug, m.last_price);
+            }
+            tradeBridge.updatePricesForSizing(sizingPrices);
+          }
+
           for (const s of filteredNewOnes) {
             const signalId = `${Number(s.ts)}|${String(s.slug)}`;
             const entryPrice = Number(s.probAsk);
-            const paperNotional = Number(cfg?.paper?.notional_usd ?? 10);
+            // For paper mode, use fixed notional; for live mode, actual budget comes from trade_bridge
+            const paperNotional = (tradeBridge && tradeBridge.mode !== "paper")
+              ? (tradeBridge.balanceCache.calculateTradeSize(cfg?.sizing, tradeBridge._getOpenTrades(), tradeBridge._currentPricesBySlug).budgetUsd || Number(cfg?.paper?.notional_usd ?? 10))
+              : Number(cfg?.paper?.notional_usd ?? 10);
 
             // Derive entry_outcome_name for ALL leagues (not just esports)
             let entryOutcome = null;

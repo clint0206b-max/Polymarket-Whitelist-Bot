@@ -5,7 +5,12 @@
     "pending_window_seconds": 2
   },
   "gamma": {
-    "gamma_tags": ["esports", "nba", "ncaa-basketball", "soccer"]
+    "gamma_tags": [
+      "esports",
+      "nba",
+      "ncaa-basketball",
+      "soccer"
+    ]
   },
   "filters": {
     "min_prob": 0.93,
@@ -21,17 +26,17 @@
     "max_entry_price_lol": 0.89,
     "min_entry_price_val": 0.89,
     "max_entry_price_val": 0.93,
-    "min_entry_price_cbb": 0.90,
+    "min_entry_price_cbb": 0.9,
     "max_entry_price_cbb": 0.93,
     "max_spread_cbb": 0.02,
     "min_entry_price_nba": 0.83,
     "max_entry_price_nba": 0.87,
     "min_entry_price_cwbb": 0.86,
-    "max_entry_price_cwbb": 0.90,
+    "max_entry_price_cwbb": 0.9,
     "max_spread_cwbb": 0.02
   },
   "_deprecated_entry_rules": {
-    "_note": "DEAD CONFIG — was never read by pipeline. Moved to filters. Delete after 2026-03-01.",
+    "_note": "DEAD CONFIG \u2014 was never read by pipeline. Moved to filters. Delete after 2026-03-01.",
     "min_prob": 0.93,
     "max_entry_price": 0.98,
     "max_spread": 0.04,
@@ -49,23 +54,23 @@
   },
   "paper": {
     "stop_loss_bid": 0.85,
-    "stop_loss_ask": 0.90,
+    "stop_loss_ask": 0.9,
     "stop_loss_bid_esports": 0.75,
-    "stop_loss_ask_esports": 0.80,
+    "stop_loss_ask_esports": 0.8,
     "stop_loss_bid_dota2": 0.45,
-    "stop_loss_ask_dota2": 0.50,
-    "stop_loss_bid_cs2": 0.40,
+    "stop_loss_ask_dota2": 0.5,
+    "stop_loss_bid_cs2": 0.4,
     "stop_loss_ask_cs2": 0.45,
-    "stop_loss_bid_lol": 0.40,
+    "stop_loss_bid_lol": 0.4,
     "stop_loss_ask_lol": 0.45,
-    "stop_loss_bid_val": 0.40,
+    "stop_loss_bid_val": 0.4,
     "stop_loss_ask_val": 0.45,
     "stop_loss_bid_nba": 0.45,
-    "stop_loss_ask_nba": 0.50,
+    "stop_loss_ask_nba": 0.5,
     "stop_loss_bid_cbb": 0.45,
-    "stop_loss_ask_cbb": 0.50,
+    "stop_loss_ask_cbb": 0.5,
     "stop_loss_bid_cwbb": 0.45,
-    "stop_loss_ask_cwbb": 0.50
+    "stop_loss_ask_cwbb": 0.5
   },
   "context": {
     "enabled": true,
@@ -86,5 +91,11 @@
   },
   "opportunity_tracker": {
     "enabled": true
+  },
+  "sizing": {
+    "mode": "percent_of_total",
+    "percent": 10,
+    "fallback_fixed_usd": 10,
+    "balance_max_age_ms": 300000
   }
 }
