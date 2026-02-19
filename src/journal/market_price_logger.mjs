@@ -4,6 +4,7 @@
  * Smart logging:
  * - Only logs when price changes >= DELTA_THRESHOLD from last log
  * - Heartbeat: logs at least once every HEARTBEAT_MS even without change
+ * - Active positions: logged EVERY tick (no delta filter) for SL backtest accuracy
  * - Daily file rotation: state/journal/market_prices/YYYY-MM-DD.jsonl
  * - Auto-cleanup: deletes files older than RETENTION_DAYS
  */
@@ -12,9 +13,9 @@ import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const DIR = "state/journal/market_prices";
-const DELTA_THRESHOLD = 0.02;    // min price change to trigger a log
+const DELTA_THRESHOLD = 0.01;    // min price change to trigger a log
 const HEARTBEAT_MS = 5 * 60_000; // 5 min heartbeat
-const RETENTION_DAYS = 14;
+const RETENTION_DAYS = 30;
 
 // In-memory state: last logged values per slug
 const _lastLog = new Map(); // slug -> { bid, ask, ts }
@@ -28,7 +29,10 @@ function todayFile() {
   return join(DIR, `${yyyy}-${mm}-${dd}.jsonl`);
 }
 
-function shouldLog(slug, bid, ask, now) {
+function shouldLog(slug, bid, ask, now, hasPosition) {
+  // Active positions: log every tick for full price history
+  if (hasPosition) return true;
+
   const prev = _lastLog.get(slug);
   if (!prev) return true;
 
@@ -45,11 +49,17 @@ function shouldLog(slug, bid, ask, now) {
 /**
  * Log a market price tick. Call for every market on every eval cycle.
  * Internally decides whether to actually write based on delta/heartbeat.
+ *
+ * @param {string} slug - Market slug
+ * @param {number|null} bid - Best bid
+ * @param {number|null} ask - Best ask
+ * @param {string} league - League identifier
+ * @param {boolean} [hasPosition=false] - True if we hold an active position (logs every tick)
  */
-export function logMarketPrice(slug, bid, ask, league) {
+export function logMarketPrice(slug, bid, ask, league, hasPosition = false) {
   const now = Date.now();
 
-  if (!shouldLog(slug, bid, ask, now)) return;
+  if (!shouldLog(slug, bid, ask, now, hasPosition)) return;
 
   try {
     mkdirSync(DIR, { recursive: true });
@@ -62,6 +72,8 @@ export function logMarketPrice(slug, bid, ask, league) {
       ask: ask != null ? +ask.toFixed(4) : null,
       spread: (bid != null && ask != null) ? +(ask - bid).toFixed(4) : null,
     };
+    // Mark position ticks for easy filtering in backtests
+    if (hasPosition) entry.pos = true;
 
     appendFileSync(todayFile(), JSON.stringify(entry) + "\n");
     _lastLog.set(slug, { bid, ask, ts: now });

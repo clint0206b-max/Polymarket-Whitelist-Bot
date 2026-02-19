@@ -1814,8 +1814,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     const quote = { probAsk: bestAsk, probBid: bestBid, spread: bestAsk - bestBid };
 
-    // Log price for backtesting (smart: delta-based + heartbeat, ~400KB/day max)
-    logMarketPrice(m.slug, bestBid, bestAsk, m.league);
+    // Log price for backtesting (smart: delta-based + heartbeat; every-tick for active positions)
+    logMarketPrice(m.slug, bestBid, bestAsk, m.league, m.status === "signaled");
 
     // Initialize purge_gates if needed
     if (!m.purge_gates) {
