@@ -804,25 +804,35 @@ export class TradeBridge {
 
           // Diagnostic: log tokenId vs available assets on first miss (helps detect mapping bugs)
           if (misses === 1) {
-            console.warn(`[RECONCILE] ${tradeId} | tokenId=${String(trade.tokenId).slice(0,12)}... not in ${positions.length} positions | fillAge=${(fillAge/1000).toFixed(0)}s`);
+            const filteredCount = positions.filter(p => Number(p.size) > 0.01).length;
+            console.warn(`[RECONCILE] ${tradeId} | slug=${trade.slug} tokenId=${String(trade.tokenId).slice(0,12)}... not in ${filteredCount}/${positions.length} positions (size>0.01) | fillAge=${(fillAge/1000).toFixed(0)}s`);
           }
 
           // Need both: enough consecutive misses AND enough time since fill
           if (misses < ORPHAN_MIN_MISSES || fillAge < ORPHAN_MIN_AGE_MS) {
             if (misses === 1) {
-              console.log(`[RECONCILE_GRACE] ${tradeId} | grace period active — miss=${misses}/${ORPHAN_MIN_MISSES} fillAge=${(fillAge/1000).toFixed(0)}s/${ORPHAN_MIN_AGE_MS/1000}s`);
+              console.log(`[RECONCILE_GRACE] ${tradeId} | slug=${trade.slug} tokenId=${String(trade.tokenId).slice(0,12)}... | miss=${misses}/${ORPHAN_MIN_MISSES} fillAge=${(fillAge/1000).toFixed(0)}s/${ORPHAN_MIN_AGE_MS/1000}s`);
             }
             continue;
           }
 
-          console.warn(`[RECONCILE] ${tradeId} | no position after ${misses} checks (${(fillAge/60000).toFixed(1)}min) — marking orphan_pending`);
+          {
+            const filteredCount = positions.filter(p => Number(p.size) > 0.01).length;
+            const fa = trade.ts_filled ? `${(fillAge/60000).toFixed(1)}min` : "unknown";
+            console.warn(`[ORPHAN_PENDING] ${tradeId} | slug=${trade.slug} tokenId=${String(trade.tokenId).slice(0,12)}... | filledShares=${trade.filledShares} ts_filled=${trade.ts_filled || "null"} | misses=${misses} fillAge=${fa} | positions_filtered=${filteredCount}/${positions.length}`);
+          }
           trade.status = "orphan_pending";
           trade.orphan_detected_ts = now;
           trade.orphan_attempts = 0;
           delete trade._reconcile_misses; // clean up
         } else {
           // Position found — reset miss counter if present
-          if (trade._reconcile_misses) delete trade._reconcile_misses;
+          if (trade._reconcile_misses) {
+            const fa = trade.ts_filled ? `${((now - trade.ts_filled) / 1000).toFixed(0)}s` : "unknown";
+            const matchedPos = positions.find(p => p.asset === trade.tokenId && Number(p.size) > 0.01);
+            console.log(`[RECONCILE_GRACE_RESET] ${tradeId} | slug=${trade.slug} tokenId=${String(trade.tokenId).slice(0,12)}... | priorMisses=${trade._reconcile_misses} fillAge=${fa} | positionSize=${matchedPos ? Number(matchedPos.size).toFixed(4) : "?"}`);
+            delete trade._reconcile_misses;
+          }
         }
       }
 
