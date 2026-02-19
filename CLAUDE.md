@@ -10,9 +10,11 @@ This file contains everything you need to understand and modify the codebase saf
 
 **What it does:** High-frequency signal generation for Polymarket prediction markets. Discovers live sports/esports markets, evaluates them through a multi-stage pipeline with context-aware gates (ESPN scoreboards), and executes trades.
 
-**Current status:** Running LIVE with real money ($128.75 balance, commit `540451f`)
+**Current status:** Running LIVE with real money (commit `3a7962e`)
 
 **Key constraint:** This bot trades real money. **Every change must be tested extensively before deploy.**
+
+**Tests:** 954 passing
 
 ---
 
@@ -389,7 +391,7 @@ writeJsonAtomic(STATE_PATH, state);
   type: "signal_open",
   runner_id: "prod",
   schema_version: 2,
-  build_commit: "540451f",
+  build_commit: "3a7962e",
   signal_id: "1234567890|epl-manchester-city-arsenal",
   ts_open: 1234567890,
   slug: "epl-manchester-city-arsenal",
@@ -528,9 +530,125 @@ export class TradeBridge {
 
 ---
 
+## Stop Loss System
+
+### Spread-Based SL (replaces old dual bid+ask check)
+
+**Trigger condition:** `bid <= sl_bid AND (spread <= sl_spread_max OR bid <= sl_emergency_bid)`
+
+- `sl_spread_max = 0.50` (global) — tight spread confirms real crash, not just wide book
+- `sl_emergency_bid = 0.15` (global) — emergency exit regardless of spread
+- Per-sport SL bid thresholds configured in `local.json`
+
+### Escalating Floor Sell
+
+When SL triggers, sells through 5 escalating floor steps + 1 last resort:
+
+```
+Step 1: floor = triggerPrice (e.g. 0.37)
+Step 2: floor = triggerPrice - 0.01
+Step 3: floor = triggerPrice - 0.02
+Step 4: floor = triggerPrice - 0.03
+Step 5: floor = triggerPrice - 0.05
+Step 6: floor = 0.01 (LAST RESORT — never leaves position stuck)
+```
+
+`absoluteMinFloor = max(0.01, triggerPrice - 0.10)` prevents floors from going too low on steps 1-5.
+
+### Context SL (ESPN Score-Based)
+
+For CBB/CWBB/NBA: sells when `margin_for_yes < 3 AND bid < 0.93`.
+
+- Routes through same `_executeSLSell` escalating sell
+- Only applies to sports with ESPN context gates (not esports)
+- `context_sl_max_bid` is configurable per sport
+
+### SL Retry on Failure
+
+If all SL attempts fail (`failed_all_attempts`), the position is NOT paused. `checkPositionsFromCLOB` re-generates SL signals every cycle, retrying until the position is closed.
+
+---
+
+## Orphan Reconciliation
+
+When a position disappears from CLOB (manual sell, external action):
+
+1. `reconcilePositions()` runs every 5 min
+2. Detects filled BUY trades where position is gone from CLOB → marks `orphan_pending`
+3. `_reconcileOrphans()` calls `client.getTrades()` to find matching sell by `asset_id`
+4. Reconstructs real sellPrice, PnL, timestamp
+5. Marks as `closed` with `close_reason: "manual_sell"`
+6. After 24h without match → `orphan_closed` with `close_reason: "orphan_timeout"`
+
+**Critical:** Only BUY trades are checked for orphans. SELL trades are expected to remove positions.
+
+---
+
+## Dynamic Position Sizing
+
+**Module:** `src/execution/balance_cache.mjs`
+
+- Mode: `percent_of_total` (10% of total portfolio balance)
+- Total balance = cash + Σ(shares × currentBid) — liquidation value
+- Cache refreshed per loop (2s), tracks `cashSpentThisLoop` for multiple buys
+- If cash < 10% of total → uses all remaining cash
+- Config: `sizing: { mode: "percent_of_total", percent: 10 }` in `local.json`
+
+---
+
+## Esports Series Guard
+
+### Bo2 Blacklist
+
+Bo2 series can draw, causing correlated double-loss on game2 + series market. **Match series markets (`market_kind: "match_series"`) from Bo2 events are blacklisted** from the pipeline. Individual game maps (`map_specific`) are still tradeable.
+
+Detection: `parseBoFromScoreOrPeriod()` now recognizes Bo2 in `score_raw`/`period_raw` → `series_format: "bo2"`.
+
+### Series Format Detection
+
+- `Bo2` → blacklisted (match_series only)
+- `Bo3` → `required_wins: 1`, esports gate applies at ≥0.94
+- `Bo5` → `required_wins: 2`, esports gate applies at ≥0.94
+- Unknown → `guard_reason: "no_format"`, treated conservatively
+
+---
+
+## Per-Sport Configuration
+
+All per-sport params in `local.json`:
+
+| Sport | Entry Range | Max Spread | SL Bid | Context SL | Notes |
+|-------|------------|------------|--------|------------|-------|
+| Dota2 | 0.80-0.92 | 0.04 | 0.37 | No | Backtested 987 markets |
+| CS2 | 0.82-0.93 | 0.02 | 0.35 | No | Backtested 2,228 markets |
+| LoL | 0.80-0.89 | 0.04 | 0.32 | No | Backtested 725 markets |
+| Val | 0.81-0.93 | 0.04 | 0.42 | No | Backtested 661 markets |
+| CWBB | 0.80-0.90 | 0.02 | 0.40 | Yes | Backtested 4,794 markets |
+| NBA | 0.83-0.87 | 0.04 | 0.45 | Yes | ESPN Q4/OT, ≤10min |
+| CBB | 0.90-0.93 | 0.02 | 0.45 | Yes | ESPN H2/OT, ≤10min |
+
+**Global SL params:** `stop_loss_spread_max: 0.50`, `stop_loss_emergency_bid: 0.15`
+
+---
+
+## Dashboard
+
+**URL:** `http://localhost:3210/`
+
+**Data sources:**
+- Open positions: `state/journal/open_index.json`
+- Trade history: `state/journal/signals.jsonl` (filters `executed !== false` from PnL)
+- Execution details: `state/execution_state.json`
+
+**Key columns:** Entry price, current bid/ask, unrealized PnL, close reason, time closed.
+
+`reconcileIndex` cleans ghost positions where `buy.closed=true` in execution_state but no `signal_close` exists in JSONL.
+
+---
+
 ## Testing
 
-**Test count:** 437 tests across 18 files (all passing)
+**Test count:** 954 tests (all passing)
 
 **How to run:**
 ```bash
@@ -1376,23 +1494,24 @@ If any >1000ms → bottleneck identified.
    # If >100 markets → eviction not working
    ```
 
-### SL Ladder Exhausted (Trading Paused)
+### SL Sell Failing Repeatedly
+
+SL sells retry automatically every cycle until closed. After 5 escalating floor attempts, a 6th "last resort" sell at floor=0.01 fires. If that also fails:
 
 1. **Check execution state**
    ```bash
-   cat state/execution_state.json | jq '.paused'
-   # If true → check pause_reason
+   cat state/execution_state.json | jq '.trades' | grep failed_all_attempts
    ```
 
-2. **Manual intervention required**
-   - Review failed SL sell in `journal/executions.jsonl`
-   - Verify CLOB balance/positions match expected
-   - If safe to resume → edit `execution_state.json`: `"paused": false`
-
-3. **Resume trading**
+2. **Check CLOB positions match**
    ```bash
-   # Restart bot after unpause
+   # The bot will keep retrying via checkPositionsFromCLOB
+   # Only intervene if position is stuck for hours
    ```
+
+3. **Manual sell if needed**
+   - Sell manually on Polymarket UI
+   - Orphan reconciliation will detect the manual sell and update PnL
 
 ---
 

@@ -4,7 +4,7 @@
 
 A deterministic, spec-driven trading bot that discovers live sports/esports markets via Gamma API, evaluates them through a multi-stage signal pipeline with context-aware gates (ESPN scoreboards), and executes trades via CLOB API.
 
-**Current Status:** Running LIVE with real money ($128.75 balance, commit `540451f`)
+**Current Status:** Running LIVE with real money (commit `3a7962e`, 954 tests passing)
 
 ---
 
@@ -649,12 +649,32 @@ above 0.50 generates significantly more false stops than it prevents true losses
 
 ### Stop Loss Layers
 
-1. **Price SL** (all sports): bid ≤ per-sport threshold AND ask ≤ ask threshold → sell
-2. **Context SL** (CBB, CWBB, NBA only): ESPN margin_for_yes < `min_margin_hold` (default 3) → sell
+1. **Price SL** (all sports): `bid ≤ sl_bid AND (spread ≤ 0.50 OR bid ≤ 0.15)` → escalating sell
+2. **Context SL** (CBB, CWBB, NBA only): ESPN `margin_for_yes < 3 AND bid < 0.93` → escalating sell
 3. Price SL takes priority if both trigger simultaneously
+4. **Escalating floor**: 5 steps (trigger → trigger-0.05) + last resort at floor=0.01
+5. **Retry until closed**: failed SL sells are re-signaled every cycle via `checkPositionsFromCLOB`
 
 Context SL uses live ESPN scores to detect when our team loses the lead. After selling,
 the market is re-discovered by Gamma (~20s) and can re-enter if price returns to entry range.
+
+### Orphan Reconciliation
+
+When positions disappear from CLOB (manual sell, external action):
+- `reconcilePositions()` detects missing positions every 5 min
+- Matches against CLOB sell history via `client.getTrades()` by `asset_id`
+- Reconstructs real sellPrice, PnL, timestamp → marks `closed` with `close_reason: "manual_sell"`
+- Only BUY trades checked for orphans (SELL trades are expected to remove positions)
+
+### Bo2 Blacklist
+
+Bo2 esports series can draw, causing correlated double-loss. Match series markets from Bo2 events are blacklisted. Individual game maps remain tradeable.
+
+### Dynamic Position Sizing
+
+- 10% of total portfolio balance (cash + positions at current bid)
+- If remaining cash < 10% of total → uses all remaining cash
+- Module: `src/execution/balance_cache.mjs`
 
 ### Performance Optimizations
 
@@ -690,7 +710,7 @@ the market is re-discovered by Gamma (~20s) and can re-enter if price returns to
 
 ## Testing
 
-**Coverage:** 437 tests across 18 test files (all passing)
+**Coverage:** 954 tests (all passing)
 
 **Test Categories:**
 - Universe selection (20 tests) — invariants for price updates vs signal pipeline
