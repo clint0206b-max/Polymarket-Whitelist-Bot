@@ -1,17 +1,34 @@
 {
   "polling": {
-    "gamma_discovery_seconds": 30,
+    "gamma_discovery_seconds": 20,
     "clob_eval_seconds": 2,
-    "pending_window_seconds": 4
+    "pending_window_seconds": 2
   },
   "gamma": {
     "gamma_tags": ["esports", "nba", "ncaa-basketball", "soccer"]
   },
   "filters": {
     "min_prob": 0.93,
-    "max_entry_price": 0.98,
+    "max_entry_price": 0.97,
     "max_spread": 0.04,
-    "min_entry_depth_usd_ask": 500
+    "min_entry_depth_usd_ask": 500,
+    "min_entry_price_dota2": 0.86,
+    "max_entry_price_dota2": 0.92,
+    "min_entry_price_cs2": 0.87,
+    "max_entry_price_cs2": 0.93,
+    "max_spread_cs2": 0.02,
+    "min_entry_price_lol": 0.87,
+    "max_entry_price_lol": 0.89,
+    "min_entry_price_val": 0.89,
+    "max_entry_price_val": 0.93,
+    "min_entry_price_cbb": 0.90,
+    "max_entry_price_cbb": 0.93,
+    "max_spread_cbb": 0.02,
+    "min_entry_price_nba": 0.83,
+    "max_entry_price_nba": 0.87,
+    "min_entry_price_cwbb": 0.86,
+    "max_entry_price_cwbb": 0.90,
+    "max_spread_cwbb": 0.02
   },
   "_deprecated_entry_rules": {
     "_note": "DEAD CONFIG — was never read by pipeline. Moved to filters. Delete after 2026-03-01.",
@@ -26,18 +43,42 @@
     "funder_address": "0xddb60e6980B311997F75CDA0028080E46fACeBFA",
     "credentials_path": "/Users/andres/.openclaw/workspace/.polymarket-credentials.json",
     "max_position_usd": 10,
-    "max_total_exposure_usd": 50,
-    "max_concurrent_positions": 5,
-    "max_trades_per_day": 50
+    "max_total_exposure_usd": 9999,
+    "max_concurrent_positions": 100,
+    "max_trades_per_day": 9999
   },
   "paper": {
-    "stop_loss_bid": 0.70
+    "stop_loss_bid": 0.85,
+    "stop_loss_ask": 0.90,
+    "stop_loss_bid_esports": 0.75,
+    "stop_loss_ask_esports": 0.80,
+    "stop_loss_bid_dota2": 0.45,
+    "stop_loss_ask_dota2": 0.50,
+    "stop_loss_bid_cs2": 0.40,
+    "stop_loss_ask_cs2": 0.45,
+    "stop_loss_bid_lol": 0.40,
+    "stop_loss_ask_lol": 0.45,
+    "stop_loss_bid_val": 0.40,
+    "stop_loss_ask_val": 0.45,
+    "stop_loss_bid_nba": 0.45,
+    "stop_loss_ask_nba": 0.50,
+    "stop_loss_bid_cbb": 0.45,
+    "stop_loss_ask_cbb": 0.50,
+    "stop_loss_bid_cwbb": 0.45,
+    "stop_loss_ask_cwbb": 0.50
   },
   "context": {
     "enabled": true,
     "entry_rules": {
       "gate_mode_nba": "blocking",
-      "gate_mode_cbb": "blocking"
+      "gate_mode_cbb": "blocking",
+      "max_minutes_left_cbb": 10,
+      "min_win_prob_cbb": 0,
+      "max_minutes_left_nba": 10,
+      "min_win_prob_nba": 0,
+      "max_minutes_left_cwbb": 10,
+      "min_win_prob_cwbb": 0,
+      "gate_mode_cwbb": "blocking"
     }
   },
   "purge": {
