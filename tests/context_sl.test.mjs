@@ -257,6 +257,126 @@ describe("Context SL integration", () => {
     assert.equal(signals[0].context_margin, 4);
   });
 
+  // --- context_sl_max_bid threshold tests ---
+
+  it("does NOT trigger context SL when bid >= 0.93 (market confident)", () => {
+    const trade = makeTrade("cbb-confident-2026-02-18");
+    const bridge = makeBridge({}, { [`buy:${trade.signal_id}`]: trade });
+    
+    // margin=1 (below 3) but bid=0.95 (above 0.93) → market says it's fine
+    const prices = new Map([["cbb-confident-2026-02-18", { yes_best_bid: 0.95, yes_best_ask: 0.97 }]]);
+    const contexts = new Map([["cbb-confident-2026-02-18", {
+      context: { teams: { a: { name: "Home", score: 61 }, b: { name: "Away", score: 60 } } },
+      context_entry: { yes_outcome_name: "Home" },
+    }]]);
+
+    const signals = bridge.checkPositionsFromCLOB(prices, contexts);
+    const contextSl = signals.filter(s => s.close_reason === "context_sl");
+    assert.equal(contextSl.length, 0);
+  });
+
+  it("does NOT trigger context SL when bid is exactly 0.93", () => {
+    const trade = makeTrade("cbb-exact93-2026-02-18");
+    const bridge = makeBridge({}, { [`buy:${trade.signal_id}`]: trade });
+    
+    // margin=2 (below 3) but bid=0.93 (exactly at threshold) → no sell
+    const prices = new Map([["cbb-exact93-2026-02-18", { yes_best_bid: 0.93, yes_best_ask: 0.95 }]]);
+    const contexts = new Map([["cbb-exact93-2026-02-18", {
+      context: { teams: { a: { name: "Home", score: 62 }, b: { name: "Away", score: 60 } } },
+      context_entry: { yes_outcome_name: "Home" },
+    }]]);
+
+    const signals = bridge.checkPositionsFromCLOB(prices, contexts);
+    const contextSl = signals.filter(s => s.close_reason === "context_sl");
+    assert.equal(contextSl.length, 0);
+  });
+
+  it("triggers context SL when bid is just below 0.93", () => {
+    const trade = makeTrade("cbb-below93-2026-02-18");
+    const bridge = makeBridge({}, { [`buy:${trade.signal_id}`]: trade });
+    
+    // margin=1 (below 3) and bid=0.92 (below 0.93) → sell
+    const prices = new Map([["cbb-below93-2026-02-18", { yes_best_bid: 0.92, yes_best_ask: 0.94 }]]);
+    const contexts = new Map([["cbb-below93-2026-02-18", {
+      context: { teams: { a: { name: "Home", score: 61 }, b: { name: "Away", score: 60 } } },
+      context_entry: { yes_outcome_name: "Home" },
+    }]]);
+
+    const signals = bridge.checkPositionsFromCLOB(prices, contexts);
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0].close_reason, "context_sl");
+    assert.equal(signals[0].sl_trigger_price, 0.92); // sells at actual bid, no floor
+  });
+
+  it("triggers context SL at low bid (0.89) — no artificial floor", () => {
+    const trade = makeTrade("cbb-lowbid-2026-02-18", { entryPrice: 0.91 });
+    const bridge = makeBridge({}, { [`buy:${trade.signal_id}`]: trade });
+    
+    // margin=0 and bid=0.89 → must sell at 0.89, no floor
+    const prices = new Map([["cbb-lowbid-2026-02-18", { yes_best_bid: 0.89, yes_best_ask: 0.91 }]]);
+    const contexts = new Map([["cbb-lowbid-2026-02-18", {
+      context: { teams: { a: { name: "Home", score: 60 }, b: { name: "Away", score: 60 } } },
+      context_entry: { yes_outcome_name: "Home" },
+    }]]);
+
+    const signals = bridge.checkPositionsFromCLOB(prices, contexts);
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0].close_reason, "context_sl");
+    assert.equal(signals[0].sl_trigger_price, 0.89);
+    // PnL should be negative: (0.89 - 0.91) * 10 = -0.20
+    assert.ok(signals[0].pnl_usd < 0);
+  });
+
+  it("triggers context SL at very low bid (0.50) — exits immediately", () => {
+    const trade = makeTrade("cbb-crash-2026-02-18", { entryPrice: 0.91, filledShares: 10, spentUsd: 9.1 });
+    const bridge = makeBridge({}, { [`buy:${trade.signal_id}`]: trade });
+    
+    // Price collapsed but above price SL threshold (0.45)
+    // margin=-5 and bid=0.50 → context SL fires, sells at 0.50
+    const prices = new Map([["cbb-crash-2026-02-18", { yes_best_bid: 0.50, yes_best_ask: 0.55 }]]);
+    const contexts = new Map([["cbb-crash-2026-02-18", {
+      context: { teams: { a: { name: "Home", score: 55 }, b: { name: "Away", score: 60 } } },
+      context_entry: { yes_outcome_name: "Home" },
+    }]]);
+
+    const signals = bridge.checkPositionsFromCLOB(prices, contexts);
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0].close_reason, "context_sl");
+    assert.equal(signals[0].sl_trigger_price, 0.50);
+  });
+
+  it("respects custom context_sl_max_bid config", () => {
+    const trade = makeTrade("cbb-custom-bid-2026-02-18");
+    const bridge = makeBridge({ context_sl_max_bid: 0.90 }, { [`buy:${trade.signal_id}`]: trade });
+    
+    // margin=1 (below 3) and bid=0.91 → above custom threshold 0.90 → no sell
+    const prices = new Map([["cbb-custom-bid-2026-02-18", { yes_best_bid: 0.91, yes_best_ask: 0.93 }]]);
+    const contexts = new Map([["cbb-custom-bid-2026-02-18", {
+      context: { teams: { a: { name: "Home", score: 61 }, b: { name: "Away", score: 60 } } },
+      context_entry: { yes_outcome_name: "Home" },
+    }]]);
+
+    const signals = bridge.checkPositionsFromCLOB(prices, contexts);
+    const contextSl = signals.filter(s => s.close_reason === "context_sl");
+    assert.equal(contextSl.length, 0);
+  });
+
+  it("triggers with custom context_sl_max_bid when bid is below it", () => {
+    const trade = makeTrade("cbb-custom-bid2-2026-02-18");
+    const bridge = makeBridge({ context_sl_max_bid: 0.90 }, { [`buy:${trade.signal_id}`]: trade });
+    
+    // margin=1 and bid=0.89 → below custom 0.90 → sell
+    const prices = new Map([["cbb-custom-bid2-2026-02-18", { yes_best_bid: 0.89, yes_best_ask: 0.91 }]]);
+    const contexts = new Map([["cbb-custom-bid2-2026-02-18", {
+      context: { teams: { a: { name: "Home", score: 61 }, b: { name: "Away", score: 60 } } },
+      context_entry: { yes_outcome_name: "Home" },
+    }]]);
+
+    const signals = bridge.checkPositionsFromCLOB(prices, contexts);
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0].close_reason, "context_sl");
+  });
+
   it("logs correct PnL (positive when selling above entry)", () => {
     const trade = makeTrade("cbb-pnl-test-2026-02-18", { entryPrice: 0.90, filledShares: 10, spentUsd: 9.0 });
     const bridge = makeBridge({}, { [`buy:${trade.signal_id}`]: trade });

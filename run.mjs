@@ -560,7 +560,7 @@ try {
 
               // Only log signal_close AFTER sell attempt completes
               // If sell failed completely, mark it as such so dashboard doesn't show fake PnL
-              const sellFailed = sig.close_reason === "stop_loss" && (!sellResult || !sellResult.ok);
+              const sellFailed = (sig.close_reason === "stop_loss" || sig.close_reason === "context_sl") && (!sellResult || !sellResult.ok);
               if (sellFailed) {
                 appendJsonl("state/journal/signals.jsonl", {
                   ...sig,

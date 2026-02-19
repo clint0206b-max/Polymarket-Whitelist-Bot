@@ -356,7 +356,7 @@ export class TradeBridge {
 
     const tokenId = buyTrade.tokenId;
     const shares = buyTrade.filledShares || buyTrade.requestedShares;
-    const isStopLoss = signal.close_reason === "stop_loss";
+    const isStopLoss = signal.close_reason === "stop_loss" || signal.close_reason === "context_sl";
     const isResolved = signal.close_reason === "resolved";
 
     if (this.mode === "shadow_live") {
@@ -812,8 +812,14 @@ export class TradeBridge {
           // Compute margin_for_yes from live scores + yes_outcome_name
           const marginForYes = TradeBridge._computeMarginForYes(ctx, ctxEntry);
           if (marginForYes != null && Number.isFinite(marginForYes) && marginForYes < minMarginHold) {
+            // Only trigger context SL if market also agrees (bid below threshold)
+            const contextSlMaxBid = Number(this.cfg?.context?.context_sl_max_bid ?? 0.93);
+            if (bid >= contextSlMaxBid) {
+              // Market still confident despite tight score — skip context SL
+              continue;
+            }
             const pnl = shares * (bid - entryPrice);
-            console.log(`[CONTEXT_SL] ${trade.slug} | margin=${marginForYes} < ${minMarginHold} | bid=${bid.toFixed(3)} | entry=${entryPrice.toFixed(3)} | est_pnl=$${pnl.toFixed(2)}`);
+            console.log(`[CONTEXT_SL] ${trade.slug} | margin=${marginForYes} < ${minMarginHold} | bid=${bid.toFixed(3)} < ${contextSlMaxBid} | entry=${entryPrice.toFixed(3)} | est_pnl=$${pnl.toFixed(2)}`);
             signals.push({
               type: "signal_close",
               signal_id: trade.signal_id,
