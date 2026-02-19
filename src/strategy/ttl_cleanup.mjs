@@ -8,7 +8,7 @@ export function markExpired(state, cfg, now) {
   for (const m of Object.values(wl)) {
     const last = Number(m?.last_seen_ts || 0);
     if (!last) continue;
-    if (now - last > ttlMs && m.status !== "expired") {
+    if (now - last > ttlMs && m.status !== "expired" && m.status !== "signaled") {
       m.status = "expired";
       m.notes = m.notes || {};
       m.notes.reason_expired = "ttl";

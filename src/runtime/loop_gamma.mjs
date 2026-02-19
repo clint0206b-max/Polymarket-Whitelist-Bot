@@ -163,7 +163,7 @@ export async function loopGamma(state, cfg, now) {
   // Mark them expired deterministically (infra), so eval/tag loops don't waste cycles.
   health.gamma_watchlist_expired_date_too_far = health.gamma_watchlist_expired_date_too_far || 0;
   for (const m of Object.values(state.watchlist || {})) {
-    if (!m || m.status === "expired") continue;
+    if (!m || m.status === "expired" || m.status === "signaled") continue;
     const league = String(m.league || "");
     const win = getWin(league);
     if (win.min == null && win.max == null) continue;
