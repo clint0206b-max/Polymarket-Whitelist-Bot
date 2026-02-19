@@ -615,7 +615,7 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       pending_top5: timeInStatus.pending
     },
 
-    trade_bridge: state?.runtime?.trade_bridge || { mode: "paper", paused: false },
+    trade_bridge: state?.runtime?.trade_bridge || { mode: "paper" },
     universe_funnel: buildUniverseFunnel(state),
   };
 }
@@ -1234,7 +1234,7 @@ export function startHealthServer(state, opts = {}) {
     return {
       as_of_ts: Date.now(),
       mode,
-      paused: bridge.paused || false,
+      paused: false,  // paused mechanism removed
       balance_usd: bridge.balance_usd ?? null,
       summary: {
         buys_today: buys.length,

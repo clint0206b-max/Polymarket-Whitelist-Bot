@@ -34,10 +34,10 @@ const LOL_SL = 0.40;
 const VAL_SL = 0.40;
 const NBA_SL = 0.45;
 
-function makeBridge({ mode = "live", trades = {}, paused = false, cfg = {} } = {}) {
+function makeBridge({ mode = "live", trades = {}, cfg = {} } = {}) {
   return {
     mode,
-    execState: { trades, paused, daily_counts: {} },
+    execState: { trades, daily_counts: {} },
     cfg: { paper: { stop_loss_bid: DEFAULT_SL, stop_loss_spread_max: DEFAULT_SL_SPREAD_MAX, stop_loss_emergency_bid: DEFAULT_SL_EMERGENCY, stop_loss_bid_esports: ESPORTS_SL, stop_loss_bid_dota2: DOTA2_SL, stop_loss_bid_cs2: CS2_SL, stop_loss_bid_lol: LOL_SL, stop_loss_bid_val: VAL_SL, stop_loss_bid_nba: NBA_SL }, ...cfg },
     // Bind the real method — we import it below
   };
@@ -374,15 +374,14 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals.length, 0);
     });
 
-    it("returns empty when paused", () => {
-      const buy = makeBuyTrade("paused", { signal_id: "sig12|paused" });
+    it("paused mechanism removed — always processes positions", () => {
+      const buy = makeBuyTrade("test-paused", { signal_id: "sig12|test-paused" });
       const bridge = makeBridge({
-        trades: { "buy:sig12|paused": buy },
-        paused: true,
+        trades: { "buy:sig12|test-paused": buy },
       });
-      const signals = check(bridge, priceMap({ "paused": 0.999 }));
+      const signals = check(bridge, priceMap({ "test-paused": 0.999 }));
 
-      assert.equal(signals.length, 0);
+      assert.equal(signals.length, 1); // should process, not skip
     });
 
     it("ignores closed positions", () => {

@@ -35,7 +35,7 @@ function loadExecutionState() {
   try {
     return JSON.parse(readFileSync(EXECUTION_STATE_PATH, "utf8"));
   } catch {
-    return { trades: {}, daily: {}, last_reconcile_ts: 0, paused: false, pause_reason: null };
+    return { trades: {}, daily: {}, last_reconcile_ts: 0 };
   }
 }
 
@@ -192,11 +192,7 @@ export class TradeBridge {
 
     const tradeId = `buy:${signal.signal_id}`;
     
-    // Pause check (fail closed — no new buys if SL sell failed or manual pause)
-    if (this.execState.paused) {
-      console.log(`[TRADE_BRIDGE] BLOCKED by pause: ${this.execState.pause_reason || "unknown"}`);
-      return { blocked: true, reason: "paused", pause_reason: this.execState.pause_reason };
-    }
+    // (paused mechanism removed — bot should never stop trading automatically)
 
     // Idempotency check
     if (this.execState.trades[tradeId]) {
@@ -400,10 +396,16 @@ export class TradeBridge {
 
     const sellTradeId = `sell:${signal.signal_id}`;
     
-    // Idempotency check
-    if (this.execState.trades[sellTradeId]) {
-      console.log(`[TRADE_BRIDGE] SKIP duplicate sell: ${sellTradeId}`);
-      return this.execState.trades[sellTradeId];
+    // Idempotency check — allow retry for failed_all_attempts
+    const existingSell = this.execState.trades[sellTradeId];
+    if (existingSell) {
+      if (existingSell.status === "failed_all_attempts") {
+        console.log(`[TRADE_BRIDGE] RETRY failed sell: ${sellTradeId}`);
+        delete this.execState.trades[sellTradeId];
+      } else {
+        console.log(`[TRADE_BRIDGE] SKIP duplicate sell: ${sellTradeId}`);
+        return existingSell;
+      }
     }
 
     // Find the buy trade for this signal
@@ -808,7 +810,7 @@ export class TradeBridge {
    * @returns {Array<object>} - signal_close objects for positions that hit SL or resolved
    */
   checkPositionsFromCLOB(pricesBySlug, contextBySlug = new Map()) {
-    if (this.mode === "paper" || this.execState.paused) return [];
+    if (this.mode === "paper") return [];
 
     const slThresholdDefault = Number(this.cfg?.paper?.stop_loss_bid ?? 0.70);
     const slSpreadMaxDefault = Number(this.cfg?.paper?.stop_loss_spread_max ?? 0.50);
@@ -847,9 +849,10 @@ export class TradeBridge {
       const price = pricesBySlug.get(trade.slug);
       if (!price || price.yes_best_bid == null) continue;
 
-      // Skip if a sell is already pending/queued/filled for this signal
+      // Skip if a sell is already pending/queued/filled for this signal (but allow retry for failed)
       const sellKey = `sell:${trade.signal_id}`;
-      if (this.execState.trades[sellKey]) continue;
+      const existingSellTrade = this.execState.trades[sellKey];
+      if (existingSellTrade && existingSellTrade.status !== "failed_all_attempts") continue;
 
       const bid = Number(price.yes_best_bid);
       const ask = Number(price.yes_best_ask ?? 0);
@@ -1022,8 +1025,7 @@ export class TradeBridge {
     
     return {
       mode: this.mode,
-      paused: this.execState.paused || false,
-      pause_reason: this.execState.pause_reason || null,
+      paused: false,
       open_positions: openTrades.length,
       total_exposure_usd: totalExposure,
       daily_trades: this.execState.daily[day] || 0,

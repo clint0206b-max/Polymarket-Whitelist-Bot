@@ -77,7 +77,7 @@ describe("Context SL integration", () => {
       paper: { stop_loss_bid: 0.45, stop_loss_spread_max: 0.50, stop_loss_emergency_bid: 0.15 },
       context: { min_margin_hold: 3, ...cfg },
     };
-    bridge.execState = { paused: false, trades };
+    bridge.execState = { trades };
     bridge._priceTickLastTs = new Map();
     bridge._priceTickIntervalMs = 999999; // disable ticks
     return bridge;

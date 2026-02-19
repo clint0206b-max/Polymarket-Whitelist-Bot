@@ -35,7 +35,6 @@ let savedStates = [];
 function createMockBridge({
   mode = "live",
   trades = {},
-  paused = false,
   cfg = {},
   sellResults = [],   // array of results for successive executeSell calls
   condBalance = null,  // conditional balance to return (null = don't mock)
@@ -44,7 +43,7 @@ function createMockBridge({
 
   const bridge = Object.create(TradeBridge.prototype);
   bridge.mode = mode;
-  bridge.execState = { trades: { ...trades }, paused, daily_counts: {} };
+  bridge.execState = { trades: { ...trades }, daily_counts: {} };
   bridge.cfg = { paper: { stop_loss_bid: 0.85 }, ...cfg };
   bridge.client = {}; // dummy
   bridge.funder = "0xtest";
@@ -339,19 +338,16 @@ describe("SL sell logic", () => {
       assert.equal(allFilled, false);
     });
 
-    it("all attempts fail → paused=true with reason", () => {
-      const execState = { trades: {}, paused: false, pause_reason: null };
+    it("all attempts fail → status=failed_all_attempts (no pause, will retry next cycle)", () => {
+      const execState = { trades: {}, daily_counts: {} };
       const sellTradeId = "sell:sig|slug";
       execState.trades[sellTradeId] = { status: "sent" };
 
       // Simulate all attempts failed
       execState.trades[sellTradeId].status = "failed_all_attempts";
-      execState.paused = true;
-      execState.pause_reason = `sl_sell_failed:slug:${new Date().toISOString()}`;
 
       assert.equal(execState.trades[sellTradeId].status, "failed_all_attempts");
-      assert.equal(execState.paused, true);
-      assert.ok(execState.pause_reason.startsWith("sl_sell_failed:slug:"));
+      assert.equal(execState.paused, undefined); // paused mechanism removed
     });
   });
 
