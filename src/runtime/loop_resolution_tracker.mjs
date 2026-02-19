@@ -325,11 +325,14 @@ export async function loopResolutionTracker(cfg, state) {
       // We need to know which outcome we would have bet on
       // In our strategy, we always buy the high-probability side (the one at ≥0.93)
       // So if winner matches the high-prob outcome, we would have won
-      const wouldHaveWon = det.maxPrice >= 0.995; // Terminal = the side we'd have bought won
-      // More precisely: we'd buy YES at entry_bid ≥ 0.93, so if YES resolves to 1.0, we win
-      // det.winner is the outcome that resolved to ~1.0
-      // Without knowing which outcome we'd have picked, approximate:
-      // If entry_bid was ≥ 0.93, we were buying the favorite → favorite won if maxPrice ≥ 0.995
+      // Determine if we would have won:
+      // We buy YES side (outcomes[0]). det.winner is the outcome that resolved to ~1.0.
+      // If our YES outcome matches the winner → we would have won.
+      // Fallback for old timeouts without yes_outcome_name: assume we'd have won (conservative).
+      const yesOutcome = to.yes_outcome_name || null;
+      const wouldHaveWon = yesOutcome
+        ? (det.winner === yesOutcome)
+        : (det.maxPrice >= 0.995); // legacy fallback
       
       const entryBid = to.entry_bid_at_pending || 0;
       const hypotheticalPnl = wouldHaveWon 
