@@ -121,6 +121,7 @@ const MASCOT_TAILS = [
   "hilltoppers",
   "hoosiers",
   "hornets",
+  "hoyas",
   "huskies",
   "hurricanes",
   "islanders",
@@ -452,16 +453,18 @@ export async function fetchEspnCbbScoreboard(cfg, nowTs) {
   return fetchEspnCbbScoreboardForDate(cfg, date);
 }
 
-export async function fetchEspnCbbScoreboardForDate(cfg, dateKey) {
-  const timeoutMs = Number(cfg?.context?.cbb?.timeout_ms || 2500);
+export async function fetchEspnCbbScoreboardForDate(cfg, dateKey, { gender = "mens" } = {}) {
+  const cfgKey = gender === "womens" ? "cwbb" : "cbb";
+  const timeoutMs = Number(cfg?.context?.[cfgKey]?.timeout_ms || cfg?.context?.cbb?.timeout_ms || 2500);
   const controller = new AbortController();
   const to = setTimeout(() => controller.abort(), timeoutMs);
 
   const date = String(dateKey || "");
+  const espnPath = gender === "womens" ? "womens-college-basketball" : "mens-college-basketball";
   try {
     // groups=50 = all D1 games (without it, ESPN only returns ~2-10 "top" games,
     // missing all mid-major/small conference games that Polymarket actively trades)
-    const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${encodeURIComponent(date)}&limit=500&groups=50`;
+    const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/${espnPath}/scoreboard?dates=${encodeURIComponent(date)}&limit=500&groups=50`;
     const r = await fetch(url, { headers: { accept: "application/json" }, signal: controller.signal });
     if (!r.ok) return { ok: false, reason: "http", http_status: r.status, date_key: date };
 
