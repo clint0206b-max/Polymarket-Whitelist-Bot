@@ -100,6 +100,10 @@ export class TradeBridge {
     this.maxDailyTrades = Number(cfg?.trading?.max_trades_per_day || 50);
     this.allowlist = cfg?.trading?.allowlist || null; // null = allow all
     this.slFloorSteps = [0, 0.01, 0.02, 0.03, 0.05]; // escalating discount from SL trigger price
+
+    // Price tick logging: throttled per signal_id
+    this._priceTickLastTs = new Map(); // signal_id → last log timestamp
+    this._priceTickIntervalMs = 30_000; // log every 30s per position
   }
 
   async init() {
@@ -118,7 +122,11 @@ export class TradeBridge {
     const balance = await getBalance(client);
     console.log(`[TRADE_BRIDGE] mode=${this.mode} | funder=${this.funder} | balance=$${balance.toFixed(2)}`);
     console.log(`[TRADE_BRIDGE] guards: max_pos=$${this.maxPositionUsd} max_exposure=$${this.maxTotalExposure} max_concurrent=${this.maxConcurrent} max_daily=${this.maxDailyTrades}`);
-    console.log(`[TRADE_BRIDGE] SL=${this.cfg?.paper?.stop_loss_bid || "none"} | allowlist=${this.allowlist ? this.allowlist.length + " markets" : "all"}`);
+    const slBid = this.cfg?.paper?.stop_loss_bid;
+    const slAsk = this.cfg?.paper?.stop_loss_ask;
+    const slBidE = this.cfg?.paper?.stop_loss_bid_esports;
+    const slAskE = this.cfg?.paper?.stop_loss_ask_esports;
+    console.log(`[TRADE_BRIDGE] SL=${slBid || "none"}${slAsk ? ` (ask≤${slAsk})` : ""}${slBidE ? ` | esports: SL=${slBidE} (ask≤${slAskE || slAsk})` : ""} | allowlist=${this.allowlist ? this.allowlist.length + " markets" : "all"}`);
     
     return { balance };
   }
@@ -485,12 +493,10 @@ export class TradeBridge {
       }
     }
 
-    // All attempts failed — critical safety: pause ALL trading (no new buys OR sells)
+    // All attempts failed — mark this sell as failed, but keep trading other positions
     this.execState.trades[sellTradeId].status = "failed_all_attempts";
-    this.execState.paused = true;
-    this.execState.pause_reason = `sl_sell_failed:${signal.slug}:${new Date().toISOString()}`;
     saveExecutionState(this.execState);
-    console.error(`[SL_SELL_FAILED] ${signal.slug} | ALL ${this.slFloorSteps.length} attempts failed — PAUSING ALL TRADING`);
+    console.error(`[SL_SELL_FAILED] ${signal.slug} | ALL ${this.slFloorSteps.length} attempts failed — position remains open`);
     
     appendJsonl("state/journal/executions.jsonl", {
       type: "sl_sell_failed",
@@ -498,10 +504,9 @@ export class TradeBridge {
       signal_id: signal.signal_id,
       slug: signal.slug,
       attempts: this.slFloorSteps.length,
-      action: "pause_trading",
     });
 
-    return { ok: false, error: "sl_all_attempts_failed", paused: true };
+    return { ok: false, error: "sl_all_attempts_failed" };
   }
 
   async _executeMarketSell(signal, buyTrade, sellTradeId, floor) {
@@ -656,10 +661,27 @@ export class TradeBridge {
    * @param {Map<string, {yes_best_bid: number}>} pricesBySlug - current CLOB prices keyed by slug
    * @returns {Array<object>} - signal_close objects for positions that hit SL or resolved
    */
-  checkPositionsFromCLOB(pricesBySlug) {
+  checkPositionsFromCLOB(pricesBySlug, contextBySlug = new Map()) {
     if (this.mode === "paper" || this.execState.paused) return [];
 
-    const slThreshold = Number(this.cfg?.paper?.stop_loss_bid ?? 0.70);
+    const slThresholdDefault = Number(this.cfg?.paper?.stop_loss_bid ?? 0.70);
+    const slAskDefault = Number(this.cfg?.paper?.stop_loss_ask ?? 0);
+    const slThresholdEsports = Number(this.cfg?.paper?.stop_loss_bid_esports || slThresholdDefault);
+    const slAskEsports = Number(this.cfg?.paper?.stop_loss_ask_esports || slAskDefault);
+    const slThresholdDota2 = Number(this.cfg?.paper?.stop_loss_bid_dota2 || slThresholdEsports);
+    const slAskDota2 = Number(this.cfg?.paper?.stop_loss_ask_dota2 || slAskEsports);
+    const slThresholdCs2 = Number(this.cfg?.paper?.stop_loss_bid_cs2 || slThresholdEsports);
+    const slAskCs2 = Number(this.cfg?.paper?.stop_loss_ask_cs2 || slAskEsports);
+    const slThresholdLol = Number(this.cfg?.paper?.stop_loss_bid_lol || slThresholdEsports);
+    const slAskLol = Number(this.cfg?.paper?.stop_loss_ask_lol || slAskEsports);
+    const slThresholdVal = Number(this.cfg?.paper?.stop_loss_bid_val || slThresholdEsports);
+    const slAskVal = Number(this.cfg?.paper?.stop_loss_ask_val || slAskEsports);
+    const slThresholdNba = Number(this.cfg?.paper?.stop_loss_bid_nba || slThresholdDefault);
+    const slAskNba = Number(this.cfg?.paper?.stop_loss_ask_nba || slAskDefault);
+    const slThresholdCbb = Number(this.cfg?.paper?.stop_loss_bid_cbb || slThresholdDefault);
+    const slAskCbb = Number(this.cfg?.paper?.stop_loss_ask_cbb || slAskDefault);
+    const slThresholdCwbb = Number(this.cfg?.paper?.stop_loss_bid_cwbb || slThresholdDefault);
+    const slAskCwbb = Number(this.cfg?.paper?.stop_loss_ask_cwbb || slAskDefault);
     const resolveThreshold = 0.997; // bid > this = market resolved
 
     const openTrades = Object.entries(this.execState.trades)
@@ -678,6 +700,28 @@ export class TradeBridge {
       const ask = Number(price.yes_best_ask ?? 0);
       const entryPrice = Number(trade.entryPrice || trade.avgFillPrice);
       const shares = Number(trade.filledShares || 0);
+
+      // --- PRICE TICK LOGGING (throttled per position) ---
+      const now = Date.now();
+      const lastTick = this._priceTickLastTs?.get(trade.signal_id) || 0;
+      if (now - lastTick >= (this._priceTickIntervalMs || 30_000)) {
+        this._priceTickLastTs?.set(trade.signal_id, now);
+        const unrealizedPnl = shares * (bid - entryPrice);
+        try {
+          appendJsonl("state/journal/price_ticks.jsonl", {
+            type: "price_tick",
+            ts: now,
+            signal_id: trade.signal_id,
+            slug: trade.slug,
+            bid,
+            ask: ask || null,
+            spread: ask > 0 ? +(ask - bid).toFixed(4) : null,
+            entry_price: entryPrice,
+            shares,
+            unrealized_pnl: +unrealizedPnl.toFixed(4),
+          });
+        } catch { /* non-critical */ }
+      }
 
       // --- RESOLUTION: bid > 0.997 OR (ask >= 0.999 AND bid > 0.997) ---
       // Both paths require bid > 0.997 to avoid selling at suboptimal prices.
@@ -699,13 +743,29 @@ export class TradeBridge {
           pnl_usd: pnl,
           roi: (trade.spentUsd > 0) ? pnl / trade.spentUsd : 0,
         });
+        this._priceTickLastTs?.delete(trade.signal_id);
         continue;
       }
 
-      // --- STOP LOSS: bid <= threshold ---
-      if (slThreshold > 0 && slThreshold < 1 && bid <= slThreshold) {
+      // --- STOP LOSS: bid <= threshold AND ask <= ask_threshold ---
+      // Requires BOTH bid and ask to be low to avoid false triggers from wide spreads.
+      // Per-league thresholds: esports slugs (cs2-, dota2-, lol-) use separate config.
+      const slugPrefix = String(trade.slug || "").split("-")[0];
+      const isDota2 = slugPrefix === "dota2";
+      const isCs2 = slugPrefix === "cs2";
+      const isLol = slugPrefix === "lol";
+      const isVal = slugPrefix === "val";
+      const isNba = slugPrefix === "nba";
+      const isCbb = slugPrefix === "cbb";
+      const isCwbb = slugPrefix === "cwbb";
+      const isEsports = (slugPrefix === "cs2" || slugPrefix === "dota2" || slugPrefix === "lol" || slugPrefix === "val");
+      const slThreshold = isDota2 ? slThresholdDota2 : isCs2 ? slThresholdCs2 : isLol ? slThresholdLol : isVal ? slThresholdVal : isNba ? slThresholdNba : isCbb ? slThresholdCbb : isCwbb ? slThresholdCwbb : isEsports ? slThresholdEsports : slThresholdDefault;
+      const slAskThreshold = isDota2 ? slAskDota2 : isCs2 ? slAskCs2 : isLol ? slAskLol : isVal ? slAskVal : isNba ? slAskNba : isCbb ? slAskCbb : isCwbb ? slAskCwbb : isEsports ? slAskEsports : slAskDefault;
+      const bidTriggered = slThreshold > 0 && slThreshold < 1 && bid <= slThreshold;
+      const askTriggered = slAskThreshold > 0 ? (ask > 0 && ask <= slAskThreshold) : true; // no ask guard if not configured
+      if (bidTriggered && askTriggered) {
         const pnl = shares * (bid - entryPrice);
-        console.log(`[SL_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} <= SL=${slThreshold} | entry=${entryPrice.toFixed(3)} | est_pnl=$${pnl.toFixed(2)}`);
+        console.log(`[SL_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} <= SL=${slThreshold} | ask=${ask.toFixed(3)} <= ${slAskThreshold} | entry=${entryPrice.toFixed(3)} | est_pnl=$${pnl.toFixed(2)}`);
         signals.push({
           type: "signal_close",
           signal_id: trade.signal_id,
@@ -718,9 +778,75 @@ export class TradeBridge {
           pnl_usd: pnl,
           roi: (trade.spentUsd > 0) ? pnl / trade.spentUsd : 0,
         });
+        this._priceTickLastTs?.delete(trade.signal_id);
+        continue;
+      }
+
+      // --- CONTEXT SL: margin below threshold → sell ---
+      // Only for sports with ESPN context (CBB, CWBB, NBA).
+      // If our team's lead drops below min_margin_hold, sell immediately.
+      const contextSlSports = new Set(["cbb", "cwbb", "nba"]);
+      if (contextSlSports.has(slugPrefix)) {
+        const ctxData = contextBySlug.get(trade.slug);
+        const minMarginHold = Number(this.cfg?.context?.min_margin_hold ?? 3);
+        if (ctxData) {
+          const ctx = ctxData.context || {};
+          const ctxEntry = ctxData.context_entry || {};
+          // Compute margin_for_yes from live scores + yes_outcome_name
+          const marginForYes = TradeBridge._computeMarginForYes(ctx, ctxEntry);
+          if (marginForYes != null && Number.isFinite(marginForYes) && marginForYes < minMarginHold) {
+            const pnl = shares * (bid - entryPrice);
+            console.log(`[CONTEXT_SL] ${trade.slug} | margin=${marginForYes} < ${minMarginHold} | bid=${bid.toFixed(3)} | entry=${entryPrice.toFixed(3)} | est_pnl=$${pnl.toFixed(2)}`);
+            signals.push({
+              type: "signal_close",
+              signal_id: trade.signal_id,
+              slug: trade.slug,
+              ts_close: Date.now(),
+              close_reason: "context_sl",
+              context_margin: marginForYes,
+              context_min_margin_hold: minMarginHold,
+              sl_trigger_price: bid,
+              win: pnl >= 0,
+              pnl_usd: pnl,
+              roi: (trade.spentUsd > 0) ? pnl / trade.spentUsd : 0,
+            });
+            this._priceTickLastTs?.delete(trade.signal_id);
+          }
+        }
       }
     }
     return signals;
+  }
+
+  /**
+   * Compute margin_for_yes from live ESPN context + entry snapshot.
+   * Uses yes_outcome_name from context_entry to determine which team is ours,
+   * then computes (our_score - their_score) from live context.teams.
+   * Returns null if data is insufficient.
+   */
+  static _computeMarginForYes(ctx, ctxEntry) {
+    if (!ctx || !ctxEntry) return null;
+    const yesName = ctxEntry.yes_outcome_name;
+    if (!yesName) return null;
+
+    const teamA = ctx.teams?.a;
+    const teamB = ctx.teams?.b;
+    if (!teamA?.name || !teamB?.name || teamA.score == null || teamB.score == null) return null;
+
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const yesNorm = norm(yesName);
+    const aNorm = norm(teamA.name);
+    const bNorm = norm(teamB.name);
+    const aFullNorm = teamA.fullName ? norm(teamA.fullName) : null;
+    const bFullNorm = teamB.fullName ? norm(teamB.fullName) : null;
+
+    const match = (y, t) => y && t && (y === t || y.includes(t) || t.includes(y));
+    const yesIsA = match(yesNorm, aNorm) || match(yesNorm, aFullNorm);
+    const yesIsB = match(yesNorm, bNorm) || match(yesNorm, bFullNorm);
+
+    if (yesIsA && !yesIsB) return Number(teamA.score) - Number(teamB.score);
+    if (yesIsB && !yesIsA) return Number(teamB.score) - Number(teamA.score);
+    return null; // ambiguous
   }
 
   getStatus() {
