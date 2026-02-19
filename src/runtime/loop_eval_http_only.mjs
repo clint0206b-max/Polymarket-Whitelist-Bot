@@ -1,7 +1,7 @@
 import { getBook } from "../clob/book_http_client.mjs";
 import { parseAndNormalizeBook } from "../clob/book_parser.mjs";
 import { CLOBWebSocketClient } from "../clob/ws_client.mjs";
-import { is_base_signal_candidate, is_near_signal_margin } from "../strategy/stage1.mjs";
+import { is_base_signal_candidate, is_near_signal_margin, resolveEntryPriceLimits } from "../strategy/stage1.mjs";
 import { compute_depth_metrics, is_depth_sufficient } from "../strategy/stage2.mjs";
 import { createHttpQueue } from "./http_queue.mjs";
 import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWindow3, mergeScoreboardEventsByWindow } from "../context/espn_cbb_scoreboard.mjs";
@@ -13,6 +13,7 @@ import { loadDailyEvents, saveDailyEvents, recordMarketTick, purgeStaleDates } f
 import { appendJsonl } from "../core/journal.mjs";
 import { selectPriceUpdateUniverse, selectPipelineUniverse } from "./universe.mjs";
 import { OpportunityTracker } from "../metrics/opportunity_tracker.mjs";
+import { logMarketPrice } from "../journal/market_price_logger.mjs";
 
 function ensure(obj, k, v) { if (obj[k] === undefined) obj[k] = v; }
 
@@ -481,11 +482,12 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     return events.map(stripEspnEvent);
   }
 
-  async function getCbbEventsForDateKey(dateKey) {
+  async function getCbbEventsForDateKey(dateKey, { gender = "mens" } = {}) {
     if (!contextEnabled) return null;
     if (!dateKey) return null;
 
-    const maxDays = Number(cfg?.context?.cbb?.max_days_delta_fetch ?? 7);
+    const cfgKey = gender === "womens" ? "cwbb" : "cbb";
+    const maxDays = Number(cfg?.context?.[cfgKey]?.max_days_delta_fetch ?? cfg?.context?.cbb?.max_days_delta_fetch ?? 7);
     const delta = daysDeltaFromNowUtc(dateKey);
     if (delta != null && Math.abs(delta) > maxDays) {
       bumpBucket("health", "context_cbb_tag_skipped_date_too_far", 1);
@@ -493,7 +495,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     }
 
     state.runtime.context_cache = state.runtime.context_cache || {};
-    const node = state.runtime.context_cache.cbb_by_dateKey || (state.runtime.context_cache.cbb_by_dateKey = {});
+    const cacheKey = gender === "womens" ? "cwbb_by_dateKey" : "cbb_by_dateKey";
+    const node = state.runtime.context_cache[cacheKey] || (state.runtime.context_cache[cacheKey] = {});
 
     const everyMs = Number(cfg?.context?.cbb?.fetch_seconds || 15) * 1000;
     const cur = node[dateKey] || { ts: 0, events: null, date_key: dateKey, days_fetched: null, games_total: 0, games_unique: 0 };
@@ -506,7 +509,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       const days = computeDateWindow3(dateKey);
       bumpBucket("health", "context_cbb_fetch_days_3", 1);
 
-      const results = await Promise.all(days.map(dk => fetchEspnCbbScoreboardForDate(cfg, dk)));
+      const results = await Promise.all(days.map(dk => fetchEspnCbbScoreboardForDate(cfg, dk, { gender })));
 
       for (const r of results) {
         if (r.ok) {
@@ -666,7 +669,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     return true;
   };
 
-  for (const lg of ["esports", "nba", "cbb"]) {
+  for (const lg of ["esports", "nba", "cbb", "cwbb"]) {
     const quota = Number(minByLeague?.[lg] ?? 0);
     if (!(quota > 0)) continue;
     let taken = 0;
@@ -805,7 +808,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     // CBB
     for (const m of wl) {
-      if (m.league !== "cbb") continue;
+      if (m.league !== "cbb" && m.league !== "cwbb") continue;
       if (!(m.status === "watching" || m.status === "pending_signal")) continue;
 
       bumpBucket("health", "context_cbb_tag_attempt", 1);
@@ -817,13 +820,15 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         continue;
       }
 
-      const events = await getCbbEventsForDateKey(dateKey);
+      const isCwbb = m.league === "cwbb";
+      const events = await getCbbEventsForDateKey(dateKey, { gender: isCwbb ? "womens" : "mens" });
       if (!events) {
         bumpBucket("health", "context_cbb_tag_skipped_no_cache", 1);
         continue;
       }
 
       const ctx = deriveCbbContextForMarket(m, events, cfg, tNow);
+      if (ctx.ok && isCwbb && ctx.context) ctx.context.sport = "cwbb";
       if (ctx.ok) {
         const fetchTs = (() => {
           const node = state.runtime?.context_cache?.cbb_by_dateKey;
@@ -935,7 +940,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     // --- Win probability + context entry gate (tag-only dry run) ---
     for (const m of wl) {
-      if (m.league !== "cbb" && m.league !== "nba") continue;
+      if (m.league !== "cbb" && m.league !== "cwbb" && m.league !== "nba") continue;
       if (!(m.status === "watching" || m.status === "pending_signal")) continue;
       if (!m.context || m.context.provider !== "espn") continue;
       if (m.context.state !== "in") continue;
@@ -990,14 +995,18 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         }
       }
 
-      // Check entry gate
+      // Check entry gate — per-sport overrides for max_minutes_left and min_win_prob
+      const sportMaxMin = cfg?.context?.entry_rules?.[`max_minutes_left_${sport}`];
+      const defaultMaxMin = cfg?.context?.entry_rules?.max_minutes_left ?? 5;
+      const sportMinWP = cfg?.context?.entry_rules?.[`min_win_prob_${sport}`];
+      const defaultMinWP = cfg?.context?.entry_rules?.min_win_prob ?? 0.90;
       const gate = checkContextEntryGate({
         sport,
         period: m.context.period,
         minutesLeft: m.context.minutes_left,
         marginForYes,
-        minWinProb: Number(cfg?.context?.entry_rules?.min_win_prob ?? 0.90),
-        maxMinutesLeft: Number(cfg?.context?.entry_rules?.max_minutes_left ?? 5),
+        minWinProb: Number(sportMinWP ?? defaultMinWP),
+        maxMinutesLeft: Number(sportMaxMin ?? defaultMaxMin),
         minMargin: Number(cfg?.context?.entry_rules?.min_margin ?? 1),
       });
 
@@ -1224,7 +1233,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   // Moved before purge blocks so all purge logic can use it
   let openPositionSlugs;
   try {
-    const { loadOpenIndex } = await import("../core/journal.mjs");
+    const { loadOpenIndex, readSignalsOpenSlugs } = await import("../core/journal.mjs");
     const idx = loadOpenIndex();
     const fromIndex = Object.values(idx.open || {}).map(p => p.slug);
     let fromExec = [];
@@ -1235,7 +1244,11 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         .filter(t => String(t.side).toUpperCase() === "BUY" && t.status === "filled" && !t.closed)
         .map(t => t.slug);
     } catch {}
-    openPositionSlugs = new Set([...fromIndex, ...fromExec]);
+    // Third source: signals.jsonl — any signal_open without signal_close
+    // Most reliable: signal_open is written BEFORE buy execution
+    let fromSignals = [];
+    try { fromSignals = readSignalsOpenSlugs(); } catch {}
+    openPositionSlugs = new Set([...fromIndex, ...fromExec, ...fromSignals]);
   } catch {
     openPositionSlugs = new Set();
   }
@@ -1396,6 +1409,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       bumpBucket("health", `pending_confirm_fail:${reason}`, 1);
       m.pending_confirm_fail_last_reason = reason;
       m.pending_confirm_fail_last_ts = tNow;
+      // Increment check counter so check-based timeout fires next tick
+      m.pending_checks = (Number(m.pending_checks) || 0) + 1;
     };
 
     // === PURGE GATES ===
@@ -1412,6 +1427,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       const bookStaleSec = gates.last_book_update_ts ? (tNow - gates.last_book_update_ts) / 1000 : null;
       const quoteStaleSec = gates.first_incomplete_quote_ts ? (tNow - gates.first_incomplete_quote_ts) / 1000 : null;
       const tradeStaleSec = gates.first_bad_tradeability_ts ? (tNow - gates.first_bad_tradeability_ts) / 1000 : null;
+      const wideSpreadSec = gates.first_wide_spread_ts ? (tNow - gates.first_wide_spread_ts) / 1000 : null;
+      const wideSpreadMin = Number(cfg?.purge?.wide_spread_minutes || 2);
 
       let purgeReason = null;
       let purgeDetail = {};
@@ -1431,6 +1448,11 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         purgeReason = "purge_tradeability_degraded";
         purgeDetail = { stale_minutes: (tradeStaleSec / 60).toFixed(1) };
       }
+      // Rule D: Wide spread (broken book, spread > 0.80 for N minutes)
+      else if (wideSpreadSec != null && wideSpreadSec > wideSpreadMin * 60) {
+        purgeReason = "purge_wide_spread";
+        purgeDetail = { stale_minutes: (wideSpreadSec / 60).toFixed(1) };
+      }
 
       if (purgeReason) {
         // Live event protection: don't expire if Gamma says it's still live
@@ -1442,6 +1464,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
             if (purgeReason === "purge_book_stale") m.purge_gates.last_book_update_ts = tNow;
             if (purgeReason === "purge_quote_incomplete") m.purge_gates.first_incomplete_quote_ts = null;
             if (purgeReason === "purge_tradeability_degraded") m.purge_gates.first_bad_tradeability_ts = null;
+            if (purgeReason === "purge_wide_spread") m.purge_gates.first_wide_spread_ts = null;
           }
           // Don't expire — continue evaluation
         } else {
@@ -1478,7 +1501,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     // Pending timeout MUST be evaluated independently (before Stage 1/2)
     if (m.status === "pending_signal") {
       const ps = Number(m.pending_since_ts || 0);
-      const dl = Number(m.pending_deadline_ts || 0);
+      const pendingChecks = Number(m.pending_checks || 0);
 
       if (!ps || !Number.isFinite(ps)) {
         // conservative auto-fix: invalid pending timestamp
@@ -1487,13 +1510,16 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         setReject(m, "pending_integrity_fix");
         m.status = "watching";
         delete m.pending_since_ts;
-        delete m.pending_deadline_ts;
+        delete m.pending_checks;
         changed = true;
         continue;
       }
 
-      const deadline = (dl && Number.isFinite(dl)) ? dl : (ps + pendingWinMs);
-      if (deadline <= tNow) {
+      // Check-based timeout: if we've already had 1 confirmation check and
+      // conditions failed (didn't promote to signaled), timeout.
+      // pendingChecks is incremented at the end of this block when conditions fail.
+      const maxPendingChecks = Number(cfg?.polling?.pending_max_checks ?? 1);
+      if (pendingChecks >= maxPendingChecks) {
         // timeout: back to watching
         health.pending_timeout_count = (health.pending_timeout_count || 0) + 1;
         bumpBucket("health", "pending_timeout", 1);
@@ -1509,14 +1535,16 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           slug: String(m.slug || ""),
           conditionId: String(m.conditionId || ""),
           pending_since_ts: Number(ps),
-          pending_deadline_ts: Number(deadline),
-          remaining_ms_at_timeout: Math.max(0, Number(deadline) - tNow),
+          pending_checks: pendingChecks,
           last_reason_before_timeout: String(m.last_reject?.reason || "-")
         };
 
         // Log timeout for future outcome analysis (was this a good or bad filter?)
         try {
           const { appendJsonl } = await import("../core/journal.mjs");
+          // YES outcome name: outcomes[0] is always the YES token side
+          const yesOutcome = Array.isArray(m.outcomes) && m.outcomes.length > 0
+            ? String(m.outcomes[0]) : (m.context_entry?.yes_outcome_name || null);
           appendJsonl("state/journal/signals.jsonl", {
             type: "signal_timeout",
             runner_id: process.env.SHADOW_ID || "prod",
@@ -1530,6 +1558,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
             ask_at_timeout: Number(lp_timeout.yes_best_ask || 0),
             spread_at_timeout: Number(lp_timeout.spread || 0),
             pending_duration_ms: tNow - Number(ps),
+            yes_outcome_name: yesOutcome,
             timeout_reason: String(m.pending_confirm_fail_last_reason || m.last_reject?.reason || "unknown"),
             timeout_category: (() => {
               const r = String(m.pending_confirm_fail_last_reason || m.last_reject?.reason || "unknown");
@@ -1541,7 +1570,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         setReject(m, "pending_timeout");
         m.status = "watching";
         delete m.pending_since_ts;
-        delete m.pending_deadline_ts;
+        delete m.pending_checks;
         changed = true;
         continue;
       }
@@ -1563,6 +1592,9 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       if (startedPending) health.pending_confirm_integrity_missing_yes_token_count = (health.pending_confirm_integrity_missing_yes_token_count || 0) + 1;
       continue;
     }
+
+    // Clear stale gamma_metadata_missing reject now that token is present
+    if (m.last_reject?.reason === "gamma_metadata_missing") m.last_reject = null;
 
     // Dynamic subscription: subscribe to YES/NO tokens via WebSocket
     const noToken = m.tokens.no_token_id;
@@ -1772,6 +1804,9 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     const quote = { probAsk: bestAsk, probBid: bestBid, spread: bestAsk - bestBid };
 
+    // Log price for backtesting (smart: delta-based + heartbeat, ~400KB/day max)
+    logMarketPrice(m.slug, bestBid, bestAsk, m.league);
+
     // Initialize purge_gates if needed
     if (!m.purge_gates) {
       m.purge_gates = {
@@ -1786,6 +1821,14 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     // Reset incomplete quote gate (quote is complete now)
     m.purge_gates.first_incomplete_quote_ts = null;
+
+    // Wide spread gate: track markets with spread > 0.80 (broken books)
+    const WIDE_SPREAD_THRESHOLD = 0.80;
+    if (quote.spread > WIDE_SPREAD_THRESHOLD) {
+      if (!m.purge_gates.first_wide_spread_ts) m.purge_gates.first_wide_spread_ts = tNow;
+    } else {
+      m.purge_gates.first_wide_spread_ts = null;
+    }
 
     // persist last_price snapshot
     {
@@ -1864,7 +1907,10 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     // Markets with status=signaled stop here: price update done, skip stage1/stage2/state_machine
     // Spec requirement: "signaled behavior under fluctuations: update last_price/liquidity for visibility"
     if (!inPipeline) {
-      // Price update completed for signaled market, skip pipeline
+      // Price update completed, market not in pipeline this cycle (signaled or scheduling skip)
+      if (m.status === "watching" && !m.last_reject) {
+        setReject(m, "pipeline_skipped_this_cycle");
+      }
       continue;
     }
 
@@ -1878,7 +1924,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       const league = m.league;
 
       // Resolve effective gate mode: per-league override > global
-      const effectiveGateMode = (league === "nba" || league === "cbb")
+      const effectiveGateMode = (league === "nba" || league === "cbb" || league === "cwbb")
         ? String(cfg?.context?.entry_rules?.[`gate_mode_${league}`] ?? globalGateMode)
         : globalGateMode;
 
@@ -1900,7 +1946,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           continue;
         }
         bumpBucket("health", "soccer_gate_passed", 1);
-      } else if ((league === "nba" || league === "cbb") && effectiveGateMode === "blocking") {
+      } else if ((league === "nba" || league === "cbb" || league === "cwbb") && effectiveGateMode === "blocking") {
         // NBA/CBB: bloqueante only in blocking mode (per-league or global)
         const ctxAllowed = m.context_entry?.entry_allowed === true;
         if (!ctxAllowed) {
@@ -2004,7 +2050,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     const depthPass = depth.pass;
 
     // Evaluate Stage 1 (spread) for tradeability gate tracking
-    const base = is_base_signal_candidate(quote, cfg);
+    const slugPrefix = String(m.slug || "").split("-")[0];
+    const base = is_base_signal_candidate(quote, cfg, slugPrefix);
     const spreadPass = base.pass;
 
     // Track or reset tradeability gate (double condition: !spreadPass && !depthPass)
@@ -2117,7 +2164,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       m.status = "pending_signal";
       // IMPORTANT: set timing at the moment of transition (real time)
       m.pending_since_ts = tNow;
-      m.pending_deadline_ts = tNow + pendingWinMs;
+      m.pending_checks = 0;
       m.pending_entry_bid = Number(quote?.probBid || 0); // Save for timeout analysis
 
       // classify pending_enter by near_by (mutually exclusive)
@@ -2135,7 +2182,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       }
 
       if (!m.pending_since_ts) bumpBucket("health", "pending_enter_with_null_since", 1);
-      if (Number(m.pending_deadline_ts) <= tNow) bumpBucket("health", "pending_enter_with_deadline_in_past", 1);
+      // (check-based pending: no deadline to validate)
       enteredPendingThisTick.add(String(m.slug || ""));
 
       // Persist last_pending_enter snapshot (runtime)
@@ -2148,7 +2195,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         spread: Number(quote.spread),
         entryDepth: Number(metrics.entry_depth_usd_ask || 0),
         exitDepth: Number(metrics.exit_depth_usd_bid || 0),
-        pending_deadline_ts: Number(m.pending_deadline_ts)
+        pending_checks: Number(m.pending_checks || 0)
       };
 
       setReject(m, "pending_entered");
@@ -2156,7 +2203,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       createdPendingThisTick = true;
 
       // Local console alert (only when it happens)
-      console.log(`[PENDING_ENTER] ts=${tNow} slug=${String(m.slug || "")} deadline_in_ms=${Math.max(0, Number(m.pending_deadline_ts) - tNow)}`);
+      console.log(`[PENDING_ENTER] ts=${tNow} slug=${String(m.slug || "")} max_checks=${Number(cfg?.polling?.pending_max_checks ?? 1)}`);
 
       // Scheduling bugfix: avoid long ticks that cause immediate pending timeouts.
       // If this tick started without any pending, stop evaluating more watching markets so the next tick can confirm quickly.
@@ -2169,6 +2216,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       oppTracker.onTraded(m, tNow);
       m.status = "signaled";
       delete m.pending_since_ts;
+      delete m.pending_checks;
       m.signals = m.signals || { signal_count: 0, last_signal_ts: null, reason: null };
       m.signals.signal_count = Number(m.signals.signal_count || 0) + 1;
       m.signals.last_signal_ts = tNow;
@@ -2261,7 +2309,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       // context snapshot at signal time (freshness-aware)
       const maxCtxAge = Number(cfg?.context?.cbb?.max_ctx_age_ms || 120000);
       let ctxSnapshot = null;
-      if (m.context && m.context.provider === "espn" && (m.context.sport === "cbb" || m.context.sport === "nba")) {
+      if (m.context && m.context.provider === "espn" && (m.context?.sport === "cbb" || m.context?.sport === "cwbb" || m.context.sport === "nba")) {
         const fetchTs = Number(m.context.fetch_ts || 0) || null;
         const ageMs = fetchTs ? Math.max(0, tNow - fetchTs) : null;
         const fresh = (ageMs != null && ageMs <= maxCtxAge);
@@ -2323,7 +2371,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         entryDepth: Number(metrics.entry_depth_usd_ask || 0),
         exitDepth: Number(metrics.exit_depth_usd_bid || 0),
         near_by,
-        base_range_pass: (Number(quote.probAsk) + Number(cfg?.filters?.EPS || 1e-6)) >= Number(cfg?.filters?.min_prob) && (Number(quote.probAsk) - Number(cfg?.filters?.EPS || 1e-6)) <= Number(cfg?.filters?.max_entry_price),
+        base_range_pass: (() => { const { minProb, maxEntry } = resolveEntryPriceLimits(cfg?.filters, slugPrefix); const _eps = Number(cfg?.filters?.EPS || 1e-6); return (Number(quote.probAsk) + _eps) >= minProb && (Number(quote.probAsk) - _eps) <= maxEntry; })(),
         ctx: ctxSnapshot,
         esports: esportsSnapshot,
         would_gate_apply,
@@ -2442,7 +2490,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   }
 
   // --- CBB + NBA opportunity classification (same pattern as esports) ---
-  for (const league of ["cbb", "nba"]) {
+  for (const league of ["cbb", "cwbb", "nba"]) {
     const tNow = Date.now();
     const lgAll = Object.values(state.watchlist || {}).filter(m =>
       m && m.league === league && (m.status === "watching" || m.status === "pending_signal" || m.status === "signaled")
@@ -2531,7 +2579,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       const league = m?.league;
       const eventId = m?.event_id || m?.event_slug;
       if (!league || !eventId) continue;
-      if (!["cbb", "nba", "esports"].includes(league)) continue;
+      if (!["cbb", "cwbb", "nba", "esports"].includes(league)) continue;
 
       // Determine what this market achieved in its current state
       const lp = m.last_price || {};
