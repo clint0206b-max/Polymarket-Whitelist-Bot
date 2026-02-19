@@ -335,10 +335,14 @@ export async function redeemPositions(signer, conditionId) {
   const indexSets = [1, 2];
 
   try {
-    // Polygon requires minimum ~25 gwei gas price; set 30 gwei for safety
+    // Fetch current gas price from network and add 20% buffer
+    const feeData = await connected.provider.getFeeData();
+    const baseFee = feeData.lastBaseFeePerGas || feeData.gasPrice || ethers.utils.parseUnits("500", "gwei");
+    const maxFee = baseFee.mul(150).div(100); // 1.5x base fee
+    const maxPriority = ethers.utils.parseUnits("30", "gwei");
     const gasOpts = {
-      maxFeePerGas: ethers.utils.parseUnits("50", "gwei"),
-      maxPriorityFeePerGas: ethers.utils.parseUnits("30", "gwei"),
+      maxFeePerGas: maxFee.gt(maxPriority) ? maxFee : maxPriority,
+      maxPriorityFeePerGas: maxPriority,
     };
     const tx = await ctf.redeemPositions(USDC_POLYGON, parentCollectionId, conditionId, indexSets, gasOpts);
     const receipt = await tx.wait(1);
