@@ -335,7 +335,12 @@ export async function redeemPositions(signer, conditionId) {
   const indexSets = [1, 2];
 
   try {
-    const tx = await ctf.redeemPositions(USDC_POLYGON, parentCollectionId, conditionId, indexSets);
+    // Polygon requires minimum ~25 gwei gas price; set 30 gwei for safety
+    const gasOpts = {
+      maxFeePerGas: ethers.utils.parseUnits("50", "gwei"),
+      maxPriorityFeePerGas: ethers.utils.parseUnits("30", "gwei"),
+    };
+    const tx = await ctf.redeemPositions(USDC_POLYGON, parentCollectionId, conditionId, indexSets, gasOpts);
     const receipt = await tx.wait(1);
     return {
       ok: true,
