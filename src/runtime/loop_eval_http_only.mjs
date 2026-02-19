@@ -1498,13 +1498,13 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         bumpBucket("health", `esports_series_guard_reason:${rs}`, 1);
       }
 
-      // --- Bo2 BLACKLIST: reject ALL markets (series + maps) from Bo2 events ---
-      // Bo2 series can draw, causing correlated double-loss on game2 + series.
+      // --- Bo2 BLACKLIST: reject match_series markets from Bo2 events ---
+      // Bo2 series can draw — only the series market is problematic, individual games are fine.
       const fmt = String(m.esports_ctx.derived?.series_format || "unknown");
-      if (fmt === "bo2" && m.status === "watching") {
+      if (fmt === "bo2" && String(m.market_kind || "") === "match_series" && m.status === "watching") {
         bumpBucket("reject", "bo2_blacklisted", 1);
         bumpBucket("health", "bo2_blacklisted", 1);
-        continue; // skip entire pipeline evaluation for this market
+        continue;
       }
     }
 
