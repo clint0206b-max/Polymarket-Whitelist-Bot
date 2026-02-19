@@ -781,12 +781,15 @@ export class TradeBridge {
       for (const [tradeId, trade] of openTrades) {
         const hasPosition = positions.some(p => p.asset === trade.tokenId && Number(p.size) > 0.01);
         if (!hasPosition) {
-          console.warn(`[RECONCILE] trade ${tradeId} marked filled but no position found — marking orphan`);
-          trade.status = "orphan_closed";
-          trade.closed = true;
+          console.warn(`[RECONCILE] trade ${tradeId} marked filled but no position found — marking orphan_pending`);
+          trade.status = "orphan_pending";
           trade.orphan_detected_ts = now;
+          trade.orphan_attempts = 0;
         }
       }
+
+      // Reconcile orphan_pending: try to find real sell in CLOB trade history
+      await this._reconcileOrphans(now);
 
       this.execState.last_reconcile_ts = now;
       this.execState.last_balance = effectiveBalance;
@@ -795,6 +798,74 @@ export class TradeBridge {
       
     } catch (e) {
       console.error(`[RECONCILE] error: ${e.message}`);
+    }
+  }
+
+  /**
+   * Reconcile orphan_pending trades by looking up real sells in CLOB trade history.
+   * If a matching sell is found → close with real data. 
+   * After 24h without match → fall back to orphan_closed.
+   */
+  async _reconcileOrphans(now) {
+    const orphans = Object.entries(this.execState.trades)
+      .filter(([_, t]) => t.status === "orphan_pending");
+    if (orphans.length === 0) return;
+
+    let allTrades = null;
+    try {
+      allTrades = await this.client.getTrades();
+    } catch (e) {
+      console.error(`[ORPHAN_RECONCILE] getTrades failed: ${e.message}`);
+      return;
+    }
+    if (!Array.isArray(allTrades)) return;
+
+    const sells = allTrades.filter(t => t.side === "SELL" || t.side === "sell");
+    let resolved = 0, expired = 0;
+
+    for (const [tradeId, trade] of orphans) {
+      const matchingSells = sells.filter(s => s.asset_id === trade.tokenId);
+      
+      if (matchingSells.length > 0) {
+        // Find best match: most recent sell for this token
+        const bestSell = matchingSells.sort((a, b) => Number(b.match_time || 0) - Number(a.match_time || 0))[0];
+        const sellPrice = Number(bestSell.price) || 0;
+        const sellSize = Number(bestSell.size) || 0;
+        const sellTime = Number(bestSell.match_time) * 1000 || now;
+        const entryPrice = trade.avgFillPrice || trade.entryPrice || 0;
+        const shares = trade.shares || sellSize;
+        const pnl = Number(((sellPrice - entryPrice) * shares).toFixed(4));
+
+        trade.status = "closed";
+        trade.closed = true;
+        trade.close_reason = "manual_sell";
+        trade.sellPrice = sellPrice;
+        trade.sellSize = sellSize;
+        trade.sellTimestamp = sellTime;
+        trade.pnl = pnl;
+        trade.orphan_resolved_ts = now;
+        trade.clob_sell_id = bestSell.id;
+        resolved++;
+        
+        const slug = tradeId.split("|")[1] || tradeId;
+        console.log(`[ORPHAN_RECONCILE] ${slug} → sell@${sellPrice} size=${sellSize} pnl=$${pnl.toFixed(2)}`);
+      } else {
+        trade.orphan_attempts = (trade.orphan_attempts || 0) + 1;
+        const ageMs = now - (trade.orphan_detected_ts || now);
+        if (ageMs > 24 * 60 * 60 * 1000) {
+          trade.status = "orphan_closed";
+          trade.closed = true;
+          trade.orphan_resolved_ts = now;
+          trade.close_reason = "orphan_timeout";
+          expired++;
+          const slug = tradeId.split("|")[1] || tradeId;
+          console.warn(`[ORPHAN_RECONCILE] ${slug} → no sell found after 24h, marking orphan_closed`);
+        }
+      }
+    }
+
+    if (resolved > 0 || expired > 0) {
+      console.log(`[ORPHAN_RECONCILE] resolved=${resolved} expired=${expired} remaining=${orphans.length - resolved - expired}`);
     }
   }
 
