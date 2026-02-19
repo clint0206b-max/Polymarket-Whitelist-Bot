@@ -1396,6 +1396,40 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   const priceUpdateUniverse = selectPriceUpdateUniverse(state, cfg);
   const pipelineUniverse = new Set(selectPipelineUniverse(state, cfg).map(m => m.conditionId || m.slug));
 
+  // --- Prefetch: fire HTTP requests for WS-stale markets (parallel, non-blocking) ---
+  const httpPrefetch = new Map(); // token → Promise<{ok, rawBook, ...}>
+  const _wsMaxStaleSec = Number(cfg?.ws?.max_stale_seconds ?? 10);
+  const _wsStaleMs = _wsMaxStaleSec * 1000;
+
+  for (const m of priceUpdateUniverse) {
+    const yesToken = m.tokens?.yes_token_id;
+    if (!yesToken) continue;
+
+    const wsYes = wsClient.getPrice(yesToken);
+    if (wsYes && ((Date.now() - wsYes.lastUpdate) < _wsStaleMs)) continue;
+
+    if (!httpPrefetch.has(yesToken)) {
+      httpPrefetch.set(yesToken, queue.enqueue(() => getBook(yesToken, cfg), { reason: "price" }).catch(e => ({ ok: false, error: String(e) })));
+      bumpBucket("health", "prefetch_fired", 1);
+    }
+    const noToken = m.tokens?.no_token_id;
+    if (noToken && !httpPrefetch.has(noToken)) {
+      httpPrefetch.set(noToken, queue.enqueue(() => getBook(noToken, cfg), { reason: "price" }).catch(e => ({ ok: false, error: String(e) })));
+      bumpBucket("health", "prefetch_fired", 1);
+    }
+  }
+
+  // Helper: consume prefetch if available, otherwise fresh HTTP
+  function getBookOrPrefetch(token, reason) {
+    const prefetched = httpPrefetch.get(token);
+    if (prefetched) {
+      httpPrefetch.delete(token);
+      bumpBucket("health", "prefetch_consumed", 1);
+      return prefetched;
+    }
+    return queue.enqueue(() => getBook(token, cfg), { reason });
+  }
+
   for (const m of priceUpdateUniverse) {
     const tNow = Date.now();
     
@@ -1660,8 +1694,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     let respNo = { ok: false };
     
     if (priceSource === "http_fallback") {
-      respYes = await queue.enqueue(() => getBook(yesToken, cfg), { reason: "price" });
-      respNo = noToken ? await queue.enqueue(() => getBook(noToken, cfg), { reason: "price" }) : { ok: false };
+      respYes = await getBookOrPrefetch(yesToken, "price");
+      respNo = noToken ? await getBookOrPrefetch(noToken, "price") : { ok: false };
     }
     
     // Process HTTP fallback if used
