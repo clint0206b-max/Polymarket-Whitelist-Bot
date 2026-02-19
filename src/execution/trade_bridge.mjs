@@ -776,16 +776,50 @@ export class TradeBridge {
       
       // Check for orphaned trades (filled BUY but position gone from CLOB)
       // Only BUY trades can be orphaned — SELL trades are expected to remove the position.
+      // Grace period: require 3+ consecutive misses AND 5+ min since fill before marking
+      // orphan_pending. The CLOB positions API has indexing delay; freshly filled trades
+      // may not appear immediately. Without grace, restarts cause false positives.
+      const ORPHAN_MIN_MISSES = 3;
+      const ORPHAN_MIN_AGE_MS = 5 * 60 * 1000; // 5 min since fill
+
       const openTrades = Object.entries(this.execState.trades)
         .filter(([id, t]) => t.status === "filled" && !t.closed && String(t.side).toUpperCase() === "BUY");
       
+      // Build set of known position tokenIds for diagnostic logging
+      const positionAssets = new Set(positions.map(p => String(p.asset)));
+
       for (const [tradeId, trade] of openTrades) {
         const hasPosition = positions.some(p => p.asset === trade.tokenId && Number(p.size) > 0.01);
         if (!hasPosition) {
-          console.warn(`[RECONCILE] trade ${tradeId} marked filled but no position found — marking orphan_pending`);
+          // Guard: need ts_filled to make orphan decision.
+          // Without it we don't know when the fill happened — skip to avoid false positives.
+          if (!trade.ts_filled) {
+            console.warn(`[RECONCILE] ${tradeId} | no position found but ts_filled missing — skipping orphan check`);
+            continue;
+          }
+
+          const fillAge = now - trade.ts_filled;
+          const misses = (trade._reconcile_misses || 0) + 1;
+          trade._reconcile_misses = misses; // persisted in execution_state.json
+
+          // Diagnostic: log tokenId vs available assets on first miss (helps detect mapping bugs)
+          if (misses === 1) {
+            console.warn(`[RECONCILE] ${tradeId} | tokenId=${String(trade.tokenId).slice(0,12)}... not in ${positions.length} positions | fillAge=${(fillAge/1000).toFixed(0)}s`);
+          }
+
+          // Need both: enough consecutive misses AND enough time since fill
+          if (misses < ORPHAN_MIN_MISSES || fillAge < ORPHAN_MIN_AGE_MS) {
+            continue;
+          }
+
+          console.warn(`[RECONCILE] ${tradeId} | no position after ${misses} checks (${(fillAge/60000).toFixed(1)}min) — marking orphan_pending`);
           trade.status = "orphan_pending";
           trade.orphan_detected_ts = now;
           trade.orphan_attempts = 0;
+          delete trade._reconcile_misses; // clean up
+        } else {
+          // Position found — reset miss counter if present
+          if (trade._reconcile_misses) delete trade._reconcile_misses;
         }
       }
 
