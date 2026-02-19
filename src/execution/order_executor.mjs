@@ -10,7 +10,7 @@ import { ethers } from "ethers";
 import { readFileSync } from "node:fs";
 
 const CLOB_URL = "https://clob.polymarket.com";
-const POLYGON_RPC = "https://1rpc.io/matic";
+const POLYGON_RPC = "https://polygon.drpc.org";
 const SIGNATURE_TYPE = 2; // POLY_GNOSIS_SAFE
 const USDC_POLYGON = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 const USDC_ABI = ["function balanceOf(address) view returns (uint256)"];
