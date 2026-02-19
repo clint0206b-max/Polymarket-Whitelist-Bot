@@ -31,7 +31,8 @@ function todayFile() {
 
 function shouldLog(slug, bid, ask, now, hasPosition) {
   // Active positions: log every tick for full price history
-  if (hasPosition) return true;
+  // Skip if already resolved (bid >= 0.99) — no SL backtest value
+  if (hasPosition) return (bid == null || bid < 0.99);
 
   const prev = _lastLog.get(slug);
   if (!prev) return true;
