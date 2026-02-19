@@ -7,7 +7,8 @@ export class CLOBWebSocketClient {
   constructor(cfg = {}) {
     this.cfg = cfg;
     this.ws = null;
-    this.cache = new Map(); // tokenId → {bestBid, bestAsk, spread, lastUpdate}
+    this.cache = new Map(); // tokenId → {bestBid, bestAsk, spread, lastUpdate, lastSeenTs}
+    this.lastMessageTs = 0; // Global: any parsed message from the socket
     this.subscriptions = new Set(); // Set of tokenIds currently subscribed
     this.reconnectDelay = 1000; // Start with 1s
     this.maxReconnectDelay = 60000; // Max 60s
@@ -27,7 +28,8 @@ export class CLOBWebSocketClient {
       messages_unknown: 0,
       best_bid_ask_updates: 0,
       book_snapshots: 0,
-      reconnects: 0
+      reconnects: 0,
+      best_bid_ask_events: 0
     };
 
     this.url = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
@@ -155,7 +157,7 @@ export class CLOBWebSocketClient {
 
   sendInitialSubscribe(assetIds) {
     // Initial subscription message (sent once per connection)
-    const msg = { assets_ids: assetIds, type: "market" };
+    const msg = { assets_ids: assetIds, type: "market", custom_feature_enabled: true };
     try {
       const payload = JSON.stringify(msg);
       console.log(`[WS] Sending initial subscribe: ${payload.slice(0, 100)}...`);
@@ -169,7 +171,7 @@ export class CLOBWebSocketClient {
 
   sendDynamicSubscribe(assetIds) {
     // Dynamic subscription (for new assets after initial connect)
-    const msg = { assets_ids: assetIds, operation: "subscribe" };
+    const msg = { assets_ids: assetIds, operation: "subscribe", custom_feature_enabled: true };
     try {
       const payload = JSON.stringify(msg);
       console.log(`[WS] Sending dynamic subscribe: ${payload.slice(0, 100)}...`);
@@ -200,80 +202,106 @@ export class CLOBWebSocketClient {
     // else: connecting or initial subscribe not sent yet, subscriptions queued
   }
 
+  // Touch lastSeenTs for a token (any message mentioning it = "not blind")
+  _touchSeen(assetId) {
+    const now = Date.now();
+    const existing = this.cache.get(assetId);
+    if (existing) {
+      existing.lastSeenTs = now;
+    }
+  }
+
+  // Update cache with new price data (only when price actually changed)
+  _updatePrice(assetId, bestBid, bestAsk, timestamp) {
+    const now = Date.now();
+    this.cache.set(assetId, {
+      bestBid,
+      bestAsk,
+      spread: bestAsk - bestBid,
+      lastUpdate: now,
+      lastSeenTs: now,
+      timestamp
+    });
+  }
+
   handleMessage(msg) {
+    const now = Date.now();
+    this.lastMessageTs = now; // Global liveness
+
     const eventType = msg.event_type;
 
     if (eventType === "price_change" && Array.isArray(msg.price_changes)) {
-      // Primary message: price_change with array of updates
       for (const pc of msg.price_changes) {
         if (!pc.asset_id) continue;
+        const id = String(pc.asset_id);
+        this._touchSeen(id);
         const bestBid = pc.best_bid != null ? Number(pc.best_bid) : null;
         const bestAsk = pc.best_ask != null ? Number(pc.best_ask) : null;
         if (bestBid != null && bestAsk != null) {
-          this.cache.set(String(pc.asset_id), {
-            bestBid,
-            bestAsk,
-            spread: bestAsk - bestBid,
-            lastUpdate: Date.now(),
-            timestamp: parseInt(pc.timestamp || msg.timestamp || "0", 10)
-          });
+          this._updatePrice(id, bestBid, bestAsk,
+            parseInt(pc.timestamp || msg.timestamp || "0", 10));
           this.metrics.best_bid_ask_updates++;
         }
+      }
+    }
+    else if (eventType === "best_bid_ask") {
+      // Custom feature: best_bid_ask event (requires custom_feature_enabled)
+      // Updates price AND proves the token subscription is alive
+      const changes = msg.changes || msg.price_changes;
+      const items = Array.isArray(changes) && changes.length > 0 ? changes : [msg];
+      for (const item of items) {
+        if (!item.asset_id) continue;
+        const id = String(item.asset_id);
+        this._touchSeen(id);
+        const bestBid = item.best_bid != null ? Number(item.best_bid) : null;
+        const bestAsk = item.best_ask != null ? Number(item.best_ask) : null;
+        if (bestBid != null && bestAsk != null) {
+          this._updatePrice(id, bestBid, bestAsk,
+            parseInt(item.timestamp || msg.timestamp || "0", 10));
+        }
+        this.metrics.best_bid_ask_events++;
       }
     }
     else if (Array.isArray(msg)) {
       // Book snapshot (array format)
       for (const entry of msg) {
         if (!entry.asset_id) continue;
-        // These are simplified book entries with just best prices
+        const id = String(entry.asset_id);
         const bestBid = entry.best_bid != null ? Number(entry.best_bid) : null;
         const bestAsk = entry.best_ask != null ? Number(entry.best_ask) : null;
         if (bestBid != null && bestAsk != null) {
-          this.cache.set(String(entry.asset_id), {
-            bestBid,
-            bestAsk,
-            spread: bestAsk - bestBid,
-            lastUpdate: Date.now(),
-            timestamp: parseInt(entry.timestamp || "0", 10)
-          });
+          this._updatePrice(id, bestBid, bestAsk,
+            parseInt(entry.timestamp || "0", 10));
           this.metrics.book_snapshots++;
         }
       }
+      // Array messages don't update lastMessageTs (already done above)
     }
     else if (eventType === "book" && msg.asset_id) {
-      // Full book snapshot (object format)
+      const id = String(msg.asset_id);
+      this._touchSeen(id);
       this.metrics.book_snapshots++;
       const bids = msg.bids || [];
       const asks = msg.asks || [];
       const bestBid = bids.length > 0 ? Math.max(...bids.map(b => Number(b.price))) : null;
       const bestAsk = asks.length > 0 ? Math.min(...asks.map(a => Number(a.price))) : null;
       if (bestBid != null && bestAsk != null) {
-        this.cache.set(String(msg.asset_id), {
-          bestBid,
-          bestAsk,
-          spread: bestAsk - bestBid,
-          lastUpdate: Date.now(),
-          timestamp: parseInt(msg.timestamp || "0", 10)
-        });
+        this._updatePrice(id, bestBid, bestAsk,
+          parseInt(msg.timestamp || "0", 10));
       }
     }
     else if (eventType === "last_trade_price" && msg.asset_id) {
-      // Fallback: use last trade price if no cache entry
-      const existing = this.cache.get(String(msg.asset_id));
+      const id = String(msg.asset_id);
+      this._touchSeen(id);
+      const existing = this.cache.get(id);
       if (!existing) {
         const price = Number(msg.price);
         if (Number.isFinite(price)) {
-          this.cache.set(String(msg.asset_id), {
-            bestBid: price,
-            bestAsk: price,
-            spread: 0,
-            lastUpdate: Date.now(),
-            timestamp: parseInt(msg.timestamp || "0", 10)
-          });
+          this._updatePrice(id, price, price, parseInt(msg.timestamp || "0", 10));
         }
       }
     }
-    // Ignore: tick_size_change, etc.
+    // Ignore: tick_size_change, new_market, market_resolved, etc.
   }
 
   getPrice(tokenId) {
@@ -281,11 +309,28 @@ export class CLOBWebSocketClient {
   }
 
   getMetrics() {
+    // Compute per-token staleness stats
+    const now = Date.now();
+    let tokensWithData = 0;
+    let tokensSeen10s = 0;  // lastSeenTs within 10s (any message)
+    let tokensPrice10s = 0; // lastUpdate within 10s (price changed)
+    for (const entry of this.cache.values()) {
+      tokensWithData++;
+      if (entry.lastSeenTs && (now - entry.lastSeenTs) < 10000) tokensSeen10s++;
+      if (entry.lastUpdate && (now - entry.lastUpdate) < 10000) tokensPrice10s++;
+    }
+
     return {
       ...this.metrics,
       cache_size: this.cache.size,
       subscriptions_count: this.subscriptions.size,
-      is_connected: this.isConnected
+      is_connected: this.isConnected,
+      last_message_age_ms: this.lastMessageTs ? now - this.lastMessageTs : null,
+      token_coverage: {
+        total: tokensWithData,
+        seen_10s: tokensSeen10s,
+        price_fresh_10s: tokensPrice10s
+      }
     };
   }
 

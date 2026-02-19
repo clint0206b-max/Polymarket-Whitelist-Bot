@@ -189,4 +189,128 @@ describe("CLOBWebSocketClient", () => {
     client.scheduleReconnect();
     assert.strictEqual(client.metrics.reconnects, 0); // Should NOT increment
   });
+
+  // --- New: custom_feature_enabled, lastSeenTs, lastMessageTs, best_bid_ask ---
+
+  test("sendInitialSubscribe includes custom_feature_enabled", () => {
+    const client = new CLOBWebSocketClient();
+    let sentPayload = null;
+    client.ws = { send(data) { sentPayload = JSON.parse(data); } };
+    client.sendInitialSubscribe(["token-1"]);
+    assert.strictEqual(sentPayload.custom_feature_enabled, true);
+    assert.strictEqual(sentPayload.type, "market");
+  });
+
+  test("sendDynamicSubscribe includes custom_feature_enabled", () => {
+    const client = new CLOBWebSocketClient();
+    let sentPayload = null;
+    client.ws = { send(data) { sentPayload = JSON.parse(data); } };
+    client.sendDynamicSubscribe(["token-2"]);
+    assert.strictEqual(sentPayload.custom_feature_enabled, true);
+    assert.strictEqual(sentPayload.operation, "subscribe");
+  });
+
+  test("handleMessage updates lastMessageTs on any message", () => {
+    const client = new CLOBWebSocketClient();
+    assert.strictEqual(client.lastMessageTs, 0);
+    client.handleMessage({ event_type: "tick_size_change" });
+    assert.ok(client.lastMessageTs > 0);
+  });
+
+  test("handleMessage sets lastSeenTs on price_change", () => {
+    const client = new CLOBWebSocketClient();
+    client.handleMessage({
+      event_type: "price_change",
+      price_changes: [{ asset_id: "tok1", best_bid: "0.5", best_ask: "0.6" }]
+    });
+    const entry = client.getPrice("tok1");
+    assert.ok(entry.lastSeenTs > 0);
+    assert.ok(entry.lastUpdate > 0);
+  });
+
+  test("handleMessage sets lastSeenTs on book event without updating price if no bids/asks", () => {
+    const client = new CLOBWebSocketClient();
+    // Pre-populate
+    client.handleMessage({
+      event_type: "price_change",
+      price_changes: [{ asset_id: "tok1", best_bid: "0.5", best_ask: "0.6" }]
+    });
+    const firstUpdate = client.getPrice("tok1").lastUpdate;
+    // Book with empty bids/asks: touches seen but doesn't update price
+    client.handleMessage({ event_type: "book", asset_id: "tok1", bids: [], asks: [] });
+    const entry = client.getPrice("tok1");
+    assert.ok(entry.lastSeenTs >= firstUpdate);
+    // lastUpdate should NOT have changed (no valid price in empty book)
+    assert.strictEqual(entry.lastUpdate, firstUpdate);
+  });
+
+  test("handleMessage processes best_bid_ask event", () => {
+    const client = new CLOBWebSocketClient();
+    client.handleMessage({
+      event_type: "best_bid_ask",
+      changes: [{ asset_id: "tok1", best_bid: "0.45", best_ask: "0.55" }]
+    });
+    const entry = client.getPrice("tok1");
+    assert.ok(entry);
+    assert.strictEqual(entry.bestBid, 0.45);
+    assert.strictEqual(entry.bestAsk, 0.55);
+    assert.strictEqual(client.metrics.best_bid_ask_events, 1);
+  });
+
+  test("best_bid_ask with single object (no changes array)", () => {
+    const client = new CLOBWebSocketClient();
+    client.handleMessage({
+      event_type: "best_bid_ask",
+      asset_id: "tok2",
+      best_bid: "0.30",
+      best_ask: "0.70"
+    });
+    const entry = client.getPrice("tok2");
+    assert.ok(entry);
+    assert.strictEqual(entry.bestBid, 0.30);
+    assert.strictEqual(entry.bestAsk, 0.70);
+  });
+
+  test("last_trade_price touches lastSeenTs", () => {
+    const client = new CLOBWebSocketClient();
+    // Pre-populate so last_trade_price doesn't create entry (existing behavior)
+    client.handleMessage({
+      event_type: "price_change",
+      price_changes: [{ asset_id: "tok1", best_bid: "0.5", best_ask: "0.6" }]
+    });
+    const before = client.getPrice("tok1").lastSeenTs;
+    // last_trade_price on existing entry: should touch seen but not update price
+    client.handleMessage({ event_type: "last_trade_price", asset_id: "tok1", price: "0.55" });
+    assert.ok(client.getPrice("tok1").lastSeenTs >= before);
+  });
+
+  test("getMetrics includes token_coverage and last_message_age_ms", () => {
+    const client = new CLOBWebSocketClient();
+    client.handleMessage({
+      event_type: "price_change",
+      price_changes: [{ asset_id: "tok1", best_bid: "0.5", best_ask: "0.6" }]
+    });
+    const m = client.getMetrics();
+    assert.ok(m.token_coverage);
+    assert.strictEqual(m.token_coverage.total, 1);
+    assert.strictEqual(m.token_coverage.seen_10s, 1);
+    assert.strictEqual(m.token_coverage.price_fresh_10s, 1);
+    assert.ok(m.last_message_age_ms != null);
+    assert.ok(m.last_message_age_ms < 1000); // Just processed
+  });
+
+  test("getMetrics: stale token shows in coverage", () => {
+    const client = new CLOBWebSocketClient();
+    // Manually insert a stale entry
+    client.cache.set("old-tok", {
+      bestBid: 0.5, bestAsk: 0.6, spread: 0.1,
+      lastUpdate: Date.now() - 30000,
+      lastSeenTs: Date.now() - 30000,
+      timestamp: 0
+    });
+    const m = client.getMetrics();
+    assert.strictEqual(m.token_coverage.total, 1);
+    assert.strictEqual(m.token_coverage.seen_10s, 0);
+    assert.strictEqual(m.token_coverage.price_fresh_10s, 0);
+  });
 });
