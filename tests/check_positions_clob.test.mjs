@@ -400,10 +400,36 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals.length, 0);
     });
 
-    it("ignores trades with status !== filled", () => {
+    it("ignores trades with non-actionable status (queued, failed, etc)", () => {
       const buy = makeBuyTrade("queued", { signal_id: "sig15|queued", status: "queued" });
       const bridge = makeBridge({ trades: { "buy:sig15|queued": buy } });
       const signals = check(bridge, priceMap({ "queued": 0.999 }));
+
+      assert.equal(signals.length, 0);
+    });
+
+    it("evaluates orphan_pending trades with filledShares > 0 (defense in depth)", () => {
+      const buy = makeBuyTrade("orphan-slug", {
+        signal_id: "sig-orphan|orphan-slug",
+        status: "orphan_pending",
+        filledShares: 10,
+      });
+      const bridge = makeBridge({ trades: { "buy:sig-orphan|orphan-slug": buy } });
+      const signals = check(bridge, priceMap({ "orphan-slug": 0.999 }));
+
+      assert.equal(signals.length, 1);
+      assert.equal(signals[0].slug, "orphan-slug");
+      assert.equal(signals[0].close_reason, "resolved");
+    });
+
+    it("does NOT evaluate orphan_pending trades with filledShares = 0", () => {
+      const buy = makeBuyTrade("orphan-empty", {
+        signal_id: "sig-oe|orphan-empty",
+        status: "orphan_pending",
+        filledShares: 0,
+      });
+      const bridge = makeBridge({ trades: { "buy:sig-oe|orphan-empty": buy } });
+      const signals = check(bridge, priceMap({ "orphan-empty": 0.999 }));
 
       assert.equal(signals.length, 0);
     });

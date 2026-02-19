@@ -809,6 +809,9 @@ export class TradeBridge {
 
           // Need both: enough consecutive misses AND enough time since fill
           if (misses < ORPHAN_MIN_MISSES || fillAge < ORPHAN_MIN_AGE_MS) {
+            if (misses === 1) {
+              console.log(`[RECONCILE_GRACE] ${tradeId} | grace period active — miss=${misses}/${ORPHAN_MIN_MISSES} fillAge=${(fillAge/1000).toFixed(0)}s/${ORPHAN_MIN_AGE_MS/1000}s`);
+            }
             continue;
           }
 
@@ -980,8 +983,13 @@ export class TradeBridge {
     const slEmergencyBidCwbb = Number(this.cfg?.paper?.stop_loss_emergency_bid_cwbb || slEmergencyBidDefault);
     const resolveThreshold = 0.997; // bid > this = market resolved
 
+    // Defense in depth: include any trade with real shares, not just status=filled.
+    // If another code path changes status (e.g. orphan_pending), we still evaluate
+    // SL/TP as long as there's evidence of a real position (filledShares > 0).
     const openTrades = Object.entries(this.execState.trades)
-      .filter(([_, t]) => t.status === "filled" && !t.closed && String(t.side).toUpperCase() === "BUY");
+      .filter(([_, t]) => !t.closed && String(t.side).toUpperCase() === "BUY"
+        && Number(t.filledShares) > 0
+        && (t.status === "filled" || t.status === "orphan_pending"));
 
     const signals = [];
     for (const [tradeId, trade] of openTrades) {

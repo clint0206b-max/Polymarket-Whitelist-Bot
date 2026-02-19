@@ -1245,8 +1245,11 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     try {
       const { readJson } = await import("../core/state_store.js");
       const execState = readJson(resolvePath("state/execution_state.json"));
+      // Include orphan_pending with real shares — defense in depth against status changes
       fromExec = Object.values(execState?.trades || {})
-        .filter(t => String(t.side).toUpperCase() === "BUY" && t.status === "filled" && !t.closed)
+        .filter(t => String(t.side).toUpperCase() === "BUY" && !t.closed
+          && Number(t.filledShares) > 0
+          && (t.status === "filled" || t.status === "orphan_pending"))
         .map(t => t.slug);
     } catch {}
     // Third source: signals.jsonl — any signal_open without signal_close
