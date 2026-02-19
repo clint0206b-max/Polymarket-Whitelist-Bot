@@ -57,11 +57,6 @@ describe("LoL SL config values", () => {
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.paper.stop_loss_bid_lol, 0.32);
   });
-  it("stop_loss_ask_lol=0.37", async () => {
-    const { readFileSync } = await import("node:fs");
-    const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_ask_lol, 0.37);
-  });
   it("min_entry_price_lol=0.80", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));

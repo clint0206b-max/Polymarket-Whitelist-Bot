@@ -127,12 +127,6 @@ describe("CS2 SL config values in local.json", () => {
     assert.equal(c.paper.stop_loss_bid_cs2, 0.35);
   });
 
-  it("stop_loss_ask_cs2=0.40", async () => {
-    const { readFileSync } = await import("node:fs");
-    const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_ask_cs2, 0.40);
-  });
-
   it("min_entry_price_cs2=0.82", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));

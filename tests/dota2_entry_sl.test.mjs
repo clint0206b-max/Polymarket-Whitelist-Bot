@@ -135,12 +135,6 @@ describe("Dota2 SL config values", () => {
     assert.equal(cfg.paper.stop_loss_bid_dota2, 0.37);
   });
 
-  it("local.json has stop_loss_ask_dota2=0.42", async () => {
-    const { readFileSync } = await import("node:fs");
-    const cfg = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(cfg.paper.stop_loss_ask_dota2, 0.42);
-  });
-
   it("local.json has min_entry_price_dota2=0.80", async () => {
     const { readFileSync } = await import("node:fs");
     const cfg = JSON.parse(readFileSync("src/config/local.json", "utf8"));

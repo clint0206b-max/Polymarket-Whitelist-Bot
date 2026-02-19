@@ -68,10 +68,9 @@ describe("CBB config values in local.json", () => {
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.context.entry_rules.max_minutes_left_cbb, 10);
   });
-  it("CBB SL bid=0.45, ask=0.50", async () => {
+  it("CBB SL bid=0.45", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.paper.stop_loss_bid_cbb, 0.45);
-    assert.equal(c.paper.stop_loss_ask_cbb, 0.50);
   });
 });

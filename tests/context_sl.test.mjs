@@ -74,7 +74,7 @@ describe("Context SL integration", () => {
     const bridge = Object.create(TradeBridge.prototype);
     bridge.mode = "live";
     bridge.cfg = {
-      paper: { stop_loss_bid: 0.45, stop_loss_ask: 0.50 },
+      paper: { stop_loss_bid: 0.45, stop_loss_spread_max: 0.50, stop_loss_emergency_bid: 0.15 },
       context: { min_margin_hold: 3, ...cfg },
     };
     bridge.execState = { paused: false, trades };

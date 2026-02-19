@@ -47,11 +47,6 @@ describe("NBA config values", () => {
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.paper.stop_loss_bid_nba, 0.45);
   });
-  it("stop_loss_ask_nba=0.50", async () => {
-    const { readFileSync } = await import("node:fs");
-    const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_ask_nba, 0.50);
-  });
   it("min_entry_price_nba=0.83", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));

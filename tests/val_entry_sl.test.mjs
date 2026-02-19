@@ -51,10 +51,15 @@ describe("Val SL config values", () => {
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.paper.stop_loss_bid_val, 0.42);
   });
-  it("stop_loss_ask_val=0.47", async () => {
+  it("stop_loss_spread_max=0.50", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_ask_val, 0.47);
+    assert.equal(c.paper.stop_loss_spread_max, 0.50);
+  });
+  it("stop_loss_emergency_bid=0.15", async () => {
+    const { readFileSync } = await import("node:fs");
+    const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
+    assert.equal(c.paper.stop_loss_emergency_bid, 0.15);
   });
   it("min_entry_price_val=0.81", async () => {
     const { readFileSync } = await import("node:fs");

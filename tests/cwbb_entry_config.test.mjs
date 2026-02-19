@@ -68,10 +68,9 @@ describe("CWBB config values in local.json", () => {
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.context.entry_rules.max_minutes_left_cwbb, 10);
   });
-  it("CWBB SL bid=0.40, ask=0.45", async () => {
+  it("CWBB SL bid=0.40", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.paper.stop_loss_bid_cwbb, 0.40);
-    assert.equal(c.paper.stop_loss_ask_cwbb, 0.45);
   });
 });
