@@ -109,13 +109,19 @@ export function reconcileIndex(index, jsonlRelPath = "state/journal/signals.json
   } catch {}
 
   for (const id of Object.keys(index.open)) {
+    const buyKey = `buy:${id}`;
+    const buyTrade = execTrades[buyKey];
+
     if (closeMap[id]) {
       // Check execution_state: if buy exists and isn't closed, don't remove
-      const buyKey = `buy:${id}`;
-      const buyTrade = execTrades[buyKey];
       if (buyTrade && buyTrade.status === "filled" && !buyTrade.closed) {
         continue; // sell hasn't completed — keep in open
       }
+      delete index.open[id];
+      removed++;
+    } else if (buyTrade && buyTrade.closed) {
+      // Buy is closed in execution_state but no signal_close in JSONL
+      // (e.g. orphan reconciled via CLOB history). Clean up open_index.
       delete index.open[id];
       removed++;
     }
