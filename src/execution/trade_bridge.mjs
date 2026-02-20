@@ -550,7 +550,10 @@ export class TradeBridge {
             attempt: i + 1,
             ts_filled: Date.now(),
           };
-          if (allFilled) buyTrade.closed = true;
+          if (allFilled) {
+            buyTrade.closed = true;
+            this.execState.trades[sellTradeId].closed = true;
+          }
           saveExecutionState(this.execState);
 
           const pnl = totalReceivedSoFar - (buyTrade.spentUsd || 0);
@@ -632,7 +635,10 @@ export class TradeBridge {
               ts_filled: Date.now(),
               last_resort: true,
             };
-            if (allFilled) buyTrade.closed = true;
+            if (allFilled) {
+              buyTrade.closed = true;
+              this.execState.trades[sellTradeId].closed = true;
+            }
             saveExecutionState(this.execState);
 
             const pnl = totalReceivedSoFar - (buyTrade.spentUsd || 0);
@@ -741,6 +747,7 @@ export class TradeBridge {
           priceProvisional,
         };
         buyTrade.closed = true;
+        this.execState.trades[sellTradeId].closed = true;
         saveExecutionState(this.execState);
 
         const pnl = (receivedUsd || 0) - (buyTrade.spentUsd || 0);
