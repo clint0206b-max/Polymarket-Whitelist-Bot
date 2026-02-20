@@ -4,7 +4,7 @@
 
 A deterministic, spec-driven trading bot that discovers live sports/esports markets via Gamma API, evaluates them through a multi-stage signal pipeline with context-aware gates (ESPN scoreboards), and executes trades via CLOB API.
 
-**Current Status:** Running LIVE with real money (commit `3a7962e`, 954 tests passing)
+**Current Status:** Running LIVE with real money (commit `d986312`, 1032 tests passing)
 
 ---
 
@@ -37,7 +37,8 @@ polymarket-watchlist-v1/
 ├── src/
 │   ├── config/
 │   │   ├── defaults.json          # Default configuration
-│   │   └── local.json              # Local overrides (prod settings)
+│   │   ├── local.json              # Local overrides (prod settings)
+│   │   └── team-overrides.json     # ESPN team name overrides (title + outcome)
 │   ├── core/
 │   │   ├── config.js               # Config cascade (defaults → local → shadow → env)
 │   │   ├── state_store.js          # Crash-safe persistence (atomic+fsync+backup)
@@ -74,13 +75,15 @@ polymarket-watchlist-v1/
 │   │   └── dashboard.html           # Visual dashboard (auto-refresh 5s)
 │   ├── execution/
 │   │   ├── trade_bridge.mjs         # Execution layer (paper/shadow_live/live)
+│   │   ├── balance_cache.mjs        # Dynamic position sizing (percent_of_equity)
+│   │   ├── sl_guard_espn.mjs        # ESPN-based context stop loss
 │   │   └── order_executor.mjs       # CLOB client wrapper (buy/sell/balance)
 │   ├── metrics/
 │   │   ├── daily_events.mjs         # Per-league funnel tracking
 │   │   └── daily_snapshot.mjs       # Daily state snapshots (5min)
 │   └── tools/
 │       └── journal_stats.mjs        # Paper position analysis CLI
-├── tests/                           # 437 tests (all passing)
+├── tests/                           # 1032 tests (all passing)
 │   ├── universe_selection.test.mjs  # Universe logic invariants
 │   ├── persistence.test.mjs         # Crash-safe write verification
 │   ├── health_server.test.mjs       # Monitoring endpoint
@@ -137,6 +140,9 @@ The bot operates as a deterministic funnel: markets flow from discovery → watc
    - Soccer: multi-league support (EPL, UCL, La Liga, Bundesliga, Serie A, +10 more)
    - Match market → live game → derive context (period, score, time left)
    - Cache by dateKey (UTC), purge stale entries >2 days old
+   - **Team matching**: MASCOT_TAILS stripping + deterministic overrides (`src/config/team-overrides.json`)
+   - **Disambiguation**: back-to-back series (same teams, multiple games) resolved by game state priority (`in` > `post` > `pre`)
+   - **Stale issue cleanup**: successful matches clear old failures from health endpoint
 
 4. **Stage 1: Base Filters** (watching markets only)
    - Price range: 0.93 ≤ ask ≤ 0.98 (configurable)
@@ -162,7 +168,8 @@ The bot operates as a deterministic funnel: markets flow from discovery → watc
 
 8. **Trade Execution** (if mode != paper)
    - Idempotent by signal_id
-   - Guards: max $10/trade, $50 total exposure, 5 concurrent, 50/day
+   - Dynamic sizing: 10% of equity (cash + deployed cost basis), 60% exposure cap, $18 max/trade
+   - Guards: exposure cap, concurrent limit, daily limit
    - SL at 0.70 with escalating floor (5 attempts: -0.00, -0.01, -0.02, -0.03, -0.05)
    - Post-fill verification (conditional balance check)
    - Pause fail-closed on SL sell failure
@@ -331,7 +338,7 @@ npm start                       # Start bot (paper trading)
 npm run status                  # CLI dashboard
 npm run status:verbose          # Full metrics + top candidates
 npm run journal:stats           # Paper position analysis
-npm test                        # Run all 437 tests
+npm test                        # Run all 1032 tests
 ```
 
 ### Paper Mode (signals only, no execution)
@@ -386,7 +393,7 @@ Scripts:
 
 **Boot checklist (ALWAYS before deploy):**
 ```bash
-npm test                                    # All tests passing
+npm test                                    # All 1032 tests passing
 node -e "import('./src/runtime/loop_eval_http_only.mjs')"  # Parse check
 STOP_AFTER_MS=5000 node run.mjs            # 5s boot test (verify config in logs)
 # Only THEN deploy to prod (launchctl load, pm2, etc.)
@@ -670,11 +677,15 @@ When positions disappear from CLOB (manual sell, external action):
 
 Bo2 esports series can draw, causing correlated double-loss. Match series markets from Bo2 events are blacklisted. Individual game maps remain tradeable.
 
-### Dynamic Position Sizing
+### Dynamic Position Sizing (`percent_of_equity`)
 
-- 10% of total portfolio balance (cash + positions at current bid)
-- If remaining cash < 10% of total → uses all remaining cash
-- Module: `src/execution/balance_cache.mjs`
+- **Base** = cash + deployed cost basis (no mark-to-market)
+- **Budget** = min(base × 10%, base × 60% - deployed, $18, cash)
+- Compound growth: winning trades increase equity → larger future trades
+- Exposure cap 60%: limits total deployed capital (~6 concurrent positions)
+- Pre-reserve spend before execution to prevent intra-loop overshoot
+- Boot cooldown: skip buys on first loop after restart
+- Module: `src/execution/balance_cache.mjs` (42 tests)
 
 ### Performance Optimizations
 
@@ -710,7 +721,7 @@ Bo2 esports series can draw, causing correlated double-loss. Match series market
 
 ## Testing
 
-**Coverage:** 954 tests (all passing)
+**Coverage:** 1032 tests (all passing)
 
 **Test Categories:**
 - Universe selection (20 tests) — invariants for price updates vs signal pipeline

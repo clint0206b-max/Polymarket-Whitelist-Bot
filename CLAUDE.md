@@ -10,11 +10,11 @@ This file contains everything you need to understand and modify the codebase saf
 
 **What it does:** High-frequency signal generation for Polymarket prediction markets. Discovers live sports/esports markets, evaluates them through a multi-stage pipeline with context-aware gates (ESPN scoreboards), and executes trades.
 
-**Current status:** Running LIVE with real money (commit `3a7962e`)
+**Current status:** Running LIVE with real money (commit `d986312`)
 
 **Key constraint:** This bot trades real money. **Every change must be tested extensively before deploy.**
 
-**Tests:** 954 passing
+**Tests:** 1032 passing
 
 ---
 
@@ -26,7 +26,8 @@ This file contains everything you need to understand and modify the codebase saf
 src/
 ├── config/
 │   ├── defaults.json          # Default config (never edit in prod)
-│   └── local.json              # Prod overrides (edit with extreme care)
+│   ├── local.json              # Prod overrides (edit with extreme care)
+│   └── team-overrides.json     # ESPN team name overrides (title + outcome)
 │
 ├── core/                       # Foundation modules (crash-safe, tested)
 │   ├── config.js               # Config cascade (defaults → local → shadow → env)
@@ -47,8 +48,8 @@ src/
 │   └── ws_client.mjs           # WebSocket price feed (auto-reconnect)
 │
 ├── context/                    # External data feeds (ESPN scoreboards)
-│   ├── espn_cbb_scoreboard.mjs # NCAA basketball
-│   ├── espn_nba_scoreboard.mjs # NBA
+│   ├── espn_cbb_scoreboard.mjs # NCAA basketball (with team overrides + disambiguation)
+│   ├── espn_nba_scoreboard.mjs # NBA (with team overrides + disambiguation)
 │   └── espn_soccer_scoreboard.mjs # Soccer (multi-league)
 │
 ├── strategy/                   # Signal pipeline logic (pure functions)
@@ -70,6 +71,8 @@ src/
 │
 ├── execution/                  # Trade execution layer
 │   ├── trade_bridge.mjs        # Execution modes (paper/shadow_live/live)
+│   ├── balance_cache.mjs       # Dynamic position sizing (percent_of_equity)
+│   ├── sl_guard_espn.mjs       # ESPN-based context stop loss
 │   └── order_executor.mjs      # CLOB client wrapper
 │
 ├── metrics/                    # Observability
@@ -190,6 +193,51 @@ selectPipelineUniverse() → ESPN context tagging → stage1 → stage2 → pend
 - `src/strategy/stage2.mjs` — depth check (pure)
 - `src/context/espn_*_scoreboard.mjs` — ESPN adapters
 - `src/strategy/win_prob_table.mjs` — context entry gate
+
+### ESPN Team Matching System
+
+Two matching systems connect Polymarket markets to ESPN game data:
+
+**System 1: Title Match** (market → ESPN game)
+- Extracts school keys from market title (e.g., "Boston College vs Florida State" → `boscol`, `flst`)
+- Uses `MASCOT_TAILS` to strip known mascots (e.g., "Golden Panthers" → school name only)
+- Falls back to `title_school_overrides` in `src/config/team-overrides.json` for non-standard names
+- Multi-pass matching: Pass 0 (exact schoolKey), Pass 1 (alias containment), Pass 2 (partial)
+
+**System 2: Outcome Match** (YES outcome → ESPN team)
+- Maps the YES outcome name (e.g., "UNCW Seahawks") to an ESPN team
+- Uses `outcome_team_overrides` in `src/config/team-overrides.json` for mismatches
+- Both `loop_eval_http_only.mjs` AND `sl_guard_espn.mjs` apply overrides (must stay in sync)
+- `nameMatch()` helper: normalized includes check + fullName comparison
+
+**Team Overrides File:** `src/config/team-overrides.json`
+```json
+{
+  "title_school_overrides": {
+    "massachusetts lowell": "umass lowell",
+    "usc upstate": "south carolina upstate",
+    "appalachian state": "app state"
+    // ... more as discovered
+  },
+  "outcome_team_overrides": {
+    "central connecticut state": "central connecticut",
+    "liu sharks": "long island university sharks",
+    "uncw seahawks": "unc wilmington seahawks"
+    // ... more as discovered
+  }
+}
+```
+
+**Disambiguation** (back-to-back series):
+- When `matchByTitle` returns multiple ESPN games (e.g., Pacers vs Wizards playing twice in 3 days)
+- `disambiguateHits()` uses game state priority: `in` (live) > `post` (finished) > `pre` (upcoming)
+- Returns match with `disambiguated: true` flag when state-priority resolves ambiguity
+- Remains truly ambiguous only if top two hits share the same state priority
+- Applied in both `espn_nba_scoreboard.mjs` and `espn_cbb_scoreboard.mjs`
+
+**Stale Issue Cleanup:**
+- When a title_match or outcome_match succeeds, any old failure entry is actively removed from `_contextMatchIssues`
+- Prevents ghost issues in the health endpoint after overrides are added
 
 ### 3. Resolution Tracker (60s)
 
@@ -605,11 +653,46 @@ When a position disappears from CLOB (manual sell, external action):
 
 **Module:** `src/execution/balance_cache.mjs`
 
-- Mode: `percent_of_total` (10% of total portfolio balance)
-- Total balance = cash + Σ(shares × currentBid) — liquidation value
-- Cache refreshed per loop (2s), tracks `cashSpentThisLoop` for multiple buys
-- If cash < 10% of total → uses all remaining cash
-- Config: `sizing: { mode: "percent_of_total", percent: 10 }` in `local.json`
+### Mode: `percent_of_equity` (compound growth)
+
+Sizes trades as a percentage of equity (cash + deployed cost basis), enabling compound growth from realized profits while avoiding mark-to-market noise.
+
+**Formula:**
+```
+base = cash + deployed_cost_basis
+budget = min(base × percent%, base × max_exposure_pct% - deployed, max_trade_usd, cash)
+```
+
+**Key design decisions:**
+- **No mark-to-market**: Uses cost basis for deployed capital, not current bid prices. Avoids procyclical inflation from unrealized gains.
+- **Exposure cap (60%)**: Primary risk dial. `budget = min(budget, base × 60% - deployed)`. Limits total deployed capital. With 10% sizing, allows ~6 concurrent positions.
+- **Pre-reserve spend**: `recordSpend(amount)` reserves budget before trade execution. `unreserve(amount)` on failure. Prevents intra-loop overshoot when multiple buys fire in same cycle.
+- **Boot cooldown**: Skips buys on first loop after restart (pending reservations lost on restart, could overshoot).
+- **Base drop detection**: Ring buffer tracks last 20 base values. If base drops >5% from recent max, logs warning (possible loss or withdrawal).
+- **Intra-loop stability**: Within a single eval loop, base is calculated once and cached. Multiple buys in same loop see consistent budget.
+
+**Config** (`local.json`):
+```json
+{
+  "sizing": {
+    "mode": "percent_of_equity",
+    "percent": 10,
+    "max_exposure_pct": 60,
+    "max_trade_usd": 18,
+    "net_deposits": 146.42
+  }
+}
+```
+
+**Fields:**
+- `percent`: Target % of equity per trade (10 = $14.6 on $146 equity)
+- `max_exposure_pct`: Max % of equity deployed at once (60% = ~$88 max deployed)
+- `max_trade_usd`: Hard cap per trade in USD
+- `net_deposits`: Initial capital for growth tracking (PnL = equity - net_deposits)
+
+**Log format** (on buy): `method=equity base=$146.42 budget=$14.64 deployed=$43.20 cash=$103.22 exposure=29.5%`
+
+**Tests:** 42 cases in `tests/balance_cache.test.mjs` covering equity mode, intra-loop stability, compound growth, exposure caps, base drop detection.
 
 ---
 
@@ -665,7 +748,7 @@ All per-sport params in `local.json`:
 
 ## Testing
 
-**Test count:** 954 tests (all passing)
+**Test count:** 1032 tests (all passing)
 
 **How to run:**
 ```bash
@@ -1582,7 +1665,7 @@ SL sells retry automatically every cycle until closed. After 5 escalating floor 
 
 **The codebase is deterministic.** Same inputs → same outputs. If behavior changes, a code change caused it. Find the diff.
 
-**Tests are your safety net.** 535 tests (all passing) give confidence. Add tests for every change.
+**Tests are your safety net.** 1032 tests (all passing) give confidence. Add tests for every change.
 
 **Shadow runners are your friend.** Use them for risky changes. A/B test strategies. Validate before prod.
 
