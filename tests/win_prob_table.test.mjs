@@ -150,13 +150,14 @@ describe("checkContextEntryGate", () => {
     assert.equal(r.reason, "not_final_period");
   });
 
-  // --- too_much_time_left ---
-  it("CBB H2 but 15 min left → too_much_time_left", () => {
+  // --- H2 with lots of time left → no time gate, passes to winprob ---
+  it("CBB H2 with 15 min left + big margin → allowed (no time gate)", () => {
     const r = checkContextEntryGate({
-      sport: "cbb", period: 2, minutesLeft: 15, marginForYes: 10
+      sport: "cbb", period: 2, minutesLeft: 15, marginForYes: 20
     });
-    assert.equal(r.allowed, false);
-    assert.equal(r.reason, "too_much_time_left");
+    // No time gate anymore — goes straight to winprob which passes with big margin
+    assert.equal(r.allowed, true);
+    assert.equal(r.reason, "pass");
   });
 
   // --- not_ahead (margin 0) ---

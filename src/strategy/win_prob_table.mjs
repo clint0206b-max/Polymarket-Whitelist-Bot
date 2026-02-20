@@ -225,7 +225,7 @@ export function checkSoccerEntryGate(opts) {
  * @param {number|null} opts.minutesLeft - minutes remaining in the game
  * @param {number|null} opts.marginForYes - score diff from yes_outcome perspective
  * @param {number} opts.minWinProb     - minimum win probability threshold (default 0.90)
- * @param {number} opts.maxMinutesLeft - max minutes left for entry (default 5)
+ * @param {number} opts.maxMinutesLeft - (unused, kept for compat)
  * @param {number} opts.minMargin      - minimum score margin to require (default 1)
  * @returns {{ allowed: boolean, reason: string, win_prob: number|null }}
  */
@@ -259,11 +259,6 @@ export function checkContextEntryGate(opts) {
     return checkSoccerEntryGate(opts);
   } else {
     return { allowed: false, reason: "unknown_sport", win_prob: null };
-  }
-
-  // Time check
-  if (minutesLeft > maxMinutesLeft) {
-    return { allowed: false, reason: "too_much_time_left", win_prob: null };
   }
 
   // Must be ahead
