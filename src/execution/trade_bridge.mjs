@@ -403,7 +403,7 @@ export class TradeBridge {
           slug: signal.slug,
           tokenId,
           error: result.error,
-          requestedShares: shares,
+          requestedShares: estimatedShares,
           entryPrice,
         });
 

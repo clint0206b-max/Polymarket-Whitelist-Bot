@@ -67,4 +67,9 @@ describe("NBA config values", () => {
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.context.entry_rules.min_win_prob_nba, 0);
   });
+  it("min_margin=3 (aligned with context SL min_margin_hold)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
+    assert.equal(c.context.entry_rules.min_margin, 3);
+  });
 });

@@ -30,8 +30,8 @@
     "min_entry_price_cbb": 0.88,
     "max_entry_price_cbb": 0.93,
     "max_spread_cbb": 0.04,
-    "min_entry_price_nba": 0.80,
-    "max_entry_price_nba": 0.90,
+    "min_entry_price_nba": 0.8,
+    "max_entry_price_nba": 0.9,
     "min_entry_price_cwbb": 0.8,
     "max_entry_price_cwbb": 0.9,
     "max_spread_cwbb": 0.02
@@ -60,7 +60,7 @@
     "stop_loss_bid_cs2": 0.35,
     "stop_loss_bid_lol": 0.32,
     "stop_loss_bid_val": 0.42,
-    "stop_loss_bid_nba": 0.50,
+    "stop_loss_bid_nba": 0.5,
     "stop_loss_bid_cbb": 0.45,
     "stop_loss_bid_cwbb": 0.4,
     "stop_loss_spread_max": 0.5,
@@ -77,7 +77,8 @@
       "min_win_prob_nba": 0,
       "max_minutes_left_cwbb": 10,
       "min_win_prob_cwbb": 0,
-      "gate_mode_cwbb": "blocking"
+      "gate_mode_cwbb": "blocking",
+      "min_margin": 3
     }
   },
   "purge": {
