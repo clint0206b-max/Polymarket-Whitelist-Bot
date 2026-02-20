@@ -2,7 +2,8 @@
   "polling": {
     "gamma_discovery_seconds": 20,
     "clob_eval_seconds": 4,
-    "pending_window_seconds": 2
+    "pending_window_seconds": 2,
+    "pending_max_checks": 0
   },
   "gamma": {
     "gamma_tags": [
@@ -28,7 +29,7 @@
     "max_entry_price_val": 0.93,
     "min_entry_price_cbb": 0.88,
     "max_entry_price_cbb": 0.93,
-    "max_spread_cbb": 0.02,
+    "max_spread_cbb": 0.04,
     "min_entry_price_nba": 0.80,
     "max_entry_price_nba": 0.90,
     "min_entry_price_cwbb": 0.8,

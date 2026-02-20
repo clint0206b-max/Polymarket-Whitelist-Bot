@@ -2299,54 +2299,66 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     }
 
     if (m.status === "watching") {
-      m.status = "pending_signal";
-      // IMPORTANT: set timing at the moment of transition (real time)
-      m.pending_since_ts = tNow;
-      m.pending_checks = 0;
-      m.pending_entry_bid = Number(quote?.probBid || 0); // Save for timeout analysis
+      const maxPendingChecks = Number(cfg?.polling?.pending_max_checks ?? 1);
 
-      // classify pending_enter by near_by (mutually exclusive)
-      const pendingType = (near_by === "spread") ? "microstructure" : ((near_by === "ask" || near_by === "both") ? "highprob" : "unknown");
-      bumpBucket("health", "pending_enter", 1);
-      if (pendingType === "microstructure") bumpBucket("health", "pending_enter_microstructure", 1);
-      if (pendingType === "highprob") bumpBucket("health", "pending_enter_highprob", 1);
+      if (maxPendingChecks > 0) {
+        // Confirmation mode: transition to pending_signal, wait for next tick to confirm
+        m.status = "pending_signal";
+        // IMPORTANT: set timing at the moment of transition (real time)
+        m.pending_since_ts = tNow;
+        m.pending_checks = 0;
+        m.pending_entry_bid = Number(quote?.probBid || 0); // Save for timeout analysis
 
-      // Observability: pending_enter by market_kind (esports only; others treated as other)
-      {
-        const kind = (m.league === "esports") ? String(m.market_kind || "other") : "other";
-        if (kind === "match_series") bumpBucket("health", "pending_enter_match_series", 1);
-        else if (kind === "map_specific") bumpBucket("health", "pending_enter_map_specific", 1);
-        else bumpBucket("health", "pending_enter_other", 1);
+        // classify pending_enter by near_by (mutually exclusive)
+        const pendingType = (near_by === "spread") ? "microstructure" : ((near_by === "ask" || near_by === "both") ? "highprob" : "unknown");
+        bumpBucket("health", "pending_enter", 1);
+        if (pendingType === "microstructure") bumpBucket("health", "pending_enter_microstructure", 1);
+        if (pendingType === "highprob") bumpBucket("health", "pending_enter_highprob", 1);
+
+        // Observability: pending_enter by market_kind (esports only; others treated as other)
+        {
+          const kind = (m.league === "esports") ? String(m.market_kind || "other") : "other";
+          if (kind === "match_series") bumpBucket("health", "pending_enter_match_series", 1);
+          else if (kind === "map_specific") bumpBucket("health", "pending_enter_map_specific", 1);
+          else bumpBucket("health", "pending_enter_other", 1);
+        }
+
+        if (!m.pending_since_ts) bumpBucket("health", "pending_enter_with_null_since", 1);
+        // (check-based pending: no deadline to validate)
+        enteredPendingThisTick.add(String(m.slug || ""));
+
+        // Persist last_pending_enter snapshot (runtime)
+        state.runtime.last_pending_enter = {
+          ts: tNow,
+          slug: String(m.slug || ""),
+          conditionId: String(m.conditionId || ""),
+          probAsk: Number(quote.probAsk),
+          probBid: Number(quote.probBid),
+          spread: Number(quote.spread),
+          entryDepth: Number(metrics.entry_depth_usd_ask || 0),
+          exitDepth: Number(metrics.exit_depth_usd_bid || 0),
+          pending_checks: Number(m.pending_checks || 0)
+        };
+
+        setReject(m, "pending_entered");
+        changed = true;
+        createdPendingThisTick = true;
+
+        // Local console alert (only when it happens)
+        console.log(`[PENDING_ENTER] ts=${tNow} slug=${String(m.slug || "")} max_checks=${maxPendingChecks}`);
+
+        // Scheduling bugfix: avoid long ticks that cause immediate pending timeouts.
+        // If this tick started without any pending, stop evaluating more watching markets so the next tick can confirm quickly.
+        if (!startedWithPending) break;
+        continue;
       }
 
-      if (!m.pending_since_ts) bumpBucket("health", "pending_enter_with_null_since", 1);
-      // (check-based pending: no deadline to validate)
-      enteredPendingThisTick.add(String(m.slug || ""));
-
-      // Persist last_pending_enter snapshot (runtime)
-      state.runtime.last_pending_enter = {
-        ts: tNow,
-        slug: String(m.slug || ""),
-        conditionId: String(m.conditionId || ""),
-        probAsk: Number(quote.probAsk),
-        probBid: Number(quote.probBid),
-        spread: Number(quote.spread),
-        entryDepth: Number(metrics.entry_depth_usd_ask || 0),
-        exitDepth: Number(metrics.exit_depth_usd_bid || 0),
-        pending_checks: Number(m.pending_checks || 0)
-      };
-
-      setReject(m, "pending_entered");
-      changed = true;
-      createdPendingThisTick = true;
-
-      // Local console alert (only when it happens)
-      console.log(`[PENDING_ENTER] ts=${tNow} slug=${String(m.slug || "")} max_checks=${Number(cfg?.polling?.pending_max_checks ?? 1)}`);
-
-      // Scheduling bugfix: avoid long ticks that cause immediate pending timeouts.
-      // If this tick started without any pending, stop evaluating more watching markets so the next tick can confirm quickly.
-      if (!startedWithPending) break;
-      continue;
+      // Skip-confirmation mode (pending_max_checks=0): go directly to signaled
+      // Brief transition through pending_signal so the next block promotes immediately
+      m.status = "pending_signal";
+      bumpBucket("health", "pending_skip_confirmation", 1);
+      console.log(`[INSTANT_SIGNAL] ts=${tNow} slug=${String(m.slug || "")} skip_confirmation=true`);
+      // Fall through to pending → signaled block below
     }
 
     if (m.status === "pending_signal") {

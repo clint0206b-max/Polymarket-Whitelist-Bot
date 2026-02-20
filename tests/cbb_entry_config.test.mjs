@@ -5,7 +5,7 @@ import { is_base_signal_candidate, resolveEntryPriceLimits, resolveMaxSpread } f
 const cfg = {
   filters: {
     min_prob: 0.93, max_entry_price: 0.97, max_spread: 0.04, EPS: 1e-6,
-    min_entry_price_cbb: 0.88, max_entry_price_cbb: 0.93, max_spread_cbb: 0.02,
+    min_entry_price_cbb: 0.88, max_entry_price_cbb: 0.93, max_spread_cbb: 0.04,
   },
 };
 
@@ -15,12 +15,12 @@ describe("resolveEntryPriceLimits — CBB", () => {
     assert.equal(minProb, 0.88);
     assert.equal(maxEntry, 0.93);
   });
-  it("cbb uses sport-specific spread (0.02)", () => {
-    assert.equal(resolveMaxSpread(cfg.filters, "cbb"), 0.02);
+  it("cbb uses sport-specific spread (0.04)", () => {
+    assert.equal(resolveMaxSpread(cfg.filters, "cbb"), 0.04);
   });
 });
 
-describe("is_base_signal_candidate — CBB entry [0.88, 0.93] + spread ≤ 0.02", () => {
+describe("is_base_signal_candidate — CBB entry [0.88, 0.93] + spread ≤ 0.04", () => {
   it("cbb ask=0.91 spread=0.01 passes", () => {
     assert.equal(is_base_signal_candidate({ probAsk: 0.91, spread: 0.01 }, cfg, "cbb").pass, true);
   });
@@ -40,8 +40,11 @@ describe("is_base_signal_candidate — CBB entry [0.88, 0.93] + spread ≤ 0.02"
     assert.equal(r.pass, false);
     assert.equal(r.reason, "price_out_of_range");
   });
-  it("cbb ask=0.91 spread=0.03 FAILS (spread > cbb max 0.02)", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.91, spread: 0.03 }, cfg, "cbb");
+  it("cbb ask=0.91 spread=0.03 PASSES (spread < cbb max 0.04)", () => {
+    assert.equal(is_base_signal_candidate({ probAsk: 0.91, spread: 0.03 }, cfg, "cbb").pass, true);
+  });
+  it("cbb ask=0.91 spread=0.05 FAILS (spread > cbb max 0.04)", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.91, spread: 0.05 }, cfg, "cbb");
     assert.equal(r.pass, false);
     assert.equal(r.reason, "spread_above_max");
   });
@@ -58,10 +61,10 @@ describe("CBB config values in local.json", () => {
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
     assert.equal(c.filters.max_entry_price_cbb, 0.93);
   });
-  it("max_spread_cbb=0.02", async () => {
+  it("max_spread_cbb=0.04", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.filters.max_spread_cbb, 0.02);
+    assert.equal(c.filters.max_spread_cbb, 0.04);
   });
   it("max_minutes_left_cbb=10", async () => {
     const { readFileSync } = await import("node:fs");
