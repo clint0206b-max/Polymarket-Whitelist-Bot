@@ -43,8 +43,7 @@ export class SLBreachTracker {
       if (p.tokenId && p.slBid > 0) {
         this.positions.set(String(p.tokenId), {
           slBid: p.slBid,
-          spreadMax: p.spreadMax ?? 0.50,
-          emergencyBid: p.emergencyBid ?? 0.15,
+          askBuffer: p.askBuffer ?? 0.10,
           slug: p.slug || "unknown",
         });
       }
@@ -67,11 +66,10 @@ export class SLBreachTracker {
     const pos = this.positions.get(id);
     if (!pos) return; // No position for this token
 
-    const spread = (ask > 0 && bid > 0) ? (ask - bid) : 999;
-    const spreadOk = spread <= pos.spreadMax;
-    const emergencyTriggered = pos.emergencyBid > 0 && bid <= pos.emergencyBid;
     const bidTriggered = bid <= pos.slBid;
-    const slBreached = bidTriggered && (spreadOk || emergencyTriggered);
+    const askMax = pos.slBid + (pos.askBuffer ?? 0.10);
+    const askConfirms = ask > 0 && ask <= askMax;
+    const slBreached = bidTriggered && askConfirms;
 
     const existing = this.episodes.get(id);
 
@@ -84,7 +82,7 @@ export class SLBreachTracker {
       this.episodes.set(id, {
         breachTs: Date.now(),
         breachBid: bid,
-        breachSpread: spread,
+        breachAsk: ask,
         wsHealthy,
         slug: pos.slug,
       });

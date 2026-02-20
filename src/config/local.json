@@ -27,7 +27,7 @@
     "max_entry_price_lol": 0.89,
     "min_entry_price_val": 0.81,
     "max_entry_price_val": 0.93,
-    "min_entry_price_cbb": 0.88,
+    "min_entry_price_cbb": 0.80,
     "max_entry_price_cbb": 0.93,
     "max_spread_cbb": 0.04,
     "min_entry_price_nba": 0.8,

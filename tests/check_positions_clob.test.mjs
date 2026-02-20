@@ -25,8 +25,7 @@ import assert from "node:assert/strict";
 // checkPositionsFromCLOB needs (mode, execState, cfg).
 // Default SL thresholds — keep in sync with local.json (paper.stop_loss_bid/spread_max/emergency)
 const DEFAULT_SL = 0.85;
-const DEFAULT_SL_SPREAD_MAX = 0.50;
-const DEFAULT_SL_EMERGENCY = 0.15;
+const DEFAULT_SL_ASK_BUFFER = 0.10;
 const ESPORTS_SL = 0.75;
 const DOTA2_SL = 0.50;
 const CS2_SL = 0.50;
@@ -38,7 +37,7 @@ function makeBridge({ mode = "live", trades = {}, cfg = {} } = {}) {
   return {
     mode,
     execState: { trades, daily_counts: {} },
-    cfg: { paper: { stop_loss_bid: DEFAULT_SL, stop_loss_spread_max: DEFAULT_SL_SPREAD_MAX, stop_loss_emergency_bid: DEFAULT_SL_EMERGENCY, stop_loss_bid_esports: ESPORTS_SL, stop_loss_bid_dota2: DOTA2_SL, stop_loss_bid_cs2: CS2_SL, stop_loss_bid_lol: LOL_SL, stop_loss_bid_val: VAL_SL, stop_loss_bid_nba: NBA_SL }, ...cfg },
+    cfg: { paper: { stop_loss_bid: DEFAULT_SL, stop_loss_ask_buffer: DEFAULT_SL_ASK_BUFFER, stop_loss_bid_esports: ESPORTS_SL, stop_loss_bid_dota2: DOTA2_SL, stop_loss_bid_cs2: CS2_SL, stop_loss_bid_lol: LOL_SL, stop_loss_bid_val: VAL_SL, stop_loss_bid_nba: NBA_SL }, ...cfg },
     // Bind the real method — we import it below
   };
 }
@@ -137,12 +136,12 @@ describe("checkPositionsFromCLOB", () => {
 
   // ===================== STOP LOSS =====================
 
-  describe("stop-loss signals (bid <= threshold AND spread check)", () => {
-    it(`generates SL signal when bid <= ${DEFAULT_SL} AND spread <= ${DEFAULT_SL_SPREAD_MAX}`, () => {
+  describe("stop-loss signals (bid <= threshold AND ask <= threshold + buffer)", () => {
+    it(`generates SL signal when bid <= ${DEFAULT_SL} AND ask <= SL+0.10`, () => {
       const buy = makeBuyTrade("sl-slug", { signal_id: "sig4|sl-slug" });
       const bridge = makeBridge({ trades: { "buy:sig4|sl-slug": buy } });
       const bidBelow = DEFAULT_SL - 0.20; // 0.65
-      const ask = bidBelow + 0.30; // 0.95, spread = 0.30 <= 0.50
+      const ask = DEFAULT_SL + 0.05; // 0.90, within buffer of 0.10
       const signals = check(bridge, priceMap({ "sl-slug": { bid: bidBelow, ask } }));
 
       assert.equal(signals.length, 1);
@@ -151,11 +150,11 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals[0].sl_trigger_price, bidBelow);
     });
 
-    it(`generates SL signal at exact thresholds bid=${DEFAULT_SL} spread<${DEFAULT_SL_SPREAD_MAX}`, () => {
+    it(`generates SL signal at exact thresholds bid=${DEFAULT_SL} ask<=SL+0.10`, () => {
       const buy = makeBuyTrade("sl-edge", { signal_id: "sig5|sl-edge" });
       const bridge = makeBridge({ trades: { "buy:sig5|sl-edge": buy } });
-      // bid at SL, spread just under max (0.45 < 0.50)
-      const signals = check(bridge, priceMap({ "sl-edge": { bid: DEFAULT_SL, ask: DEFAULT_SL + 0.45 } }));
+      // bid at SL, ask at SL+0.08 (within buffer of 0.10) → should trigger
+      const signals = check(bridge, priceMap({ "sl-edge": { bid: DEFAULT_SL, ask: DEFAULT_SL + 0.08 } }));
 
       assert.equal(signals.length, 1);
       assert.equal(signals[0].close_reason, "stop_loss");
@@ -170,15 +169,13 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals.length, 0, "should NOT trigger SL when spread > spread_max and bid > emergency");
     });
 
-    it("DOES trigger SL via emergency when spread > spread_max but bid <= emergency", () => {
-      const buy = makeBuyTrade("emergency-sl", { signal_id: "sig5c|emergency-sl" });
-      const bridge = makeBridge({ trades: { "buy:sig5c|emergency-sl": buy } });
-      // bid=0.10 <= emergency 0.15, even though spread=0.89 > 0.50
-      const signals = check(bridge, priceMap({ "emergency-sl": { bid: 0.10, ask: 0.99 } }));
+    it("does NOT trigger SL when bid low but ask high (empty bid side, not real drop)", () => {
+      const buy = makeBuyTrade("empty-bid", { signal_id: "sig5c|empty-bid" });
+      const bridge = makeBridge({ trades: { "buy:sig5c|empty-bid": buy } });
+      // bid=0.10 but ask=0.99 → ask way above SL+buffer → NOT a real price drop
+      const signals = check(bridge, priceMap({ "empty-bid": { bid: 0.10, ask: 0.99 } }));
 
-      assert.equal(signals.length, 1);
-      assert.equal(signals[0].close_reason, "stop_loss");
-      assert.equal(signals[0].sl_trigger_price, 0.10);
+      assert.equal(signals.length, 0, "should NOT trigger SL when ask is high (empty bid side)");
     });
 
     it("PnL is negative for SL", () => {
@@ -200,16 +197,14 @@ describe("checkPositionsFromCLOB", () => {
 
     it("respects custom SL threshold from config", () => {
       const customSL = 0.80;
-      const customSpreadMax = 0.30;
-      const customEmergency = 0.20;
       const buy = makeBuyTrade("custom-sl", { signal_id: "sig7|custom-sl" });
       const bridge = makeBridge({
         trades: { "buy:sig7|custom-sl": buy },
-        cfg: { paper: { stop_loss_bid: customSL, stop_loss_spread_max: customSpreadMax, stop_loss_emergency_bid: customEmergency } },
+        cfg: { paper: { stop_loss_bid: customSL, stop_loss_ask_buffer: 0.10 } },
       });
 
-      // bid=0.75 <= 0.80, spread=0.25 <= 0.30 → should trigger
-      const signals = check(bridge, priceMap({ "custom-sl": { bid: 0.75, ask: 1.00 } }));
+      // bid=0.75 <= 0.80, ask=0.82 <= 0.80+0.10=0.90 → should trigger
+      const signals = check(bridge, priceMap({ "custom-sl": { bid: 0.75, ask: 0.82 } }));
       assert.equal(signals.length, 1);
       assert.equal(signals[0].close_reason, "stop_loss");
     });
@@ -728,9 +723,9 @@ describe("price tick logging", () => {
     check(bridge, priceMap({ "cleanup-sl": 0.93 }));
     assert.ok(bridge._priceTickLastTs.has("t4|cleanup-sl"));
 
-    // SL: bid below threshold, spread within limits → should clean up
-    const bidBelow = DEFAULT_SL - 0.10;
-    check(bridge, priceMap({ "cleanup-sl": { bid: bidBelow, ask: bidBelow + 0.40 } }));
+    // SL: bid below threshold, ask also low (within buffer) → should clean up
+    const bidBelow = DEFAULT_SL - 0.10; // 0.75
+    check(bridge, priceMap({ "cleanup-sl": { bid: bidBelow, ask: bidBelow + 0.08 } })); // ask=0.83 <= 0.95
     assert.ok(!bridge._priceTickLastTs.has("t4|cleanup-sl"), "should clean up after SL");
   });
 

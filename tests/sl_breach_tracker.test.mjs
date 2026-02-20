@@ -11,7 +11,7 @@ describe("SLBreachTracker", () => {
 
   test("opens episode when SL breached (bid <= slBid, spread ok)", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
     t.onPriceUpdate("tok1", 0.35, 0.40, true);
     assert.strictEqual(t.episodes.size, 1);
     assert.strictEqual(t.stats.episodes_opened, 1);
@@ -22,29 +22,30 @@ describe("SLBreachTracker", () => {
 
   test("does NOT open episode when bid > slBid", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
     t.onPriceUpdate("tok1", 0.45, 0.50, true);
     assert.strictEqual(t.episodes.size, 0);
   });
 
-  test("does NOT open episode when spread too wide and not emergency", () => {
+  test("does NOT open episode when bid low but ask high (empty bid side)", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.10, emergencyBid: 0.15, slug: "test" }]);
-    // bid=0.35, ask=0.80, spread=0.45 > 0.10, but bid=0.35 > emergency=0.15
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
+    // bid=0.35, ask=0.80 → ask > slBid+buffer (0.50) → NOT a real drop
     t.onPriceUpdate("tok1", 0.35, 0.80, true);
     assert.strictEqual(t.episodes.size, 0);
   });
 
-  test("opens episode via emergency (spread wide but bid <= emergencyBid)", () => {
+  test("does NOT open episode when bid very low but ask still high", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.10, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
+    // bid=0.10, ask=0.90 → ask way above slBid+buffer → empty bid side
     t.onPriceUpdate("tok1", 0.10, 0.90, true);
-    assert.strictEqual(t.episodes.size, 1);
+    assert.strictEqual(t.episodes.size, 0);
   });
 
   test("closes episode as recovered when price goes back above SL", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
     t.onPriceUpdate("tok1", 0.35, 0.40, true);
     assert.strictEqual(t.episodes.size, 1);
     // Price recovers
@@ -55,7 +56,7 @@ describe("SLBreachTracker", () => {
 
   test("onLoopSLDetected returns delta and closes episode", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
     t.onPriceUpdate("tok1", 0.35, 0.40, true);
     // Simulate loop detecting 50ms later
     const delta = t.onLoopSLDetected("tok1");
@@ -73,7 +74,7 @@ describe("SLBreachTracker", () => {
 
   test("cooldown prevents re-opening episode within 2s", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
     t.onPriceUpdate("tok1", 0.35, 0.40, true);
     t.onLoopSLDetected("tok1"); // closes episode, sets cooldown
     // Try to re-open immediately
@@ -83,7 +84,7 @@ describe("SLBreachTracker", () => {
 
   test("first breach wins (no overwrite of breachTs)", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
     t.onPriceUpdate("tok1", 0.38, 0.43, true);
     const firstTs = t.episodes.get("tok1").breachTs;
     const firstBid = t.episodes.get("tok1").breachBid;
@@ -96,7 +97,7 @@ describe("SLBreachTracker", () => {
 
   test("configure cleans up episodes for removed positions", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
     t.onPriceUpdate("tok1", 0.35, 0.40, true);
     assert.strictEqual(t.episodes.size, 1);
     // Reconfigure without tok1
@@ -128,7 +129,7 @@ describe("SLBreachTracker", () => {
 
   test("tracks wsHealthy flag in episode", () => {
     const t = new SLBreachTracker();
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
     t.onPriceUpdate("tok1", 0.35, 0.40, false); // unhealthy
     assert.strictEqual(t.episodes.get("tok1").wsHealthy, false);
   });
@@ -136,8 +137,8 @@ describe("SLBreachTracker", () => {
   test("multiple tokens tracked independently", () => {
     const t = new SLBreachTracker();
     t.configure([
-      { tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "slug1" },
-      { tokenId: "tok2", slBid: 0.35, spreadMax: 0.50, emergencyBid: 0.15, slug: "slug2" },
+      { tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "slug1" },
+      { tokenId: "tok2", slBid: 0.35, askBuffer: 0.10, slug: "slug2" },
     ]);
     t.onPriceUpdate("tok1", 0.38, 0.43, true); // breach
     t.onPriceUpdate("tok2", 0.50, 0.55, true); // no breach
@@ -149,7 +150,7 @@ describe("SLBreachTracker", () => {
   test("deltas_ms capped at 200", () => {
     const t = new SLBreachTracker();
     t.stats.deltas_ms = Array.from({ length: 200 }, (_, i) => i);
-    t.configure([{ tokenId: "tok1", slBid: 0.40, spreadMax: 0.50, emergencyBid: 0.15, slug: "test" }]);
+    t.configure([{ tokenId: "tok1", slBid: 0.40, askBuffer: 0.10, slug: "test" }]);
     t.onPriceUpdate("tok1", 0.35, 0.40, true);
     t.onLoopSLDetected("tok1");
     assert.strictEqual(t.stats.deltas_ms.length, 200); // still 200, oldest dropped

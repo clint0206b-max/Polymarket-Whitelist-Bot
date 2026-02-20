@@ -155,10 +155,9 @@ export class TradeBridge {
     console.log(`[TRADE_BRIDGE] mode=${this.mode} | funder=${this.funder} | clob=${clobStr} | onchain=${onChainStr}`);
     console.log(`[TRADE_BRIDGE] guards: max_pos=$${this.maxPositionUsd} max_exposure=$${this.maxTotalExposure} max_concurrent=${this.maxConcurrent} max_daily=${this.maxDailyTrades}`);
     const slBid = this.cfg?.paper?.stop_loss_bid;
-    const slSpread = this.cfg?.paper?.stop_loss_spread_max;
-    const slEmerg = this.cfg?.paper?.stop_loss_emergency_bid;
+    const slAskBuf = this.cfg?.paper?.stop_loss_ask_buffer ?? 0.10;
     const slBidE = this.cfg?.paper?.stop_loss_bid_esports;
-    console.log(`[TRADE_BRIDGE] SL=${slBid || "none"} (spread≤${slSpread || 0.50}, emergency≤${slEmerg || 0.15})${slBidE ? ` | esports: SL=${slBidE}` : ""} | allowlist=${this.allowlist ? this.allowlist.length + " markets" : "all"}`);
+    console.log(`[TRADE_BRIDGE] SL=${slBid || "none"} (ask_buffer=${slAskBuf})${slBidE ? ` | esports: SL=${slBidE}` : ""} | allowlist=${this.allowlist ? this.allowlist.length + " markets" : "all"}`);
     
     return { balance };
   }
@@ -1040,32 +1039,15 @@ export class TradeBridge {
     if (this.mode === "paper") return [];
 
     const slThresholdDefault = Number(this.cfg?.paper?.stop_loss_bid ?? 0.70);
-    const slSpreadMaxDefault = Number(this.cfg?.paper?.stop_loss_spread_max ?? 0.50);
-    const slEmergencyBidDefault = Number(this.cfg?.paper?.stop_loss_emergency_bid ?? 0.15);
+    const slAskBufferDefault = Number(this.cfg?.paper?.stop_loss_ask_buffer ?? 0.10);
     const slThresholdEsports = Number(this.cfg?.paper?.stop_loss_bid_esports || slThresholdDefault);
-    const slSpreadMaxEsports = Number(this.cfg?.paper?.stop_loss_spread_max_esports || slSpreadMaxDefault);
-    const slEmergencyBidEsports = Number(this.cfg?.paper?.stop_loss_emergency_bid_esports || slEmergencyBidDefault);
     const slThresholdDota2 = Number(this.cfg?.paper?.stop_loss_bid_dota2 || slThresholdEsports);
-    const slSpreadMaxDota2 = Number(this.cfg?.paper?.stop_loss_spread_max_dota2 || slSpreadMaxEsports);
-    const slEmergencyBidDota2 = Number(this.cfg?.paper?.stop_loss_emergency_bid_dota2 || slEmergencyBidEsports);
     const slThresholdCs2 = Number(this.cfg?.paper?.stop_loss_bid_cs2 || slThresholdEsports);
-    const slSpreadMaxCs2 = Number(this.cfg?.paper?.stop_loss_spread_max_cs2 || slSpreadMaxEsports);
-    const slEmergencyBidCs2 = Number(this.cfg?.paper?.stop_loss_emergency_bid_cs2 || slEmergencyBidEsports);
     const slThresholdLol = Number(this.cfg?.paper?.stop_loss_bid_lol || slThresholdEsports);
-    const slSpreadMaxLol = Number(this.cfg?.paper?.stop_loss_spread_max_lol || slSpreadMaxEsports);
-    const slEmergencyBidLol = Number(this.cfg?.paper?.stop_loss_emergency_bid_lol || slEmergencyBidEsports);
     const slThresholdVal = Number(this.cfg?.paper?.stop_loss_bid_val || slThresholdEsports);
-    const slSpreadMaxVal = Number(this.cfg?.paper?.stop_loss_spread_max_val || slSpreadMaxEsports);
-    const slEmergencyBidVal = Number(this.cfg?.paper?.stop_loss_emergency_bid_val || slEmergencyBidEsports);
     const slThresholdNba = Number(this.cfg?.paper?.stop_loss_bid_nba || slThresholdDefault);
-    const slSpreadMaxNba = Number(this.cfg?.paper?.stop_loss_spread_max_nba || slSpreadMaxDefault);
-    const slEmergencyBidNba = Number(this.cfg?.paper?.stop_loss_emergency_bid_nba || slEmergencyBidDefault);
     const slThresholdCbb = Number(this.cfg?.paper?.stop_loss_bid_cbb || slThresholdDefault);
-    const slSpreadMaxCbb = Number(this.cfg?.paper?.stop_loss_spread_max_cbb || slSpreadMaxDefault);
-    const slEmergencyBidCbb = Number(this.cfg?.paper?.stop_loss_emergency_bid_cbb || slEmergencyBidDefault);
     const slThresholdCwbb = Number(this.cfg?.paper?.stop_loss_bid_cwbb || slThresholdDefault);
-    const slSpreadMaxCwbb = Number(this.cfg?.paper?.stop_loss_spread_max_cwbb || slSpreadMaxDefault);
-    const slEmergencyBidCwbb = Number(this.cfg?.paper?.stop_loss_emergency_bid_cwbb || slEmergencyBidDefault);
     const resolveThreshold = 0.997; // bid > this = market resolved
 
     // Defense in depth: include any trade with real shares, not just status=filled.
@@ -1150,17 +1132,13 @@ export class TradeBridge {
       const isCwbb = slugPrefix === "cwbb";
       const isEsports = (slugPrefix === "cs2" || slugPrefix === "dota2" || slugPrefix === "lol" || slugPrefix === "val");
       const slThreshold = isDota2 ? slThresholdDota2 : isCs2 ? slThresholdCs2 : isLol ? slThresholdLol : isVal ? slThresholdVal : isNba ? slThresholdNba : isCbb ? slThresholdCbb : isCwbb ? slThresholdCwbb : isEsports ? slThresholdEsports : slThresholdDefault;
-      const slSpreadMax = isDota2 ? slSpreadMaxDota2 : isCs2 ? slSpreadMaxCs2 : isLol ? slSpreadMaxLol : isVal ? slSpreadMaxVal : isNba ? slSpreadMaxNba : isCbb ? slSpreadMaxCbb : isCwbb ? slSpreadMaxCwbb : isEsports ? slSpreadMaxEsports : slSpreadMaxDefault;
-      const slEmergencyBid = isDota2 ? slEmergencyBidDota2 : isCs2 ? slEmergencyBidCs2 : isLol ? slEmergencyBidLol : isVal ? slEmergencyBidVal : isNba ? slEmergencyBidNba : isCbb ? slEmergencyBidCbb : isCwbb ? slEmergencyBidCwbb : isEsports ? slEmergencyBidEsports : slEmergencyBidDefault;
+      const slAskMax = slThreshold + slAskBufferDefault; // ask must also be near SL level
       const bidTriggered = slThreshold > 0 && slThreshold < 1 && bid <= slThreshold;
-      const spread = (ask > 0 && bid > 0) ? (ask - bid) : 999;
-      const spreadOk = spread <= slSpreadMax;
-      const emergencyTriggered = slEmergencyBid > 0 && bid <= slEmergencyBid;
-      // SL fires when: (bid below threshold AND spread is reasonable) OR (emergency: bid extremely low regardless of spread)
-      if (bidTriggered && (spreadOk || emergencyTriggered)) {
-        const slReason = emergencyTriggered && !spreadOk ? "emergency" : "normal";
+      const askConfirms = ask > 0 && ask <= slAskMax; // ask must also be low — confirms genuine price drop, not just empty bid side
+      // SL fires when: bid below threshold AND ask also low (both sides agree price is down)
+      if (bidTriggered && askConfirms) {
         const pnl = shares * (bid - entryPrice);
-        console.log(`[SL_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} <= SL=${slThreshold} | spread=${spread.toFixed(3)} <= ${slSpreadMax} | emergency=${emergencyTriggered} | reason=${slReason} | entry=${entryPrice.toFixed(3)} | est_pnl=$${pnl.toFixed(2)}`);
+        console.log(`[SL_CLOB] ${trade.slug} | bid=${bid.toFixed(3)} <= SL=${slThreshold} | ask=${ask.toFixed(3)} <= askMax=${slAskMax.toFixed(3)} | entry=${entryPrice.toFixed(3)} | est_pnl=$${pnl.toFixed(2)}`);
         signals.push({
           type: "signal_close",
           signal_id: trade.signal_id,
@@ -1293,14 +1271,13 @@ export class TradeBridge {
       const fb = isEsports ? "esports" : "default";
 
       const slBid = resolve(prefix, "stop_loss_bid", fb, 0.70);
-      const spreadMax = resolve(prefix, "stop_loss_spread_max", fb, 0.50);
-      const emergencyBid = resolve(prefix, "stop_loss_emergency_bid", fb, 0.15);
+      const askBuffer = Number(this.cfg?.paper?.stop_loss_ask_buffer ?? 0.10);
 
       // Look up tokenId from watchlist
       const wm = watchlist ? Object.values(watchlist).find(m => m?.slug === slug) : null;
       const tokenId = wm?.yes_token_id || wm?.tokenId;
       if (tokenId) {
-        results.push({ tokenId: String(tokenId), slBid, spreadMax, emergencyBid, slug });
+        results.push({ tokenId: String(tokenId), slBid, askBuffer, slug });
       }
     }
     return results;

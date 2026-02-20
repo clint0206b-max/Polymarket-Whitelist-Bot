@@ -19,7 +19,7 @@ const cfg = {
   filters: {
     min_prob: 0.93,
     max_entry_price: 0.97,
-    min_entry_price_cbb: 0.88,
+    min_entry_price_cbb: 0.80,
     max_entry_price_cbb: 0.93,
     min_entry_price_cs2: 0.87,
     max_entry_price_cs2: 0.93,
@@ -32,7 +32,7 @@ describe("selectPipelineUniverse — entry proximity sort", () => {
       watchlist: {
         a: mkMarket("cbb-a", "watching", 0.91, { vol: 100 }),   // inside CBB range → dist=0
         b: mkMarket("cs2-b", "watching", 0.30, { vol: 50000 }), // far below CS2 range → dist=0.57
-        c: mkMarket("cbb-c", "watching", 0.88, { vol: 200 }),   // below CBB range → dist=0.02
+        c: mkMarket("cbb-c", "watching", 0.88, { vol: 200 }),   // inside CBB range → dist=0
       },
     };
     const result = selectPipelineUniverse(state, cfg);
@@ -43,15 +43,15 @@ describe("selectPipelineUniverse — entry proximity sort", () => {
   it("markets closer to range beat farther ones", () => {
     const state = {
       watchlist: {
-        a: mkMarket("cbb-a", "watching", 0.85),  // dist=0.03 (below 0.88)
-        b: mkMarket("cbb-b", "watching", 0.89),  // dist=0 (inside 0.88-0.93)
-        c: mkMarket("cbb-c", "watching", 0.50),  // dist=0.38
+        a: mkMarket("cbb-a", "watching", 0.75),  // dist=0.05 (below 0.80)
+        b: mkMarket("cbb-b", "watching", 0.89),  // dist=0 (inside 0.80-0.93)
+        c: mkMarket("cbb-c", "watching", 0.50),  // dist=0.30 (below 0.80)
         d: mkMarket("cbb-d", "watching", 0.92),  // dist=0 (inside)
       },
     };
     const result = selectPipelineUniverse(state, cfg);
     const slugs = result.map(m => m.slug);
-    // b(0) and d(0) tied, stable sort → b before d; a(0.03) third — limit 3, c excluded
+    // b(0) and d(0) tied, stable sort → b before d; a(0.05) third — limit 3, c excluded
     assert.deepStrictEqual(slugs, ["cbb-b", "cbb-d", "cbb-a"]);
   });
 
@@ -118,14 +118,14 @@ describe("selectPipelineUniverse — entry proximity sort", () => {
         a: mkMarket("cbb-a", "watching", 0.91),   // CBB inside → 0
         b: mkMarket("cs2-b", "watching", 0.90),    // CS2 inside → 0
         c: mkMarket("lib-c", "watching", 0.95),    // default inside → 0
-        d: mkMarket("cbb-d", "watching", 0.80),    // CBB below → 0.10
-        e: mkMarket("cs2-e", "watching", 0.80),    // CS2 below → 0.07
+        d: mkMarket("cbb-d", "watching", 0.70),    // CBB below → 0.10
+        e: mkMarket("cs2-e", "watching", 0.80),    // CS2 below → 0.02
       },
     };
     const cfgBig = { ...cfg, polling: { eval_max_markets_per_cycle: 50 } };
     const result = selectPipelineUniverse(state, cfgBig);
     const slugs = result.map(m => m.slug);
-    // dist: a=0, b=0, c=0, e=0.07, d=0.10
+    // dist: a=0, b=0, c=0, e=0.02, d=0.10
     // First 3 are all dist=0 (order by lastSeen, all 0 → stable sort)
     assert.ok(slugs.indexOf("cbb-d") > slugs.indexOf("cs2-e")); // d farther than e
   });
