@@ -10,11 +10,11 @@ This file contains everything you need to understand and modify the codebase saf
 
 **What it does:** High-frequency signal generation for Polymarket prediction markets. Discovers live sports/esports markets, evaluates them through a multi-stage pipeline with context-aware gates (ESPN scoreboards), and executes trades.
 
-**Current status:** Running LIVE with real money (commit `d986312`)
+**Current status:** Running LIVE with real money (commit `3a788aa`)
 
 **Key constraint:** This bot trades real money. **Every change must be tested extensively before deploy.**
 
-**Tests:** 1032 passing
+**Tests:** 1034 passing
 
 ---
 
@@ -165,19 +165,28 @@ selectPipelineUniverse() → ESPN context tagging → stage1 → stage2 → pend
    - Exit depth (bid side): ≥ $2,000 above floor (0.70)
    - Iterates book levels until threshold met
 
-4. **Pending Confirmation (6s window)**
-   - Enter pending: set `status = pending_signal`, `pending_since_ts = now`
-   - Cooldown: 20s per slug (prevents churning same market)
-   - Timeout after 6s: log to signals.jsonl (`signal_timeout`)
-   - Promote to signaled: if still passes Stage1+Stage2 after 6s
+4. **Context Entry Gate** (CBB/CWBB/NBA only)
+   - `checkContextEntryGate()` in `src/strategy/win_prob_table.mjs`
+   - **Period check:** CBB/CWBB must be H2+ (period ≥ 2), NBA must be Q4+ (period ≥ 4)
+   - **Margin check:** `marginForYes >= min_margin` (config, currently 3)
+   - **No time gate:** `max_minutes_left` removed (2026-02-19). Any time within the correct period is allowed.
+   - **Win prob:** calculated but threshold is 0 for all sports (effectively disabled)
+   - Blocking mode: market rejected with `cbb_gate:not_final_period`, `not_ahead`, etc.
 
-5. **Signal Generation**
+5. **Pending Confirmation**
+   - **CBB/CWBB/NBA:** `pending_max_checks: 0` → instant signal (`[INSTANT_SIGNAL]` path). No confirmation delay.
+   - **Other sports:** Enter pending: set `status = pending_signal`, `pending_since_ts = now`
+   - Cooldown: 20s per slug (prevents churning same market)
+   - Timeout after configured window: log to signals.jsonl (`signal_timeout`)
+   - Promote to signaled: if still passes Stage1+Stage2 after window
+
+6. **Signal Generation**
    - Set `status = signaled`
    - Append to `journal/signals.jsonl` (`signal_open` event)
    - Update `journal/open_index.json` (open paper positions)
    - Include context snapshot (win prob, margin, time left, TP math)
 
-6. **Trade Execution** (if mode != paper)
+7. **Trade Execution** (if mode != paper)
    - Load trade bridge (src/execution/trade_bridge.mjs)
    - Check guards (max position, exposure, concurrent, daily limit)
    - Execute buy (idempotent by signal_id)
@@ -320,9 +329,8 @@ loadOpenIndex() → for each open position → fetchGammaMarketBySlug()
       gate_mode: "tag_only",      // Default: observe, don't block
       gate_mode_nba: "blocking",  // Live trading guard (REQUIRED for mode!=paper)
       gate_mode_cbb: "blocking",  // Live trading guard
-      min_win_prob: 0.90,
-      max_minutes_left: 5,
-      min_margin: 1
+      min_win_prob: 0.90,         // overridden to 0 for CBB/NBA/CWBB in local.json
+      min_margin: 1              // overridden to 3 in local.json (aligned with context SL min_margin_hold)
     },
     cbb: { provider: "espn", fetch_seconds: 15, max_ctx_age_ms: 120000 },
     nba: { provider: "espn", fetch_seconds: 15, max_ctx_age_ms: 120000 },
