@@ -2817,5 +2817,23 @@ export async function loopEvalHttpOnly(state, cfg, now) {
   oppTracker.maybeFlushStageSummary(now);
   oppTracker.maybePersist(now);
 
+  // ── LoL Esports Edge Logger (observation only, no trading impact) ──
+  try {
+    const { lolEdgeLoggerTick } = await import("../context/lol_esports_logger.mjs");
+    const lolStats = await lolEdgeLoggerTick(state, cfg, now);
+    if (lolStats.active_games > 0) {
+      health.lol_edge_active_games = lolStats.active_games;
+      health.lol_edge_ticks_logged = (health.lol_edge_ticks_logged || 0) + lolStats.ticks_logged;
+    }
+  } catch (e) {
+    // Never let the logger crash the eval loop
+    health.lol_edge_errors = (health.lol_edge_errors || 0) + 1;
+    if (!health._lol_edge_last_error || Date.now() - (health._lol_edge_last_error_ts || 0) > 60000) {
+      console.error(`[LOL_EDGE] tick error: ${e?.message}`);
+      health._lol_edge_last_error = e?.message;
+      health._lol_edge_last_error_ts = Date.now();
+    }
+  }
+
   return { changed };
 }
