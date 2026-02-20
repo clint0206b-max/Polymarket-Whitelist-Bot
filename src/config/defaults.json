@@ -137,7 +137,10 @@
     "mode": "fixed",
     "fixed_usd": 10,
     "percent": 10,
+    "max_exposure_pct": 60,
+    "max_trade_usd": 18,
     "fallback_fixed_usd": 10,
-    "balance_max_age_ms": 300000
+    "balance_max_age_ms": 300000,
+    "net_deposits": 0
   }
 }

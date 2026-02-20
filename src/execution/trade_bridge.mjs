@@ -113,6 +113,10 @@ export class TradeBridge {
       getBalanceFn: null, // set in init() when client is available
     });
     this._currentPricesBySlug = new Map(); // updated each loop for sizing
+
+    // Boot cooldown: skip new buys for the first loop after startup.
+    // Prevents overshoot when pending_deployed reservations were lost on restart.
+    this._bootLoopCount = 0;
   }
 
   async init() {
@@ -164,9 +168,13 @@ export class TradeBridge {
    */
   async refreshBalance() {
     if (this.mode === "paper") return;
+    this._bootLoopCount++;
     const result = await this.balanceCache.refresh();
     if (result.error) {
       console.warn(`[BALANCE_CACHE] refresh error: ${result.error} | using cached=$${result.cashUsd?.toFixed(2) ?? "null"}`);
+    }
+    if (this._bootLoopCount === 1) {
+      console.log(`[TRADE_BRIDGE] Boot cooldown active — skipping new buys this loop (balance refresh OK)`);
     }
     return result;
   }
@@ -191,8 +199,12 @@ export class TradeBridge {
     if (this.mode === "paper") return null;
 
     const tradeId = `buy:${signal.signal_id}`;
-    
-    // (paused mechanism removed — bot should never stop trading automatically)
+
+    // Boot cooldown: skip new buys on first loop after restart
+    if (this._bootLoopCount <= 1) {
+      console.log(`[TRADE_BRIDGE] BOOT_COOLDOWN — skipping buy for ${signal.slug}`);
+      return { blocked: true, reason: "boot_cooldown" };
+    }
 
     // Idempotency check
     if (this.execState.trades[tradeId]) {
@@ -242,7 +254,14 @@ export class TradeBridge {
       return { blocked: true, reason: "no_budget", sizing };
     }
 
-    console.log(`[SIZING] ${signal.slug} | budget=$${budget.toFixed(2)} | method=${sizing.method} | total=$${sizing.totalBalance ?? "?"} | cash=$${sizing.cashAvailable ?? "?"} | positions=$${sizing.positionsValue ?? "?"} | ${sizing.detail || ""}`);
+    // Log sizing — format depends on mode
+    if (sizing.method === "percent_of_equity") {
+      console.log(`[SIZING] ${signal.slug} | budget=$${budget.toFixed(2)} | method=equity | base=$${sizing.base} | deployed=$${sizing.deployed}/$${sizing.maxDeployed} | avail=$${sizing.available} | cash=$${sizing.cashAvailable} | ${sizing.detail || ""}`);
+      // Record base for drop detection
+      this.balanceCache.recordBase(sizing.base);
+    } else {
+      console.log(`[SIZING] ${signal.slug} | budget=$${budget.toFixed(2)} | method=${sizing.method} | total=$${sizing.totalBalance ?? "?"} | cash=$${sizing.cashAvailable ?? "?"} | positions=$${sizing.positionsValue ?? "?"} | ${sizing.detail || ""}`);
+    }
 
     const estimatedShares = Math.floor((budget / entryPrice) * 100) / 100;
     const tokenId = signal.yes_token || signal.tokenId;
@@ -299,6 +318,10 @@ export class TradeBridge {
 
     // === LIVE EXECUTION ===
     console.log(`[LIVE_BUY] ${signal.slug} | $${budget.toFixed(2)} (~${estimatedShares} shares) @ ${entryPrice} | tokenId=${tokenId.slice(0, 10)}...`);
+
+    // Pre-reserve spend BEFORE execution to prevent intra-loop overshoot.
+    // If execution fails, we unreserve.
+    this.balanceCache.recordSpend(budget);
     
     try {
       this.execState.trades[tradeId].status = "sent";
@@ -307,6 +330,12 @@ export class TradeBridge {
       const result = await executeBuy(this.client, tokenId, budget);
       
       if (result.ok) {
+        // Adjust reservation: replace budget estimate with actual spent
+        const spentDelta = (result.spentUsd || budget) - budget;
+        if (Math.abs(spentDelta) > 0.001) {
+          this.balanceCache.recordSpend(spentDelta);
+        }
+
         this.execState.trades[tradeId] = {
           ...this.execState.trades[tradeId],
           status: "filled",
@@ -320,9 +349,6 @@ export class TradeBridge {
         };
         this.execState.daily[day] = (this.execState.daily[day] || 0) + 1;
         saveExecutionState(this.execState);
-
-        // Record spend for intra-loop cash tracking
-        this.balanceCache.recordSpend(result.spentUsd || budget);
 
         const slippage = result.avgFillPrice ? ((result.avgFillPrice - entryPrice) / entryPrice * 100).toFixed(2) : "?";
         console.log(`[FILLED_BUY] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4) || "?"} | slippage=${slippage}% | partial=${result.isPartial}`);
@@ -359,6 +385,9 @@ export class TradeBridge {
 
         return result;
       } else {
+        // Unreserve spend on failed buy
+        this.balanceCache.recordSpend(-budget);
+
         this.execState.trades[tradeId].status = "failed";
         this.execState.trades[tradeId].error = result.error;
         saveExecutionState(this.execState);
@@ -381,6 +410,9 @@ export class TradeBridge {
         return result;
       }
     } catch (e) {
+      // Unreserve spend on error
+      this.balanceCache.recordSpend(-budget);
+
       this.execState.trades[tradeId].status = "error";
       this.execState.trades[tradeId].error = e.message;
       saveExecutionState(this.execState);
@@ -842,6 +874,42 @@ export class TradeBridge {
       this.execState.last_reconcile_ts = now;
       this.execState.last_balance = effectiveBalance;
       this.execState.last_position_count = positions.length;
+
+      // --- Base drop detection ---
+      const baseDrop = this.balanceCache.checkBaseDrop(10 * 60 * 1000, 0.15);
+      if (baseDrop?.drop) {
+        // Infer causes from recent closes
+        const recentCloses = Object.values(this.execState.trades)
+          .filter(t => t.closed && t.ts_filled && (now - t.ts_filled) < 10 * 60 * 1000);
+        const slCount = recentCloses.filter(t => String(t.close_reason || "").includes("stop_loss")).length;
+        const ctxSlCount = recentCloses.filter(t => t.close_reason === "context_sl").length;
+        const otherCount = recentCloses.length - slCount - ctxSlCount;
+        const causes = [];
+        if (slCount > 0) causes.push(`${slCount}×SL`);
+        if (ctxSlCount > 0) causes.push(`${ctxSlCount}×context_sl`);
+        if (otherCount > 0) causes.push(`${otherCount}×other`);
+        console.warn(`[BASE_DROP] base=$${baseDrop.currentBase} (was $${baseDrop.peakBase} ${(10).toFixed(0)}min ago) | drop=${(baseDrop.dropPct * 100).toFixed(1)}% | causes: ${causes.join(", ") || "unknown"}`);
+        appendJsonl("state/journal/executions.jsonl", {
+          type: "base_drop_alert",
+          ts: now,
+          ...baseDrop,
+          causes: causes.join(", "),
+        });
+      }
+
+      // --- Net deposits auto-detect ---
+      const netDeposits = Number(this.cfg?.sizing?.net_deposits ?? 0);
+      if (netDeposits > 0 && openTrades.length === 0 && effectiveBalance != null) {
+        const diff = effectiveBalance - netDeposits;
+        // If cash differs from net_deposits by > $5 with no positions, it's either profit or deposit/withdrawal.
+        // We only flag large unexpected jumps (> $20) as potential deposits/withdrawals.
+        const lastKnownBalance = this.execState.last_balance;
+        if (lastKnownBalance != null && Math.abs(effectiveBalance - lastKnownBalance) > 20) {
+          const delta = effectiveBalance - lastKnownBalance;
+          console.warn(`[NET_DEPOSITS] Large cash change detected: $${lastKnownBalance.toFixed(2)} → $${effectiveBalance.toFixed(2)} (Δ$${delta.toFixed(2)}) with 0 open positions — potential deposit/withdrawal. Check sizing.net_deposits config.`);
+        }
+      }
+
       saveExecutionState(this.execState);
       
     } catch (e) {
