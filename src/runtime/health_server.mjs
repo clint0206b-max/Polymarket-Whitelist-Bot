@@ -592,6 +592,8 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
       return tracker?.getStats?.() || null;
     })(),
 
+    ws_price_logger: state?.runtime?._wsPriceLogger?.getStats?.() || null,
+
     depth_cache: (() => {
       const dc = state?.runtime?._depthCache;
       if (!dc) return null;

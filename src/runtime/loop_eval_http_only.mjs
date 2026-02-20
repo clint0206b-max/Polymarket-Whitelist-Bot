@@ -1,6 +1,7 @@
 import { getBook } from "../clob/book_http_client.mjs";
 import { parseAndNormalizeBook } from "../clob/book_parser.mjs";
 import { CLOBWebSocketClient } from "../clob/ws_client.mjs";
+import { WSPriceLogger } from "../journal/ws_price_logger.mjs";
 import { is_base_signal_candidate, is_near_signal_margin, resolveEntryPriceLimits } from "../strategy/stage1.mjs";
 import { compute_depth_metrics, is_depth_sufficient } from "../strategy/stage2.mjs";
 import { createHttpQueue } from "./http_queue.mjs";
@@ -235,6 +236,9 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     if (state.runtime._slBreachTracker) {
       state.runtime.wsClient.slBreachTracker = state.runtime._slBreachTracker;
     }
+    // Attach WS price logger for backtest data collection
+    state.runtime._wsPriceLogger = new WSPriceLogger();
+    state.runtime.wsClient.priceLogger = state.runtime._wsPriceLogger;
     // Don't call connect() here - let it connect on first subscribe() call
     console.log("[WS] Client initialized (lazy mode)");
   }
@@ -1746,6 +1750,14 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     const tokensToSubscribe = [yesToken];
     if (noToken) tokensToSubscribe.push(noToken);
     wsClient.subscribe(tokensToSubscribe);
+
+    // Register tokens in WS price logger for slug/league resolution
+    if (state.runtime._wsPriceLogger) {
+      const slug = String(m.slug || "");
+      const league = String(m.league || "");
+      state.runtime._wsPriceLogger.register(yesToken, slug, league);
+      if (noToken) state.runtime._wsPriceLogger.register(noToken, slug + ":no", league);
+    }
 
     // Reason A: need usable price (WS primary, HTTP fallback)
     // Try WebSocket first (real-time, zero HTTP overhead)

@@ -10,6 +10,7 @@ export class CLOBWebSocketClient {
     this.cache = new Map(); // tokenId → {bestBid, bestAsk, spread, lastUpdate, lastSeenTs}
     this.lastMessageTs = 0; // Global: any parsed message from the socket
     this.slBreachTracker = null; // Optional: set by loop for SL latency measurement
+    this.priceLogger = null;     // Optional: WSPriceLogger for tick logging
     this.subscriptions = new Set(); // Set of tokenIds currently subscribed
     this.reconnectDelay = 1000; // Start with 1s
     this.maxReconnectDelay = 60000; // Max 60s
@@ -226,6 +227,10 @@ export class CLOBWebSocketClient {
     // Notify SL breach tracker if attached
     if (this.slBreachTracker) {
       this.slBreachTracker.onPriceUpdate(assetId, bestBid, bestAsk, this.isConnected);
+    }
+    // Log tick for backtest data collection
+    if (this.priceLogger) {
+      this.priceLogger.onPriceUpdate(assetId, bestBid, bestAsk);
     }
   }
 
