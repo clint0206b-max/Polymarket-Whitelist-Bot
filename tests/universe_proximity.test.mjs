@@ -19,7 +19,7 @@ const cfg = {
   filters: {
     min_prob: 0.93,
     max_entry_price: 0.97,
-    min_entry_price_cbb: 0.90,
+    min_entry_price_cbb: 0.88,
     max_entry_price_cbb: 0.93,
     min_entry_price_cs2: 0.87,
     max_entry_price_cs2: 0.93,
@@ -43,16 +43,16 @@ describe("selectPipelineUniverse — entry proximity sort", () => {
   it("markets closer to range beat farther ones", () => {
     const state = {
       watchlist: {
-        a: mkMarket("cbb-a", "watching", 0.85),  // dist=0.05
-        b: mkMarket("cbb-b", "watching", 0.89),  // dist=0.01
-        c: mkMarket("cbb-c", "watching", 0.50),  // dist=0.40
+        a: mkMarket("cbb-a", "watching", 0.85),  // dist=0.03 (below 0.88)
+        b: mkMarket("cbb-b", "watching", 0.89),  // dist=0 (inside 0.88-0.93)
+        c: mkMarket("cbb-c", "watching", 0.50),  // dist=0.38
         d: mkMarket("cbb-d", "watching", 0.92),  // dist=0 (inside)
       },
     };
     const result = selectPipelineUniverse(state, cfg);
     const slugs = result.map(m => m.slug);
-    // d(0) < b(0.01) < a(0.05) — limit 3, c excluded
-    assert.deepStrictEqual(slugs, ["cbb-d", "cbb-b", "cbb-a"]);
+    // b(0) and d(0) tied, stable sort → b before d; a(0.03) third — limit 3, c excluded
+    assert.deepStrictEqual(slugs, ["cbb-b", "cbb-d", "cbb-a"]);
   });
 
   it("above-range markets are deprioritized", () => {
