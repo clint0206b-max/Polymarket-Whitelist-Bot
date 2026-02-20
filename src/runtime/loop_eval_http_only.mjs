@@ -825,7 +825,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     // CBB
     for (const m of wl) {
       if (m.league !== "cbb" && m.league !== "cwbb") continue;
-      if (!(m.status === "watching" || m.status === "pending_signal")) continue;
+      if (!(m.status === "watching" || m.status === "pending_signal" || m.status === "signaled")) continue;
 
       bumpBucket("health", "context_cbb_tag_attempt", 1);
 
@@ -917,7 +917,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     // NBA
     for (const m of wl) {
       if (m.league !== "nba") continue;
-      if (!(m.status === "watching" || m.status === "pending_signal")) continue;
+      if (!(m.status === "watching" || m.status === "pending_signal" || m.status === "signaled")) continue;
 
       bumpBucket("health", "context_nba_tag_attempt", 1);
 
@@ -988,7 +988,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     // --- Win probability + context entry gate (tag-only dry run) ---
     for (const m of wl) {
       if (m.league !== "cbb" && m.league !== "cwbb" && m.league !== "nba") continue;
-      if (!(m.status === "watching" || m.status === "pending_signal")) continue;
+      if (!(m.status === "watching" || m.status === "pending_signal" || m.status === "signaled")) continue;
       if (!m.context || m.context.provider !== "espn") continue;
       if (m.context.state !== "in") continue;
 
