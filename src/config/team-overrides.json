@@ -1,17 +1,32 @@
 {
   "_doc": "Manual overrides for Polymarket ↔ ESPN team matching. Two separate namespaces.",
-  "_doc_title": "title_school_overrides: normalized market team name variants → schoolToken. Bypasses mascot stripping. Key is an array of variants (post-norm), value is target schoolToken.",
+  "_doc_title": "title_school_overrides: normalized market team name variants → schoolToken. Bypasses mascot stripping. Key is descriptive; 'variants' array has normalized strings to match, 'target' is the output schoolToken.",
   "_doc_outcome": "outcome_team_overrides: normalized outcome fragment → ESPN team fragment. Applied as word-boundary replace. Keys must be ≥2 words.",
 
   "title_school_overrides": {
     "binghamton bearcats": {
       "variants": ["binghamton bearcats"],
       "target": "binghamton"
+    },
+    "massachusetts lowell": {
+      "variants": ["massachusetts lowell river hawks", "massachusetts lowell"],
+      "target": "umass lowell"
+    },
+    "usc upstate": {
+      "variants": ["usc upstate spartans", "usc upstate"],
+      "target": "south carolina upstate"
+    },
+    "appalachian state": {
+      "variants": ["appalachian state mountaineers", "appalachian state"],
+      "target": "app state"
     }
   },
 
   "outcome_team_overrides": {
     "massachusetts lowell": "umass lowell",
-    "appalachian state": "app state"
+    "appalachian state": "app state",
+    "central connecticut state": "central connecticut",
+    "liu sharks": "long island university sharks",
+    "uncw seahawks": "unc wilmington seahawks"
   }
 }

@@ -846,6 +846,13 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       const ctx = deriveCbbContextForMarket(m, events, cfg, tNow);
       if (ctx.ok && isCwbb && ctx.context) ctx.context.sport = "cwbb";
       if (ctx.ok) {
+        // Clear any stale title_match issue for this slug
+        if (Array.isArray(state.runtime._contextMatchIssues)) {
+          state.runtime._contextMatchIssues = state.runtime._contextMatchIssues.filter(
+            x => !(x.slug === String(m.slug || "") && x.system === "title_match")
+          );
+        }
+
         const fetchTs = (() => {
           const node = state.runtime?.context_cache?.cbb_by_dateKey;
           const row = node && node[dateKey];
@@ -929,6 +936,13 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
       const ctx = deriveNbaContextForMarket(m, events, cfg, tNow);
       if (ctx.ok) {
+        // Clear any stale title_match issue for this slug
+        if (Array.isArray(state.runtime._contextMatchIssues)) {
+          state.runtime._contextMatchIssues = state.runtime._contextMatchIssues.filter(
+            x => !(x.slug === String(m.slug || "") && x.system === "title_match")
+          );
+        }
+
         const fetchTs = (() => {
           const node = state.runtime?.context_cache?.nba_by_dateKey;
           const row = node && node[dateKey];
@@ -1027,6 +1041,13 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           // Ambiguous or no match — can't determine direction
           bumpBucket("health", `context_entry_team_match_fail:${sport}`, 1);
         }
+      }
+
+      // Clear stale outcome_match issue if margin resolved successfully
+      if (marginForYes != null && Array.isArray(state.runtime._contextMatchIssues)) {
+        state.runtime._contextMatchIssues = state.runtime._contextMatchIssues.filter(
+          x => !(x.slug === String(m.slug || "") && x.system === "outcome_match")
+        );
       }
 
       // Distinguish team_match_fail from true no_context:

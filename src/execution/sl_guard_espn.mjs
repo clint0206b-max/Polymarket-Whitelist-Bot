@@ -9,6 +9,17 @@
 
 import { fetchEspnCbbScoreboardForDate, deriveCbbContextForMarket, computeDateWindow3, mergeScoreboardEventsByWindow } from "../context/espn_cbb_scoreboard.mjs";
 import { fetchEspnNbaScoreboardForDate, deriveNbaContextForMarket } from "../context/espn_nba_scoreboard.mjs";
+import { loadTeamOverrides, applyOutcomeOverride } from "../config/team_overrides.mjs";
+
+// Lazy-load outcome overrides
+let _outcomeOverrides = null;
+function getOutcomeOverrides() {
+  if (_outcomeOverrides === null) {
+    const ov = loadTeamOverrides();
+    _outcomeOverrides = ov.outcomeEntries;
+  }
+  return _outcomeOverrides;
+}
 
 function todayDateKey() {
   // UTC date key YYYYMMDD
@@ -18,6 +29,11 @@ function todayDateKey() {
 
 function normTeam(s) {
   return String(s || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function nameMatch(yesN, teamN) {
+  if (!yesN || !teamN) return false;
+  return yesN === teamN || yesN.includes(teamN) || teamN.includes(yesN);
 }
 
 /**
@@ -43,20 +59,25 @@ function evaluateGuard(ctx, outcomeName) {
     return { block: false, reason: "no_team_data" };
   }
 
-  // Match our outcome to a team
-  const normOutcome = normTeam(outcomeName);
+  // Match our outcome to a team (with outcome overrides for abbreviation mismatches)
+  const normOutcome = applyOutcomeOverride(normTeam(outcomeName), getOutcomeOverrides());
   const normA = normTeam(teams.a.name);
   const normB = normTeam(teams.b.name);
+  const normAFull = teams.a.fullName ? normTeam(teams.a.fullName) : null;
+  const normBFull = teams.b.fullName ? normTeam(teams.b.fullName) : null;
 
   let ourScore = null;
   let theirScore = null;
   let ourTeam = null;
 
-  if (normOutcome.includes(normA) || normA.includes(normOutcome)) {
+  const yesIsA = nameMatch(normOutcome, normA) || nameMatch(normOutcome, normAFull);
+  const yesIsB = nameMatch(normOutcome, normB) || nameMatch(normOutcome, normBFull);
+
+  if (yesIsA && !yesIsB) {
     ourScore = teams.a.score;
     theirScore = teams.b.score;
     ourTeam = teams.a.name;
-  } else if (normOutcome.includes(normB) || normB.includes(normOutcome)) {
+  } else if (yesIsB && !yesIsA) {
     ourScore = teams.b.score;
     theirScore = teams.a.score;
     ourTeam = teams.b.name;
