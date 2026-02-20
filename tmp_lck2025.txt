@@ -1,0 +1,150 @@
+link "02:20 Gen.G Gen.G 3 – 1 Hanwha Life Hanwha Life" [ref=e49]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/gen-g-league-of-legends-hanwha-life-league-of-legends-C0wJnsaf/
+    - paragraph: "1.40"
+    - paragraph: "2.88"
+    - text: 8
+link "02:00 Gen.G Gen.G 3 – 0 KT Rolster KT Rolster" [ref=e50]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/gen-g-league-of-legends-kt-rolster-league-of-legends-buSE3eDG/
+    - paragraph: "1.11"
+    - paragraph: "6.34"
+    - text: 8
+link "03:00 T1 T1 2 – 3 Gen.G Gen.G" [ref=e51]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/t1-league-of-legends-gen-g-league-of-legends-xQkSadpQ/
+    - paragraph: "3.14"
+    - paragraph: "1.35"
+    - text: 8
+link "03:00 KT Rolster KT Rolster 0 – 3 Hanwha Life Hanwha Life" [ref=e52]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/kt-rolster-league-of-legends-hanwha-life-league-of-legends-Mo9E5I2N/
+    - paragraph: "3.43"
+    - paragraph: "1.30"
+    - text: 9
+link "05:00 Dplus Kia Dplus Kia 1 – 3 T1 T1" [ref=e53]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/dplus-kia-league-of-legends-t1-league-of-legends-6XcSlzsg/
+    - paragraph: "3.62"
+    - paragraph: "1.28"
+    - text: 9
+link "05:00 Dplus Kia Dplus Kia 3 – 1 FearX FearX" [ref=e54]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/dplus-kia-league-of-legends-fearx-league-of-legends-vo6RkRW8/
+    - paragraph: "1.40"
+    - paragraph: "2.93"
+    - text: 10
+link "03:00 Hanwha Life Hanwha Life 3 – 0 T1 T1" [ref=e55]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/hanwha-life-league-of-legends-t1-league-of-legends-llqX4oUb/
+    - paragraph: "2.80"
+    - paragraph: "1.43"
+    - text: 8
+link "03:00 Gen.G Gen.G 2 – 3 KT Rolster KT Rolster" [ref=e56]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/gen-g-league-of-legends-kt-rolster-league-of-legends-pYubgiKH/
+    - paragraph: "1.04"
+    - paragraph: "10.00"
+    - text: 8
+link "05:00 FearX FearX 1 – 3 KT Rolster KT Rolster" [ref=e57]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/fearx-league-of-legends-kt-rolster-league-of-legends-MwaULJiB/
+    - paragraph: "2.73"
+    - paragraph: "1.44"
+    - text: 9
+link "05:00 Dplus Kia Dplus Kia 2 – 3 T1 T1" [ref=e58]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/dplus-kia-league-of-legends-t1-league-of-legends-U32xKcMN/
+    - paragraph: "6.80"
+    - paragraph: "1.09"
+    - text: 9
+link "03:00 Nongshim RedForce Nongshim RedForce 0 – 3 Dplus Kia Dplus Kia" [ref=e59]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/nongshim-redforce-league-of-legends-dplus-kia-league-of-legends-hpna7STs/
+    - paragraph: "3.09"
+    - paragraph: "1.36"
+    - text: 10
+link "03:00 Dplus Kia Dplus Kia 3 – 1 OKSavingsBank Brion OKSavingsBank Brion" [ref=e60]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/dplus-kia-league-of-legends-oksavingsbank-brion-league-of-legends-AHSoBSDi/
+    - paragraph: "1.33"
+    - paragraph: "3.32"
+    - text: 9
+link "05:00 Nongshim RedForce Nongshim RedForce 1 – 3 FearX FearX" [ref=e61]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/nongshim-redforce-league-of-legends-fearx-league-of-legends-Io0Ylw2s/
+    - paragraph: "1.93"
+    - paragraph: "1.82"
+    - text: 6
+link "05:00 Dplus Kia Dplus Kia 2 – 3 FearX FearX" [ref=e62]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/dplus-kia-league-of-legends-fearx-league-of-legends-8xIk6XGd/
+    - paragraph: "1.23"
+    - paragraph: "4.00"
+    - text: 10
+link "05:00 Nongshim RedForce Nongshim RedForce 3 – 2 OKSavingsBank Brion OKSavingsBank Brion" [ref=e63]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/nongshim-redforce-league-of-legends-oksavingsbank-brion-league-of-legends-K8Jaxmq9/
+    - paragraph: "1.40"
+    - paragraph: "2.82"
+    - text: 10
+link "05:30 DRX DRX 1 – 2 OKSavingsBank Brion OKSavingsBank Brion" [ref=e64]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/drx-league-of-legends-oksavingsbank-brion-league-of-legends-f7yWHa34/
+    - paragraph: "2.01"
+    - paragraph: "1.75"
+    - text: 10
+link "03:00 Nongshim RedForce Nongshim RedForce 0 – 2 KT Rolster KT Rolster" [ref=e65]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/nongshim-redforce-league-of-legends-kt-rolster-league-of-legends-lAYNJLYi/
+    - paragraph: "3.33"
+    - paragraph: "1.32"
+    - text: 9
+link "05:00 DN SOOPers DN SOOPers 1 – 2 Dplus Kia Dplus Kia" [ref=e66]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/dn-soopers-league-of-legends-dplus-kia-league-of-legends-Y1jydIto/
+    - paragraph: "6.47"
+    - paragraph: "1.11"
+    - text: 9
+link "03:00 T1 T1 1 – 2 Gen.G Gen.G" [ref=e67]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/t1-league-of-legends-gen-g-league-of-legends-xW451vJN/
+    - paragraph: "2.55"
+    - paragraph: "1.50"
+    - text: 8
+link "07:00 Hanwha Life Hanwha Life 2 – 0 Nongshim RedForce Nongshim RedForce" [ref=e68]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/hanwha-life-league-of-legends-nongshim-redforce-league-of-legends-t4Bd30lB/
+    - paragraph: "1.09"
+    - paragraph: "7.00"
+    - text: 9
+link "05:00 FearX FearX 2 – 1 DRX DRX" [ref=e69]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/fearx-league-of-legends-drx-league-of-legends-fmDl5MJb/
+    - paragraph: "1.56"
+    - paragraph: "2.40"
+    - text: 9
+link "07:00 Gen.G Gen.G 2 – 0 KT Rolster KT Rolster" [ref=e70]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/gen-g-league-of-legends-kt-rolster-league-of-legends-YXOu7rkn/
+    - paragraph: "1.10"
+    - paragraph: "6.95"
+    - text: 8
+link "05:00 Dplus Kia Dplus Kia 2 – 0 OKSavingsBank Brion OKSavingsBank Brion" [ref=e71]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/dplus-kia-league-of-legends-oksavingsbank-brion-league-of-legends-r9qWnu4U/
+    - paragraph: "1.38"
+    - paragraph: "2.97"
+    - text: 10
+link "07:00 DN SOOPers DN SOOPers 0 – 2 FearX FearX" [ref=e72]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/dn-soopers-league-of-legends-fearx-league-of-legends-nsjNl1ZH/
+    - paragraph: "3.02"
+    - paragraph: "1.37"
+    - text: 10
+link "05:00 T1 T1 2 – 1 Hanwha Life Hanwha Life" [ref=e73]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/t1-league-of-legends-hanwha-life-league-of-legends-ETiFjN45/
+    - paragraph: "1.51"
+    - paragraph: "2.52"
+    - text: 9
+link "05:00 KT Rolster KT Rolster 2 – 0 T1 T1" [ref=e74]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/kt-rolster-league-of-legends-t1-league-of-legends-8tIooXin/
+    - paragraph: "7.23"
+    - paragraph: "1.09"
+    - text: 7
+link "03:00 FearX FearX 0 – 2 Dplus Kia Dplus Kia" [ref=e75]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/fearx-league-of-legends-dplus-kia-league-of-legends-4SiyRT6U/
+    - paragraph: "2.40"
+    - paragraph: "1.56"
+    - text: 10
+link "05:00 OKSavingsBank Brion OKSavingsBank Brion 1 – 2 DN SOOPers DN SOOPers" [ref=e76]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/oksavingsbank-brion-league-of-legends-dn-soopers-league-of-legends-d2lTSkxI/
+    - paragraph: "1.40"
+    - paragraph: "2.91"
+    - text: 10
+link "03:00 Hanwha Life Hanwha Life 1 – 2 Gen.G Gen.G" [ref=e77]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/hanwha-life-league-of-legends-gen-g-league-of-legends-jkJSUB75/
+    - paragraph: "4.14"
+    - paragraph: "1.23"
+    - text: 9
+link "07:50 Dplus Kia Dplus Kia 2 – 1 DRX DRX" [ref=e78]:
+      - /url: /esports/league-of-legends/league-of-legends-lck-2025/dplus-kia-league-of-legends-drx-league-of-legends-IyLKWXxg/
+    - paragraph: "1.29"
+    - paragraph: "3.44"
+    - text: 10

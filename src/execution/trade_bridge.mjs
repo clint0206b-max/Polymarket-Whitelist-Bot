@@ -104,7 +104,7 @@ export class TradeBridge {
 
     // Price tick logging: throttled per signal_id
     this._priceTickLastTs = new Map(); // signal_id → last log timestamp
-    this._priceTickIntervalMs = 30_000; // log every 30s per position
+    this._priceTickIntervalMs = 5_000; // log every 5s per position
 
     // Balance cache for dynamic sizing
     this.balanceCache = createBalanceCache({

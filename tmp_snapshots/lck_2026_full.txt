@@ -1,0 +1,270 @@
+link "05:00 Dplus Kia Dplus Kia 3 – 1 DN SOOPers DN SOOPers" [ref=e49]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/dplus-kia-league-of-legends-dn-soopers-league-of-legends-zDMzdCfJ/
+      - paragraph: 05:00
+      - paragraph: Dplus Kia
+      - text: 3 – 1
+      - paragraph: DN SOOPers
+    - paragraph: "1.30"
+    - paragraph: "3.51"
+    - text: 9 Yesterday, 19 Feb - Preliminary - Play Offs 1 2 B's
+    - link "05:00 DN SOOPers DN SOOPers 3 – 1 DRX DRX" [ref=e50]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/dn-soopers-league-of-legends-drx-league-of-legends-GEEtdpMM/
+      - paragraph: 05:00
+      - paragraph: DN SOOPers
+      - text: 3 – 1
+      - paragraph: DRX
+    - paragraph: "1.80"
+    - paragraph: "1.98"
+    - text: 9 15 Feb 2026 - Preliminary - Play Offs 1 2 B's
+    - link "05:00 T1 T1 1 – 3 FearX FearX" [ref=e51]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/t1-league-of-legends-fearx-league-of-legends-zyDQaSMc/
+      - paragraph: 05:00
+      - paragraph: T1
+      - text: 1 – 3
+      - paragraph: FearX
+    - paragraph: "1.12"
+    - paragraph: "5.79"
+    - text: 9 14 Feb 2026 - Preliminary - Play Offs 1 2 B's
+    - link "05:00 Gen.G Gen.G 3 – 1 Dplus Kia Dplus Kia" [ref=e52]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/gen-g-league-of-legends-dplus-kia-league-of-legends-r1GYc6iA/
+      - paragraph: 05:00
+      - paragraph: Gen.G
+      - text: 3 – 1
+      - paragraph: Dplus Kia
+    - paragraph: "1.07"
+    - paragraph: "7.90"
+    - text: 9 13 Feb 2026 - Preliminary - Play Offs 1 2 B's
+    - link "05:00 Dplus Kia Dplus Kia 3 – 2 DRX DRX" [ref=e53]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/dplus-kia-league-of-legends-drx-league-of-legends-xnhTsIZQ/
+      - paragraph: 05:00
+      - paragraph: Dplus Kia
+      - text: 3 – 2
+      - paragraph: DRX
+    - paragraph: "1.14"
+    - paragraph: "5.42"
+    - text: 9 12 Feb 2026 - Preliminary - Play Offs 1 2 B's
+    - link "05:00 FearX FearX 3 – 2 DN SOOPers DN SOOPers" [ref=e54]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/fearx-league-of-legends-dn-soopers-league-of-legends-WlkLqv5E/
+      - paragraph: 05:00
+      - paragraph: FearX
+      - text: 3 – 2
+      - paragraph: DN SOOPers
+    - paragraph: "1.27"
+    - paragraph: "3.60"
+    - text: 9 08 Feb 2026 - Preliminary Play-in 1 2 B's
+    - link "05:00 Nongshim RedForce Nongshim RedForce 0 – 3 DRX DRX" [ref=e55]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/nongshim-redforce-league-of-legends-drx-league-of-legends-fmCDoOjU/
+      - paragraph: 05:00
+      - paragraph: Nongshim RedForce
+      - text: 0 – 3
+      - paragraph: DRX
+    - paragraph: "1.41"
+    - paragraph: "2.82"
+    - text: 9 07 Feb 2026 - Preliminary Play-in 1 2 B's
+    - link "07:00 DN SOOPers DN SOOPers 2 – 1 Nongshim RedForce Nongshim RedForce" [ref=e56]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/dn-soopers-league-of-legends-nongshim-redforce-league-of-legends-M1hw2OED/
+      - paragraph: 07:00
+      - paragraph: DN SOOPers
+      - text: 2 – 1
+      - paragraph: Nongshim RedForce
+    - paragraph: "2.42"
+    - paragraph: "1.54"
+    - text: "9"
+    - link "05:00 DRX DRX 0 – 2 Dplus Kia Dplus Kia" [ref=e57]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/drx-league-of-legends-dplus-kia-league-of-legends-EeuPPR6K/
+      - paragraph: 05:00
+      - paragraph: DRX
+      - text: 0 – 2
+      - paragraph: Dplus Kia
+    - paragraph: "4.87"
+    - paragraph: "1.16"
+    - text: 9 06 Feb 2026 - Preliminary Play-in 1 2 B's
+    - link "07:00 KT Rolster KT Rolster 0 – 2 DN SOOPers DN SOOPers" [ref=e58]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/kt-rolster-league-of-legends-dn-soopers-league-of-legends-CjgpHfOH/
+      - paragraph: 07:00
+      - paragraph: KT Rolster
+      - text: 0 – 2
+      - paragraph: DN SOOPers
+    - paragraph: "1.31"
+    - paragraph: "3.42"
+    - text: "9"
+    - link "05:00 DRX DRX 2 – 1 OKSavingsBank Brion OKSavingsBank Brion" [ref=e59]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/drx-league-of-legends-oksavingsbank-brion-league-of-legends-IkLHbn8j/
+      - paragraph: 05:00
+      - paragraph: DRX
+      - text: 2 – 1
+      - paragraph: OKSavingsBank Brion
+    - paragraph: "1.65"
+    - paragraph: "2.19"
+    - text: 9 01 Feb 2026 - Preliminary 1 2 B's
+    - link "05:00 Hanwha Life Hanwha Life 0 – 3 Gen.G Gen.G" [ref=e60]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/hanwha-life-league-of-legends-gen-g-league-of-legends-lIEfjeOt/
+      - paragraph: 05:00
+      - paragraph: Hanwha Life
+      - text: 0 – 3
+      - paragraph: Gen.G
+    - paragraph: "4.82"
+    - paragraph: "1.17"
+    - text: 9 31 Jan 2026 - Preliminary 1 2 B's
+    - link "05:00 T1 T1 3 – 0 Dplus Kia Dplus Kia" [ref=e61]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/t1-league-of-legends-dplus-kia-league-of-legends-0MZpWiwP/
+      - paragraph: 05:00
+      - paragraph: T1
+      - text: 3 – 0
+      - paragraph: Dplus Kia
+    - paragraph: "1.24"
+    - paragraph: "3.96"
+    - text: 9 30 Jan 2026 - Preliminary 1 2 B's
+    - link "05:00 Nongshim RedForce Nongshim RedForce 3 – 2 KT Rolster KT Rolster" [ref=e62]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/nongshim-redforce-league-of-legends-kt-rolster-league-of-legends-4ftxYD8C/
+      - paragraph: 05:00
+      - paragraph: Nongshim RedForce
+      - text: 3 – 2
+      - paragraph: KT Rolster
+    - paragraph: "2.58"
+    - paragraph: "1.49"
+    - text: 9 29 Jan 2026 - Preliminary 1 2 B's
+    - link "05:00 DN SOOPers DN SOOPers 1 – 3 FearX FearX" [ref=e63]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/dn-soopers-league-of-legends-fearx-league-of-legends-WtrUZZw0/
+      - paragraph: 05:00
+      - paragraph: DN SOOPers
+      - text: 1 – 3
+      - paragraph: FearX
+    - paragraph: "3.97"
+    - paragraph: "1.23"
+    - text: 9 28 Jan 2026 - Preliminary 1 2 B's
+    - link "05:00 OKSavingsBank Brion OKSavingsBank Brion 2 – 3 DRX DRX" [ref=e64]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/oksavingsbank-brion-league-of-legends-drx-league-of-legends-zFlLyd9m/
+      - paragraph: 05:00
+      - paragraph: OKSavingsBank Brion
+      - text: 2 – 3
+      - paragraph: DRX
+    - paragraph: "2.12"
+    - paragraph: "1.70"
+    - text: 9 25 Jan 2026 - Preliminary 1 2 B's
+    - link "08:10 KT Rolster KT Rolster 2 – 1 OKSavingsBank Brion OKSavingsBank Brion" [ref=e65]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/kt-rolster-league-of-legends-oksavingsbank-brion-league-of-legends-Qu3ksIoQ/
+      - paragraph: 08:10
+      - paragraph: KT Rolster
+      - text: 2 – 1
+      - paragraph: OKSavingsBank Brion
+    - paragraph: "1.21"
+    - paragraph: "4.29"
+    - text: "9"
+    - link "05:00 T1 T1 2 – 1 FearX FearX" [ref=e66]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/t1-league-of-legends-fearx-league-of-legends-ppQ2JEgJ/
+      - paragraph: 05:00
+      - paragraph: T1
+      - text: 2 – 1
+      - paragraph: FearX
+    - paragraph: "1.22"
+    - paragraph: "4.15"
+    - text: 9 24 Jan 2026 - Preliminary 1 2 B's
+    - link "07:00 Dplus Kia Dplus Kia 0 – 2 Gen.G Gen.G" [ref=e67]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/dplus-kia-league-of-legends-gen-g-league-of-legends-xKMfLzP6/
+      - paragraph: 07:00
+      - paragraph: Dplus Kia
+      - text: 0 – 2
+      - paragraph: Gen.G
+    - paragraph: "4.33"
+    - paragraph: "1.21"
+    - text: "9"
+    - link "05:00 Hanwha Life Hanwha Life 2 – 1 DN SOOPers DN SOOPers" [ref=e68]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/hanwha-life-league-of-legends-dn-soopers-league-of-legends-thToNdff/
+      - paragraph: 05:00
+      - paragraph: Hanwha Life
+      - text: 2 – 1
+      - paragraph: DN SOOPers
+    - paragraph: "1.15"
+    - paragraph: "5.27"
+    - text: 9 23 Jan 2026 - Preliminary 1 2 B's
+    - link "07:30 Nongshim RedForce Nongshim RedForce 1 – 2 DRX DRX" [ref=e69]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/nongshim-redforce-league-of-legends-drx-league-of-legends-8vVwPIPs/
+      - paragraph: 07:30
+      - paragraph: Nongshim RedForce
+      - text: 1 – 2
+      - paragraph: DRX
+    - paragraph: "1.39"
+    - paragraph: "2.94"
+    - text: "9"
+    - link "05:00 KT Rolster KT Rolster 0 – 2 T1 T1" [ref=e70]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/kt-rolster-league-of-legends-t1-league-of-legends-4CZ7Uv2K/
+      - paragraph: 05:00
+      - paragraph: KT Rolster
+      - text: 0 – 2
+      - paragraph: T1
+    - paragraph: "4.02"
+    - paragraph: "1.24"
+    - text: 9 22 Jan 2026 - Preliminary 1 2 B's
+    - link "07:30 FearX FearX 0 – 2 Gen.G Gen.G" [ref=e71]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/fearx-league-of-legends-gen-g-league-of-legends-x6sM6yAD/
+      - paragraph: 07:30
+      - paragraph: FearX
+      - text: 0 – 2
+      - paragraph: Gen.G
+    - paragraph: "7.37"
+    - paragraph: "1.08"
+    - text: "9"
+    - link "05:00 OKSavingsBank Brion OKSavingsBank Brion 1 – 2 Hanwha Life Hanwha Life" [ref=e72]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/oksavingsbank-brion-league-of-legends-hanwha-life-league-of-legends-GjgD8cu1/
+      - paragraph: 05:00
+      - paragraph: OKSavingsBank Brion
+      - text: 1 – 2
+      - paragraph: Hanwha Life
+    - paragraph: "7.67"
+    - paragraph: "1.07"
+    - text: 9 21 Jan 2026 - Preliminary 1 2 B's
+    - link "07:30 DRX DRX 1 – 2 DN SOOPers DN SOOPers" [ref=e73]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/drx-league-of-legends-dn-soopers-league-of-legends-8Qk5AJAl/
+      - paragraph: 07:30
+      - paragraph: DRX
+      - text: 1 – 2
+      - paragraph: DN SOOPers
+    - paragraph: "1.91"
+    - paragraph: "1.85"
+    - text: "9"
+    - link "05:00 Dplus Kia Dplus Kia 2 – 1 Nongshim RedForce Nongshim RedForce" [ref=e74]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/dplus-kia-league-of-legends-nongshim-redforce-league-of-legends-Q5ntGumR/
+      - paragraph: 05:00
+      - paragraph: Dplus Kia
+      - text: 2 – 1
+      - paragraph: Nongshim RedForce
+    - paragraph: "1.34"
+    - paragraph: "3.20"
+    - text: 9 18 Jan 2026 - Preliminary 1 2 B's
+    - link "07:00 DRX DRX 1 – 2 T1 T1" [ref=e75]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/drx-league-of-legends-t1-league-of-legends-hhlYH1IE/
+      - paragraph: 07:00
+      - paragraph: DRX
+      - text: 1 – 2
+      - paragraph: T1
+    - paragraph: "9.66"
+    - paragraph: "1.04"
+    - text: "9"
+    - link "05:00 Nongshim RedForce Nongshim RedForce 2 – 0 Hanwha Life Hanwha Life" [ref=e76]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/nongshim-redforce-league-of-legends-hanwha-life-league-of-legends-xp6ofbQ7/
+      - paragraph: 05:00
+      - paragraph: Nongshim RedForce
+      - text: 2 – 0
+      - paragraph: Hanwha Life
+    - paragraph: "5.75"
+    - paragraph: "1.13"
+    - text: 9 17 Jan 2026 - Preliminary 1 2 B's
+    - link "07:00 Gen.G Gen.G 2 – 0 KT Rolster KT Rolster" [ref=e77]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/gen-g-league-of-legends-kt-rolster-league-of-legends-UJ2wdKee/
+      - paragraph: 07:00
+      - paragraph: Gen.G
+      - text: 2 – 0
+      - paragraph: KT Rolster
+    - paragraph: "1.16"
+    - paragraph: "5.06"
+    - text: "9"
+    - link "05:00 OKSavingsBank Brion OKSavingsBank Brion 1 – 2 FearX FearX" [ref=e78]:
+      - /url: /esports/league-of-legends/league-of-legends-lck/oksavingsbank-brion-league-of-legends-fearx-league-of-legends-84EUctRr/
+      - paragraph: 05:00
+      - paragraph: OKSavingsBank Brion
+      - text: 1 – 2
+      - paragraph: FearX
+    - paragraph: "5.42"
+    - paragraph: "1.14"
+    - text: 9
