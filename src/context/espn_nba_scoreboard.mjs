@@ -143,6 +143,26 @@ function gameKeyFromCompetitors(comp) {
   };
 }
 
+/**
+ * Disambiguate multiple hits for the same team pair (back-to-back games).
+ * Prefer: in (live) > post (finished) > pre (upcoming).
+ * Returns single hit or null if still ambiguous (e.g. two live games — shouldn't happen).
+ */
+function disambiguateHits(hits) {
+  if (hits.length <= 1) return hits[0] || null;
+  const statePriority = { "in": 0, "post": 1, "pre": 2 };
+  const sorted = hits.slice().sort((a, b) => {
+    const sa = statePriority[a.game?.status?.type?.state] ?? 3;
+    const sb = statePriority[b.game?.status?.type?.state] ?? 3;
+    return sa - sb;
+  });
+  // If top two have the same priority, still ambiguous
+  const top = statePriority[sorted[0].game?.status?.type?.state] ?? 3;
+  const second = statePriority[sorted[1].game?.status?.type?.state] ?? 3;
+  if (top === second) return null; // truly ambiguous
+  return sorted[0];
+}
+
 function matchByTitle(title, games) {
   const tNorm = norm(title);
   if (!tNorm) return { ok: false, reason: "no_title" };
@@ -160,7 +180,11 @@ function matchByTitle(title, games) {
       if (gk.teamsKey && gk.teamsKey === parsedTeams.teamsKey) hits.push({ game: g, key: gk.teamsKey });
     }
     if (hits.length === 1) return { ok: true, game: hits[0].game, match: { kind: "teamsKey_exact", key: parsedTeams.teamsKey } };
-    if (hits.length > 1) return { ok: false, reason: "ambiguous", debug: { matchPath: "teamsKey_exact", teamsKey: parsedTeams.teamsKey, hits: hits.length } };
+    if (hits.length > 1) {
+      const pick = disambiguateHits(hits);
+      if (pick) return { ok: true, game: pick.game, match: { kind: "teamsKey_exact", key: pick.key, disambiguated: true } };
+      return { ok: false, reason: "ambiguous", debug: { matchPath: "teamsKey_exact", teamsKey: parsedTeams.teamsKey, hits: hits.length } };
+    }
   }
 
   // Pass 1: legacy exact
@@ -173,7 +197,11 @@ function matchByTitle(title, games) {
       if (gk.legacyKey && gk.legacyKey === parsedTeams.legacyKey) hits.push({ game: g, key: gk.legacyKey });
     }
     if (hits.length === 1) return { ok: true, game: hits[0].game, match: { kind: "legacy_exact", key: parsedTeams.legacyKey } };
-    if (hits.length > 1) return { ok: false, reason: "ambiguous", debug: { matchPath: "legacy_exact", marketKey: parsedTeams.legacyKey, hits: hits.length } };
+    if (hits.length > 1) {
+      const pick = disambiguateHits(hits);
+      if (pick) return { ok: true, game: pick.game, match: { kind: "legacy_exact", key: pick.key, disambiguated: true } };
+      return { ok: false, reason: "ambiguous", debug: { matchPath: "legacy_exact", marketKey: parsedTeams.legacyKey, hits: hits.length } };
+    }
   }
 
   // Pass 2: alias containment
