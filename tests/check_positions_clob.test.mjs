@@ -28,11 +28,11 @@ const DEFAULT_SL = 0.85;
 const DEFAULT_SL_SPREAD_MAX = 0.50;
 const DEFAULT_SL_EMERGENCY = 0.15;
 const ESPORTS_SL = 0.75;
-const DOTA2_SL = 0.45;
-const CS2_SL = 0.40;
-const LOL_SL = 0.40;
-const VAL_SL = 0.40;
-const NBA_SL = 0.45;
+const DOTA2_SL = 0.50;
+const CS2_SL = 0.50;
+const LOL_SL = 0.50;
+const VAL_SL = 0.50;
+const NBA_SL = 0.50;
 
 function makeBridge({ mode = "live", trades = {}, cfg = {} } = {}) {
   return {
@@ -218,15 +218,15 @@ describe("checkPositionsFromCLOB", () => {
   // ===================== ESPORTS PER-LEAGUE SL =====================
 
   describe("esports per-league SL (lower thresholds)", () => {
-    it("cs2 slug uses cs2-specific SL (0.40), not esports SL (0.75)", () => {
+    it("cs2 slug uses cs2-specific SL (0.50), not esports SL (0.50)", () => {
       const buy = makeBuyTrade("cs2-test-2026-02-18", { signal_id: "e1|cs2-test-2026-02-18" });
       const bridge = makeBridge({ trades: { "buy:e1|cs2-test-2026-02-18": buy } });
-      // bid=0.50 > CS2_SL(0.40) → should NOT trigger (would trigger with esports 0.75)
-      const signals = check(bridge, priceMap({ "cs2-test-2026-02-18": { bid: 0.50, ask: 0.55 } }));
-      assert.equal(signals.length, 0, "cs2 should use its own SL (0.40), not esports (0.75)");
+      // bid=0.55 > CS2_SL(0.50) → should NOT trigger
+      const signals = check(bridge, priceMap({ "cs2-test-2026-02-18": { bid: 0.55, ask: 0.60 } }));
+      assert.equal(signals.length, 0, "cs2 should use its own SL (0.50)");
     });
 
-    it("cs2 slug triggers at cs2 SL (0.40)", () => {
+    it("cs2 slug triggers at cs2 SL (0.50)", () => {
       const buy = makeBuyTrade("cs2-sl-2026-02-18", { signal_id: "e1b|cs2-sl-2026-02-18" });
       const bridge = makeBridge({ trades: { "buy:e1b|cs2-sl-2026-02-18": buy } });
       // bid=0.39 <= CS2_SL(0.40), spread=0.05 <= 0.50 → trigger
@@ -235,14 +235,14 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals[0].close_reason, "stop_loss");
     });
 
-    it("lol slug uses lol-specific SL (0.40), not esports SL (0.75)", () => {
+    it("lol slug uses lol-specific SL (0.50), not esports SL (0.50)", () => {
       const buy = makeBuyTrade("lol-test-2026-02-18", { signal_id: "l1|lol-test-2026-02-18" });
       const bridge = makeBridge({ trades: { "buy:l1|lol-test-2026-02-18": buy } });
-      const signals = check(bridge, priceMap({ "lol-test-2026-02-18": { bid: 0.50, ask: 0.55 } }));
-      assert.equal(signals.length, 0, "lol should use its own SL (0.40), not esports (0.75)");
+      const signals = check(bridge, priceMap({ "lol-test-2026-02-18": { bid: 0.55, ask: 0.60 } }));
+      assert.equal(signals.length, 0, "lol should use its own SL (0.50)");
     });
 
-    it("lol slug triggers at lol SL (0.40)", () => {
+    it("lol slug triggers at lol SL (0.50)", () => {
       const buy = makeBuyTrade("lol-sl-2026-02-18", { signal_id: "l2|lol-sl-2026-02-18" });
       const bridge = makeBridge({ trades: { "buy:l2|lol-sl-2026-02-18": buy } });
       const signals = check(bridge, priceMap({ "lol-sl-2026-02-18": { bid: 0.39, ask: 0.44 } }));
@@ -250,14 +250,14 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals[0].close_reason, "stop_loss");
     });
 
-    it("val slug uses val-specific SL (0.40), not esports SL (0.75)", () => {
+    it("val slug uses val-specific SL (0.50), not esports SL (0.50)", () => {
       const buy = makeBuyTrade("val-test-2026-02-18", { signal_id: "v1|val-test-2026-02-18" });
       const bridge = makeBridge({ trades: { "buy:v1|val-test-2026-02-18": buy } });
-      const signals = check(bridge, priceMap({ "val-test-2026-02-18": { bid: 0.50, ask: 0.55 } }));
-      assert.equal(signals.length, 0, "val should use its own SL (0.40), not esports (0.75)");
+      const signals = check(bridge, priceMap({ "val-test-2026-02-18": { bid: 0.55, ask: 0.60 } }));
+      assert.equal(signals.length, 0, "val should use its own SL (0.50)");
     });
 
-    it("val slug triggers at val SL (0.40)", () => {
+    it("val slug triggers at val SL (0.50)", () => {
       const buy = makeBuyTrade("val-sl-2026-02-18", { signal_id: "v2|val-sl-2026-02-18" });
       const bridge = makeBridge({ trades: { "buy:v2|val-sl-2026-02-18": buy } });
       const signals = check(bridge, priceMap({ "val-sl-2026-02-18": { bid: 0.39, ask: 0.44 } }));
@@ -265,15 +265,15 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals[0].close_reason, "stop_loss");
     });
 
-    it("nba slug uses nba-specific SL (0.45), not default (0.85)", () => {
+    it("nba slug uses nba-specific SL (0.50), not default (0.50)", () => {
       const buy = makeBuyTrade("nba-lal-bos-2026-02-18", { signal_id: "n1|nba-lal-bos-2026-02-18" });
       const bridge = makeBridge({ trades: { "buy:n1|nba-lal-bos-2026-02-18": buy } });
-      // bid=0.50 > NBA_SL(0.45) → should NOT trigger (would trigger with default 0.85)
-      const signals = check(bridge, priceMap({ "nba-lal-bos-2026-02-18": { bid: 0.50, ask: 0.55 } }));
-      assert.equal(signals.length, 0, "nba should use its own SL (0.45), not default (0.85)");
+      // bid=0.55 > NBA_SL(0.50) → should NOT trigger
+      const signals = check(bridge, priceMap({ "nba-lal-bos-2026-02-18": { bid: 0.55, ask: 0.60 } }));
+      assert.equal(signals.length, 0, "nba should use its own SL (0.50)");
     });
 
-    it("nba slug triggers at nba SL (0.45)", () => {
+    it("nba slug triggers at nba SL (0.50)", () => {
       const buy = makeBuyTrade("nba-lal-bos2-2026-02-18", { signal_id: "n2|nba-lal-bos2-2026-02-18" });
       const bridge = makeBridge({ trades: { "buy:n2|nba-lal-bos2-2026-02-18": buy } });
       // bid=0.44, spread=0.05 <= 0.50 → trigger
@@ -307,7 +307,7 @@ describe("checkPositionsFromCLOB", () => {
       assert.equal(signals.length, 0, "spread guard should prevent trigger on wide spread");
     });
 
-    it("lol- slug does NOT trigger at esports SL (0.75) — uses lol SL (0.40)", () => {
+    it("lol- slug does NOT trigger at esports SL (0.75) — uses lol SL (0.50)", () => {
       const buy = makeBuyTrade("lol-test2-2026-02-18", { signal_id: "e3|lol-test2-2026-02-18" });
       const bridge = makeBridge({ trades: { "buy:e3|lol-test2-2026-02-18": buy } });
       // bid=0.74 > LOL_SL(0.40) → should NOT trigger

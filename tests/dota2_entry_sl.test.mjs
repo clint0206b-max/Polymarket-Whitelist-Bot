@@ -5,7 +5,7 @@ import { is_base_signal_candidate, resolveEntryPriceLimits } from "../src/strate
 /**
  * Tests for Dota2-specific entry price range and SL config.
  * Config: min_entry_price_dota2=0.86, max_entry_price_dota2=0.92
- * SL: stop_loss_bid_dota2=0.45, stop_loss_ask_dota2=0.50
+ * SL: stop_loss_bid_dota2=0.50, stop_loss_ask_dota2=0.50
  */
 
 const cfg = {
@@ -129,10 +129,10 @@ describe("is_base_signal_candidate — non-dota2 uses defaults", () => {
 
 describe("Dota2 SL config values", () => {
   // Read from local.json to verify config values
-  it("local.json has stop_loss_bid_dota2=0.37", async () => {
+  it("local.json has stop_loss_bid_dota2=0.50", async () => {
     const { readFileSync } = await import("node:fs");
     const cfg = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(cfg.paper.stop_loss_bid_dota2, 0.37);
+    assert.equal(cfg.paper.stop_loss_bid_dota2, 0.5);
   });
 
   it("local.json has min_entry_price_dota2=0.80", async () => {

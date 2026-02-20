@@ -61,13 +61,20 @@ function parseBoFromScoreOrPeriod(scoreRaw, periodRaw) {
 
 function parseMapsFromScore(scoreRaw) {
   const s = String(scoreRaw || "");
-  // e.g. "...|0-1|Bo3" or "0-1|Bo3"
-  const m = s.match(/\b(\d+)\s*-\s*(\d+)\b/);
-  if (!m) return null;
-  const a = Number(m[1]);
-  const b = Number(m[2]);
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-  return { a, b };
+  // Format: "{in-game}|{series}|{format}" e.g. "000-000|1-0|Bo5" or "16-12|1-0|Bo3"
+  // We want the series score (second pipe-delimited segment), not the in-game score.
+  const parts = s.split("|").map(p => p.trim());
+  // Try the second segment first (series score), then fall back to first
+  for (const seg of [parts[1], parts[0]]) {
+    if (!seg) continue;
+    const m = seg.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (!m) continue;
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+    return { a, b };
+  }
+  return null;
 }
 
 function computeEsportsDerived(m, cfg) {
@@ -2398,28 +2405,36 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         if (m.context?.sport === "nba") bumpBucket("health", "signaled_and_context_nba_decided", 1);
       }
 
-      // Esports gate dry-run (tag-only)
-      // Definition matches future hard gate policy.
+      // Esports series guard — HARD GATE for match_series in BO3/BO5.
+      // Blocks entry unless the YES outcome team is ahead with enough maps won.
+      // BO3: leader needs ≥1 map. BO5: leader needs ≥2 maps. Tie/unknown = blocked.
       let would_gate_apply = false;
       let would_gate_block = false;
       let would_gate_reason = "not_applicable";
       if (m.league === "esports" && String(m.market_kind || "") === "match_series") {
         const d = m.esports_ctx?.derived || null;
         const fmt = String(d?.series_format || "unknown");
-        const thr = Number(cfg?.esports?.series_guard_threshold_high ?? 0.94);
-        const ask = Number(quote.probAsk);
 
-        if ((fmt === "bo3" || fmt === "bo5") && Number.isFinite(ask) && ask >= thr) {
+        if (fmt === "bo3" || fmt === "bo5") {
           would_gate_apply = true;
           const gs = String(d?.guard_status || "unknown");
           const gr = String(d?.guard_reason || "no_derived");
           would_gate_block = (gs !== "allowed");
           would_gate_reason = would_gate_block ? gr : "allowed";
 
-          bumpBucket("health", "esports_gate_would_apply", 1);
-          if (would_gate_block) bumpBucket("health", "esports_gate_would_block", 1);
-          else bumpBucket("health", "esports_gate_would_allow", 1);
-          bumpBucket("health", `esports_gate_would_reason:${would_gate_reason}`, 1);
+          bumpBucket("health", "esports_gate_apply", 1);
+          if (would_gate_block) bumpBucket("health", "esports_gate_block", 1);
+          else bumpBucket("health", "esports_gate_allow", 1);
+          bumpBucket("health", `esports_gate_reason:${would_gate_reason}`, 1);
+
+          // HARD GATE: skip signal if blocked
+          if (would_gate_block) {
+            bumpBucket("reject", "esports_series_gate_blocked", 1);
+            bumpBucket("reject", `esports_series_gate_reason:${would_gate_reason}`, 1);
+            m._series_gate_blocked = true;
+            m._series_gate_reason = would_gate_reason;
+            continue; // skip this candidate — do not generate signal
+          }
         }
       }
 

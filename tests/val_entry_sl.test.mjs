@@ -46,10 +46,10 @@ describe("is_base_signal_candidate — Val entry [0.89, 0.93]", () => {
 });
 
 describe("Val SL config values", () => {
-  it("stop_loss_bid_val=0.42", async () => {
+  it("stop_loss_bid_val=0.50", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_bid_val, 0.42);
+    assert.equal(c.paper.stop_loss_bid_val, 0.5);
   });
   it("stop_loss_spread_max=0.50", async () => {
     const { readFileSync } = await import("node:fs");

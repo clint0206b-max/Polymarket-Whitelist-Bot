@@ -52,10 +52,10 @@ describe("is_base_signal_candidate — LoL entry [0.87, 0.89]", () => {
 });
 
 describe("LoL SL config values", () => {
-  it("stop_loss_bid_lol=0.32", async () => {
+  it("stop_loss_bid_lol=0.50", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_bid_lol, 0.32);
+    assert.equal(c.paper.stop_loss_bid_lol, 0.5);
   });
   it("min_entry_price_lol=0.80", async () => {
     const { readFileSync } = await import("node:fs");

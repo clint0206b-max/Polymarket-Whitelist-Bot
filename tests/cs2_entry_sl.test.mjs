@@ -5,7 +5,7 @@ import { is_base_signal_candidate, resolveEntryPriceLimits, resolveMaxSpread } f
 /**
  * Tests for CS2-specific entry price range, spread, and SL config.
  * Config: min_entry_price_cs2=0.82, max_entry_price_cs2=0.93, max_spread_cs2=0.02
- * SL: stop_loss_bid_cs2=0.35, stop_loss_ask_cs2=0.40
+ * SL: stop_loss_bid_cs2=0.50, stop_loss_ask_cs2=0.40
  */
 
 const cfg = {
@@ -121,10 +121,10 @@ describe("is_base_signal_candidate — CS2 entry [0.87, 0.93] + spread ≤ 0.02"
 // ========== SL config verification ==========
 
 describe("CS2 SL config values in local.json", () => {
-  it("stop_loss_bid_cs2=0.35", async () => {
+  it("stop_loss_bid_cs2=0.50", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_bid_cs2, 0.35);
+    assert.equal(c.paper.stop_loss_bid_cs2, 0.5);
   });
 
   it("min_entry_price_cs2=0.82", async () => {
