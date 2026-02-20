@@ -4,7 +4,7 @@
 
 A deterministic, spec-driven trading bot that discovers live sports/esports markets via Gamma API, evaluates them through a multi-stage signal pipeline with context-aware gates (ESPN scoreboards), and executes trades via CLOB API.
 
-**Current Status:** Running LIVE with real money (commit `d986312`, 1032 tests passing)
+**Current Status:** Running LIVE with real money (commit `d986312`, 1049 tests passing)
 
 ---
 
@@ -57,7 +57,8 @@ polymarket-watchlist-v1/
 │   ├── context/
 │   │   ├── espn_cbb_scoreboard.mjs # NCAA basketball ESPN integration
 │   │   ├── espn_nba_scoreboard.mjs # NBA ESPN integration
-│   │   └── espn_soccer_scoreboard.mjs # Soccer ESPN integration (multi-league)
+│   │   ├── espn_soccer_scoreboard.mjs # Soccer ESPN integration (multi-league)
+│   │   └── lol_esports_logger.mjs  # LoL Esports edge logger (observation-only)
 │   ├── strategy/
 │   │   ├── stage1.mjs               # Base price+spread+near margin filters (pure)
 │   │   ├── stage2.mjs               # Depth check (pure)
@@ -83,7 +84,7 @@ polymarket-watchlist-v1/
 │   │   └── daily_snapshot.mjs       # Daily state snapshots (5min)
 │   └── tools/
 │       └── journal_stats.mjs        # Paper position analysis CLI
-├── tests/                           # 1032 tests (all passing)
+├── tests/                           # 1049 tests (all passing)
 │   ├── universe_selection.test.mjs  # Universe logic invariants
 │   ├── persistence.test.mjs         # Crash-safe write verification
 │   ├── health_server.test.mjs       # Monitoring endpoint
@@ -338,7 +339,7 @@ npm start                       # Start bot (paper trading)
 npm run status                  # CLI dashboard
 npm run status:verbose          # Full metrics + top candidates
 npm run journal:stats           # Paper position analysis
-npm test                        # Run all 1032 tests
+npm test                        # Run all 1049 tests
 ```
 
 ### Paper Mode (signals only, no execution)
@@ -393,7 +394,7 @@ Scripts:
 
 **Boot checklist (ALWAYS before deploy):**
 ```bash
-npm test                                    # All 1032 tests passing
+npm test                                    # All 1049 tests passing
 node -e "import('./src/runtime/loop_eval_http_only.mjs')"  # Parse check
 STOP_AFTER_MS=5000 node run.mjs            # 5s boot test (verify config in logs)
 # Only THEN deploy to prod (launchctl load, pm2, etc.)
@@ -721,7 +722,7 @@ Bo2 esports series can draw, causing correlated double-loss. Match series market
 
 ## Testing
 
-**Coverage:** 1032 tests (all passing)
+**Coverage:** 1049 tests (all passing)
 
 **Test Categories:**
 - Universe selection (20 tests) — invariants for price updates vs signal pipeline

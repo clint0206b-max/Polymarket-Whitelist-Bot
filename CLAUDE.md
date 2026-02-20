@@ -10,11 +10,11 @@ This file contains everything you need to understand and modify the codebase saf
 
 **What it does:** High-frequency signal generation for Polymarket prediction markets. Discovers live sports/esports markets, evaluates them through a multi-stage pipeline with context-aware gates (ESPN scoreboards), and executes trades.
 
-**Current status:** Running LIVE with real money (commit `3a788aa`)
+**Current status:** Running LIVE with real money (commit `1edb0e2`)
 
 **Key constraint:** This bot trades real money. **Every change must be tested extensively before deploy.**
 
-**Tests:** 1034 passing
+**Tests:** 1049 passing
 
 ---
 
@@ -47,10 +47,11 @@ src/
 │   ├── book_parser.mjs         # Parse and normalize book data
 │   └── ws_client.mjs           # WebSocket price feed (auto-reconnect)
 │
-├── context/                    # External data feeds (ESPN scoreboards)
+├── context/                    # External data feeds (ESPN scoreboards, LoL Esports)
 │   ├── espn_cbb_scoreboard.mjs # NCAA basketball (with team overrides + disambiguation)
 │   ├── espn_nba_scoreboard.mjs # NBA (with team overrides + disambiguation)
-│   └── espn_soccer_scoreboard.mjs # Soccer (multi-league)
+│   ├── espn_soccer_scoreboard.mjs # Soccer (multi-league)
+│   └── lol_esports_logger.mjs  # LoL Esports edge logger (observation-only, see below)
 │
 ├── strategy/                   # Signal pipeline logic (pure functions)
 │   ├── stage1.mjs              # Base filters (price+spread+near)
@@ -278,6 +279,66 @@ loadOpenIndex() → for each open position → fetchGammaMarketBySlug()
 **Key files:**
 - `src/runtime/loop_resolution_tracker.mjs` — resolution logic
 - `src/core/journal.mjs` — open_index management
+
+### 4. LoL Esports Edge Logger (observation-only)
+
+**Purpose:** Collect data to measure whether there's a tradeable edge in LoL esports markets. Logs in-game state (from Riot Esports API) alongside Polymarket CLOB prices. **Does NOT modify trading logic.**
+
+**File:** `src/context/lol_esports_logger.mjs`
+
+**Architecture — two decoupled streams:**
+
+1. **`market_tick`** (high-frequency, from WS):
+   - Hooks into `wsClient._updatePrice()` via monkey-patch
+   - Logs every WS price update for tracked LoL tokens
+   - Fields: `recv_ts_local`, `msg_ts_raw` (from WS payload), `best_bid`, `best_ask`, `mid`, `spread`
+   - `last_game_frame_ts` + `game_frame_age_ms` on every tick (for staleness detection)
+
+2. **`market_tick` with `source: "http_book"`** (candidate windows only):
+   - Triggered only when market conditions suggest opportunity: `ask ∈ [0.70, 0.95]` AND `spread ≤ 0.06`
+   - **NOT triggered by game_state** (avoids stale-frame bias)
+   - Adds `ask_levels`, `bid_levels` (top 3), `depth_to_ask_plus_1c`, `hypo_size_usd`
+
+3. **`game_frame`** (~20s, from Riot Esports feed API):
+   - `GET feed.lolesports.com/livestats/v1/window/{gameId}?startingTime=<now-30s>`
+   - `startingTime` must be divisible by 10s, at least 20s behind current time
+   - Fields: gold per team, kills, towers, dragons (with types), barons, inhibitors
+   - **No API key needed** for this endpoint
+
+4. **`mapping`** (once per game):
+   - Links Polymarket market to Riot match/game via stable IDs
+   - `outcome_team_riot_id` (not side-based), `riot_game_id`, `condition_id`, `outcome_token_id`
+
+5. **`outcome`** (when game finishes):
+   - `winner_team_riot_id` (derived from gold at finish)
+   - Side is NEVER primary key (blue/red swap between games in a series)
+
+**Riot Esports API details:**
+- **Schedule endpoint**: `esports-api.lolesports.com/persisted/gw/getLive?hl=en-US` — needs `x-api-key: 0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z` (Riot's public key, used by lolesports.com frontend, does not expire)
+- **Feed endpoint**: `feed.lolesports.com/livestats/v1/window/{gameId}` — **no API key needed**
+- **Rate limits**: Not documented, CDN with `cache-control: max-age=60` (schedule) / `max-age=7` (feed). No rate limit headers. Tested 10+ rapid requests without issue.
+- **Coverage**: All Riot-sanctioned leagues (LCK, LPL, LEC, LCS, PCS, VCS, CBLOL, LLA, etc.)
+
+**Matching: Polymarket ↔ Riot:**
+- By team name (normalized + fuzzy substring match)
+- Only matches `match_series` markets (not map_specific/over-under)
+- `fuzzyMatch()` handles "Dplus KIA" vs "DK" via substring containment
+- If no match → logs warning, skips (safe fail)
+
+**Output:** `state/journal/lol_edge_log.jsonl`
+
+**Hook point:** End of `loopEvalHttpOnly()`, wrapped in try/catch (never crashes eval loop)
+
+**Health counters:** `health.lol_edge_active_games`, `health.lol_edge_ticks_logged`, `health.lol_edge_errors`
+
+**Three metrics this data enables:**
+1. **Calibration**: `P(win | ask_bin)` — for each ask price range, what % actually win? If ask=0.82 wins 88% → edge exists
+2. **Slippage**: `size_at_ask` vs `hypo_size_usd` — can we fill without moving price?
+3. **Drift adverso post-fill**: Compare mid at T+5s and T+30s after signal — does price move against us?
+
+**Key files:**
+- `src/context/lol_esports_logger.mjs` — main logger module
+- `tests/lol_esports_logger.test.mjs` — 15 tests (schema, matching, depth calc, candidate logic)
 
 ---
 
@@ -756,7 +817,7 @@ All per-sport params in `local.json`:
 
 ## Testing
 
-**Test count:** 1032 tests (all passing)
+**Test count:** 1049 tests (all passing)
 
 **How to run:**
 ```bash
@@ -1673,7 +1734,7 @@ SL sells retry automatically every cycle until closed. After 5 escalating floor 
 
 **The codebase is deterministic.** Same inputs → same outputs. If behavior changes, a code change caused it. Find the diff.
 
-**Tests are your safety net.** 1032 tests (all passing) give confidence. Add tests for every change.
+**Tests are your safety net.** 1049 tests (all passing) give confidence. Add tests for every change.
 
 **Shadow runners are your friend.** Use them for risky changes. A/B test strategies. Validate before prod.
 
