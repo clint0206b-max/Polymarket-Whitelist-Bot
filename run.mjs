@@ -618,7 +618,10 @@ try {
                 console.log(`[SL_JOURNAL] ${sig.slug} | sell FAILED — logged with executed=false, pnl=0`);
               } else {
                 // Sell succeeded (or resolved/paper) — log with real PnL
-                const realPnl = (sellResult && sellResult.pnlUsd != null) ? sellResult.pnlUsd : sig.pnl_usd;
+                const realPnl = (sellResult && sellResult.pnlUsd != null) ? sellResult.pnlUsd
+                  : (sellResult && sellResult.spentUsd != null && tradeBridge.execState.trades[`buy:${sig.signal_id}`]?.spentUsd != null)
+                    ? sellResult.spentUsd - tradeBridge.execState.trades[`buy:${sig.signal_id}`].spentUsd
+                    : sig.pnl_usd;
                 appendJsonl("state/journal/signals.jsonl", {
                   ...sig,
                   pnl_usd: realPnl ?? sig.pnl_usd,
@@ -626,6 +629,7 @@ try {
                   source: "clob_position_check",
                   executed: true,
                 });
+                console.log(`[SL_JOURNAL] ${sig.slug} | sell OK — logged with executed=true, pnl=$${(realPnl ?? sig.pnl_usd)?.toFixed?.(2) || "?"}`);
               }
 
               // Update open_index immediately after sell
