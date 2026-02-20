@@ -121,10 +121,10 @@ describe("is_base_signal_candidate — CS2 entry [0.87, 0.93] + spread ≤ 0.02"
 // ========== SL config verification ==========
 
 describe("CS2 SL config values in local.json", () => {
-  it("stop_loss_bid_cs2=0.50", async () => {
+  it("stop_loss_bid_cs2=0.74", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_bid_cs2, 0.5);
+    assert.equal(c.paper.stop_loss_bid_cs2, 0.74);
   });
 
   it("min_entry_price_cs2=0.82", async () => {
