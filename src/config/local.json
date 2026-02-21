@@ -66,7 +66,8 @@
     "stop_loss_bid_cbb": 0.9,
     "stop_loss_bid_cwbb": 0.9,
     "stop_loss_spread_max": 0.03,
-    "stop_loss_emergency_bid": 0.15
+    "stop_loss_emergency_bid": 0.15,
+    "stop_loss_ask_max": 0.93
   },
   "context": {
     "enabled": false,

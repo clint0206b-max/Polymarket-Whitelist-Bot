@@ -1159,7 +1159,8 @@ export class TradeBridge {
       const isCwbb = slugPrefix === "cwbb";
       const isEsports = (slugPrefix === "cs2" || slugPrefix === "dota2" || slugPrefix === "lol" || slugPrefix === "val");
       const slThreshold = isDota2 ? slThresholdDota2 : isCs2 ? slThresholdCs2 : isLol ? slThresholdLol : isVal ? slThresholdVal : isNba ? slThresholdNba : isCbb ? slThresholdCbb : isCwbb ? slThresholdCwbb : isEsports ? slThresholdEsports : slThresholdDefault;
-      const slAskMax = slThreshold + slAskBufferDefault; // ask must also be near SL level
+      const slAskMaxFixed = Number(this.cfg?.paper?.stop_loss_ask_max ?? 0.93); // fixed ask ceiling — confirms genuine price drop
+      const slAskMax = slAskMaxFixed;
       const bidTriggered = slThreshold > 0 && slThreshold < 1 && bid <= slThreshold;
       const askConfirms = ask > 0 && ask <= slAskMax; // ask must also be low — confirms genuine price drop, not just empty bid side
       // SL fires when: bid below threshold AND ask also low (both sides agree price is down)
@@ -1298,7 +1299,7 @@ export class TradeBridge {
       const fb = isEsports ? "esports" : "default";
 
       const slBid = resolve(prefix, "stop_loss_bid", fb, 0.70);
-      const askBuffer = Number(this.cfg?.paper?.stop_loss_ask_buffer ?? 0.10);
+      const askBuffer = Number(this.cfg?.paper?.stop_loss_ask_max ?? 0.93) - slBid; // derive buffer from fixed ask max
 
       // Look up tokenId from watchlist
       const wm = watchlist ? Object.values(watchlist).find(m => m?.slug === slug) : null;
