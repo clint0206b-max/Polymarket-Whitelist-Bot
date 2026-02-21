@@ -1625,6 +1625,21 @@ export async function loopEvalHttpOnly(state, cfg, now) {
 
     m.tokens = m.tokens || {};
 
+    // --- TEMPERATURE BLACKLIST: reject weather/temperature markets ---
+    {
+      const _slug = String(m.slug || "").toLowerCase();
+      const _title = String(m.question || m.title || "").toLowerCase();
+      const _isTemp = /\b(temperature|temperatures|temp-in-|fahrenheit|celsius|weather)\b/.test(_slug)
+        || /\b(temperature|temperatures|weather)\b/.test(_title);
+      if (_isTemp && m.status === "watching") {
+        bumpBucket("reject", "temperature_blacklisted", 1);
+        bumpBucket("health", "temperature_blacklisted", 1);
+        console.log(`[REJECT_TEMPERATURE] ${m.slug}`);
+        delete state.watchlist[m.slug];
+        continue;
+      }
+    }
+
     // Esports series guard (tag-only): compute and persist derived context for audit.
     // NOTE: counters are only for match_series.
     if (m.league === "esports" && m.esports_ctx && typeof m.esports_ctx === "object") {
@@ -2072,11 +2087,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
     }
 
     // --- Context entry gate (BLOQUEANTE when gate_mode=blocking) ---
-    // Soccer: always bloqueante (hardcoded, regardless of gate_mode).
-    // NBA/CBB: per-league gate_mode override supported (gate_mode_nba, gate_mode_cbb).
-    // Falls back to global gate_mode if no per-league override.
-    // At least one league must be blocking when trading.mode !== paper (enforced at boot).
-    {
+    // Context gates: soccer, NBA, CBB, CWBB — skipped entirely when context.enabled === false
+    if (cfg?.context?.enabled !== false) {
       const globalGateMode = String(cfg?.context?.entry_rules?.gate_mode || "tag_only");
       const league = m.league;
 
@@ -2086,7 +2098,6 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         : globalGateMode;
 
       if (league === "soccer") {
-        // Soccer: always bloqueante
         const soccerAllowed = m.context_entry?.entry_allowed === true;
         if (!soccerAllowed) {
           const reason = m.context_entry?.entry_blocked_reason || "no_soccer_context";
@@ -2094,7 +2105,6 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           bumpBucket("reject", `reject_by_league:soccer:soccer_gate_blocked`, 1);
           setReject(m, `soccer_gate:${reason}`);
           if (startedPending) recordPendingConfirmFail(`soccer_gate:${reason}`);
-          // Opportunity tracker: gate reject with price data available
           oppTracker.onGateReject(m, `soccer_gate:${reason}`,
             { ask: bestAsk, bid: bestBid, spread: bestAsk - bestBid },
             { entry_depth_usd_ask: m.liquidity?.entry_depth_usd_ask ?? null, exit_depth_usd_bid: m.liquidity?.exit_depth_usd_bid ?? null },
@@ -2104,7 +2114,6 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         }
         bumpBucket("health", "soccer_gate_passed", 1);
       } else if ((league === "nba" || league === "cbb" || league === "cwbb") && effectiveGateMode === "blocking") {
-        // NBA/CBB: bloqueante only in blocking mode (per-league or global)
         const ctxAllowed = m.context_entry?.entry_allowed === true;
         if (!ctxAllowed) {
           const reason = m.context_entry?.entry_blocked_reason || "no_context";
@@ -2112,7 +2121,6 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           bumpBucket("reject", `reject_by_league:${league}:context_gate_blocked`, 1);
           setReject(m, `${league}_gate:${reason}`);
           if (startedPending) recordPendingConfirmFail(`${league}_gate:${reason}`);
-          // Opportunity tracker: gate reject with price data available
           oppTracker.onGateReject(m, `${league}_gate:${reason}`,
             { ask: bestAsk, bid: bestBid, spread: bestAsk - bestBid },
             { entry_depth_usd_ask: m.liquidity?.entry_depth_usd_ask ?? null, exit_depth_usd_bid: m.liquidity?.exit_depth_usd_bid ?? null },
