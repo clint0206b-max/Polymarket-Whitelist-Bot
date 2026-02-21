@@ -155,9 +155,9 @@ export class TradeBridge {
     console.log(`[TRADE_BRIDGE] mode=${this.mode} | funder=${this.funder} | clob=${clobStr} | onchain=${onChainStr}`);
     console.log(`[TRADE_BRIDGE] guards: max_pos=$${this.maxPositionUsd} max_exposure=$${this.maxTotalExposure} max_concurrent=${this.maxConcurrent} max_daily=${this.maxDailyTrades}`);
     const slBid = this.cfg?.paper?.stop_loss_bid;
-    const slAskBuf = this.cfg?.paper?.stop_loss_ask_buffer ?? 0.10;
+    const slAskMax = this.cfg?.paper?.stop_loss_ask_max ?? 0.93;
     const slBidE = this.cfg?.paper?.stop_loss_bid_esports;
-    console.log(`[TRADE_BRIDGE] SL=${slBid || "none"} (ask_buffer=${slAskBuf})${slBidE ? ` | esports: SL=${slBidE}` : ""} | allowlist=${this.allowlist ? this.allowlist.length + " markets" : "all"}`);
+    console.log(`[TRADE_BRIDGE] SL=${slBid || "none"} (ask_max=${slAskMax})${slBidE ? ` | esports: SL=${slBidE}` : ""} | allowlist=${this.allowlist ? this.allowlist.length + " markets" : "all"}`);
     
     return { balance };
   }
@@ -1066,7 +1066,7 @@ export class TradeBridge {
     if (this.mode === "paper") return [];
 
     const slThresholdDefault = Number(this.cfg?.paper?.stop_loss_bid ?? 0.70);
-    const slAskBufferDefault = Number(this.cfg?.paper?.stop_loss_ask_buffer ?? 0.10);
+    // stop_loss_ask_max read inside SL block (~line 1162), not needed here
     const slThresholdEsports = Number(this.cfg?.paper?.stop_loss_bid_esports || slThresholdDefault);
     const slThresholdDota2 = Number(this.cfg?.paper?.stop_loss_bid_dota2 || slThresholdEsports);
     const slThresholdCs2 = Number(this.cfg?.paper?.stop_loss_bid_cs2 || slThresholdEsports);
