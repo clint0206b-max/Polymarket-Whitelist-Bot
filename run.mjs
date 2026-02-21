@@ -10,6 +10,7 @@ import { DirtyTracker, detectChanges } from "./src/core/dirty_tracker.mjs";
 import { startHealthServer } from "./src/runtime/health_server.mjs";
 import { TradeBridge, validateBootConfig } from "./src/execution/trade_bridge.mjs";
 import { SLBreachTracker } from "./src/clob/sl_breach_tracker.mjs";
+import { GlobalWSScanner } from "./src/runtime/global_ws_scanner.mjs";
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -276,6 +277,25 @@ let tradeBridge = null;
       process.exit(1);
     }
   }
+}
+
+// --- Global WebSocket Scanner (monitors ALL markets for high-prob opportunities) ---
+let globalScanner = null;
+try {
+  globalScanner = new GlobalWSScanner(state, cfg, tradeBridge);
+  if (globalScanner.enabled) {
+    await globalScanner.start();
+    // Store reference on runtime for health endpoint
+    // Store reference for health server (non-enumerable to avoid serialization)
+    Object.defineProperty(state.runtime, '_globalScannerMetrics', {
+      value: () => globalScanner.getMetrics(),
+      enumerable: false,
+      configurable: true
+    });
+  }
+} catch (e) {
+  console.error(`[BOOT] Global scanner init failed: ${e?.message || e}`);
+  // Non-fatal: continue without scanner
 }
 
 try {
@@ -1061,6 +1081,15 @@ try {
       console.log("[HEALTH] HTTP server closed");
     } catch (e) {
       console.error(`[HEALTH] Failed to close server: ${e?.message || e}`);
+    }
+  }
+
+  // Close global scanner
+  if (globalScanner) {
+    try {
+      globalScanner.close();
+    } catch (e) {
+      console.error(`[GLOBAL_SCANNER] Failed to close: ${e?.message || e}`);
     }
   }
 

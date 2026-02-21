@@ -120,6 +120,59 @@
       </div>
     </div>
 
+    <!-- Global Scanner -->
+    <section class="bg-card rounded-lg border border-slate-700">
+      <div class="px-4 py-3 border-b border-slate-700">
+        <h2 class="font-semibold text-white">🛰️ Global Scanner</h2>
+      </div>
+      <div class="px-4 py-3">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+          <div>
+            <div id="gs-status" class="text-lg font-bold text-slate-400">—</div>
+            <div class="text-xs text-slate-500">Status</div>
+          </div>
+          <div>
+            <div id="gs-universe" class="text-lg font-bold text-white">0</div>
+            <div class="text-xs text-slate-500">Markets</div>
+          </div>
+          <div>
+            <div id="gs-tokens" class="text-lg font-bold text-white">0</div>
+            <div class="text-xs text-slate-500">Tokens Tracked</div>
+          </div>
+          <div>
+            <div id="gs-msg-rate" class="text-lg font-bold text-white">0</div>
+            <div class="text-xs text-slate-500">WS Messages</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 sm:grid-cols-6 gap-3 text-center mt-3 pt-3 border-t border-slate-700/50">
+          <div>
+            <div id="gs-price-updates" class="text-sm font-bold text-blue-400">0</div>
+            <div class="text-xs text-slate-500">Price Updates</div>
+          </div>
+          <div>
+            <div id="gs-depth-checks" class="text-sm font-bold text-yellow-400">0</div>
+            <div class="text-xs text-slate-500">Depth Checks</div>
+          </div>
+          <div>
+            <div id="gs-depth-fail" class="text-sm font-bold text-red-400">0</div>
+            <div class="text-xs text-slate-500">Depth Fail</div>
+          </div>
+          <div>
+            <div id="gs-executed" class="text-sm font-bold text-green-400">0</div>
+            <div class="text-xs text-slate-500">Executed</div>
+          </div>
+          <div>
+            <div id="gs-failed" class="text-sm font-bold text-red-400">0</div>
+            <div class="text-xs text-slate-500">Failed</div>
+          </div>
+          <div>
+            <div id="gs-discovery-ago" class="text-sm font-bold text-slate-400">—</div>
+            <div class="text-xs text-slate-500">Last Discovery</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Open Positions -->
     <section class="bg-card rounded-lg border border-slate-700">
       <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
@@ -131,7 +184,7 @@
           <thead class="text-xs text-slate-400 uppercase bg-slate-800/50">
             <tr>
               <th class="px-4 py-2 text-left">Market</th>
-              <th class="px-4 py-2 text-left">League</th>
+              <th class="px-4 py-2 text-left">Category</th>
               <th class="px-4 py-2 text-right">Entry</th>
               <th class="px-4 py-2 text-right">Current</th>
               <th class="px-4 py-2 text-right">PnL</th>
@@ -156,7 +209,7 @@
             <tr>
               <th class="px-4 py-2 text-left">Result</th>
               <th class="px-4 py-2 text-left">Market</th>
-              <th class="px-4 py-2 text-left">League</th>
+              <th class="px-4 py-2 text-left">Category</th>
               <th class="px-4 py-2 text-right">Entry</th>
               <th class="px-4 py-2 text-right">Exit</th>
               <th class="px-4 py-2 text-right">PnL</th>
@@ -190,7 +243,7 @@
               <tr>
                 <th class="px-3 py-2 text-left">Status</th>
                 <th class="px-3 py-2 text-left">Market</th>
-                <th class="px-3 py-2 text-left">League</th>
+                <th class="px-3 py-2 text-left">Category</th>
                 <th class="px-3 py-2 text-right">Bid</th>
                 <th class="px-3 py-2 text-right">Ask</th>
                 <th class="px-3 py-2 text-right">Spread</th>
@@ -372,9 +425,25 @@
       };
       return `<span class="text-xs px-1.5 py-0.5 rounded ${colors[s] || 'bg-slate-500/20 text-slate-400'}">${s}</span>`;
     }
+    function normalizeCategory(slug, league) {
+      const s = (slug || '').toLowerCase();
+      if (s.includes('btc-') || s.includes('bitcoin')) return 'bitcoin';
+      if (s.includes('eth-') || s.includes('ethereum')) return 'ethereum';
+      if (s.includes('sol-') || s.includes('solana')) return 'solana';
+      if (s.includes('xrp')) return 'xrp';
+      if (s.includes('trump') || s.includes('election') || s.includes('senate') || s.includes('republican') || s.includes('democrat') || s.includes('deport')) return 'politics';
+      if (s.includes('temperature') || s.includes('weather')) return 'weather';
+      if (s.includes('olympic') || s.includes('bafta') || s.includes('oscar')) return 'events';
+      return league || 'other';
+    }
     function leagueBadge(l) {
-      const colors = { nba: 'text-orange-400', cbb: 'text-blue-400', esports: 'text-purple-400', soccer: 'text-green-400' };
-      return `<span class="text-xs ${colors[l] || 'text-slate-400'}">${(l||'?').toUpperCase()}</span>`;
+      const colors = {
+        nba: 'text-orange-400', cbb: 'text-blue-400', esports: 'text-purple-400', soccer: 'text-green-400',
+        cwbb: 'text-pink-400', lol: 'text-purple-400', cs2: 'text-yellow-400', val: 'text-red-400', dota2: 'text-red-500',
+        bitcoin: 'text-[#F7931A]', ethereum: 'text-[#627EEA]', solana: 'text-[#00FFA3]', xrp: 'text-[#7B8794]', crypto: 'text-[#FFD700]',
+        politics: 'text-[#DC3545]', weather: 'text-[#87CEEB]', events: 'text-[#E91E63]', other: 'text-slate-400'
+      };
+      return `<span class="text-xs font-medium ${colors[l] || 'text-slate-400'}">${(l||'?').toUpperCase()}</span>`;
     }
     function truncSlug(s, max=40) { return s && s.length > max ? s.slice(0, max) + '…' : s || '—'; }
     function formatMarketTitle(m) {
@@ -637,7 +706,7 @@
         const ageMs = now - (p.ts_open || now);
         return `<tr class="hover:bg-slate-800/50">
           <td class="px-4 py-2 text-left"><span class="text-xs" title="${p.slug}">${formatMarketTitle(p)}</span></td>
-          <td class="px-4 py-2 text-left">${leagueBadge(p.league)}</td>
+          <td class="px-4 py-2 text-left">${leagueBadge(normalizeCategory(p.slug, p.league))}</td>
           <td class="px-4 py-2 text-right mono text-xs">${(p.entry_price||0).toFixed(3)}</td>
           <td class="px-4 py-2 text-right mono text-xs">${curPrice != null ? curPrice.toFixed(3) : '<span class="text-slate-500">—</span>'}</td>
           <td class="px-4 py-2 text-right mono text-xs ${pnlColor(pnl)}">${pnlStr(pnl)}</td>
@@ -701,7 +770,7 @@
         return `<tr class="hover:bg-slate-800/50">
           <td class="px-4 py-2">${badge}</td>
           <td class="px-4 py-2 text-left"><span class="text-xs" title="${t.slug}">${t.title || truncSlug(t.slug)}</span></td>
-          <td class="px-4 py-2">${leagueBadge(t.league)}</td>
+          <td class="px-4 py-2">${leagueBadge(normalizeCategory(t.slug, t.league))}</td>
           <td class="px-4 py-2 text-right mono text-xs">${(t.entry_price||0).toFixed(3)}</td>
           <td class="px-4 py-2 text-right mono text-xs">${t.exit_price != null ? t.exit_price.toFixed(3) : '—'}</td>
           <td class="px-4 py-2 text-right mono text-xs ${pnlColor(t.pnl_usd)}">${pnlStr(t.pnl_usd)}</td>
@@ -742,7 +811,7 @@
         return `<tr class="hover:bg-slate-800/50">
           <td class="px-3 py-1.5">${statusBadge(m.status)}</td>
           <td class="px-3 py-1.5 text-xs" title="${m.slug}">${formatMarketTitle(m)}</td>
-          <td class="px-3 py-1.5">${leagueBadge(m.league)}</td>
+          <td class="px-3 py-1.5">${leagueBadge(normalizeCategory(m.slug, m.league))}</td>
           <td class="px-3 py-1.5 text-right mono text-xs">${bid != null ? bid.toFixed(3) : '—'}</td>
           <td class="px-3 py-1.5 text-right mono text-xs">${ask != null ? ask.toFixed(3) : '—'}</td>
           <td class="px-3 py-1.5 text-right mono text-xs ${spread != null && spread > maxSpread ? 'text-yellow-400' : ''}">${spread != null ? spread.toFixed(3) : '—'}</td>
@@ -813,6 +882,24 @@
     }
 
     // Fetch all endpoints
+    function renderScanner(gs) {
+      if (!gs) { $('gs-status').textContent = 'OFF'; $('gs-status').className = 'text-lg font-bold text-red-400'; return; }
+      const statusEl = $('gs-status');
+      if (gs.is_connected) { statusEl.textContent = '● LIVE'; statusEl.className = 'text-lg font-bold text-green-400'; }
+      else { statusEl.textContent = '● DOWN'; statusEl.className = 'text-lg font-bold text-red-400'; }
+      $('gs-universe').textContent = gs.universe_size || 0;
+      $('gs-tokens').textContent = gs.tokens_tracked || 0;
+      $('gs-msg-rate').textContent = gs.ws_messages || 0;
+      $('gs-price-updates').textContent = gs.price_updates || 0;
+      const depthChecks = (gs.depth_insufficient || 0) + (gs.depth_fetch_errors || 0) + (gs.trades_executed || 0) + (gs.trades_failed || 0);
+      $('gs-depth-checks').textContent = depthChecks;
+      $('gs-depth-fail').textContent = (gs.depth_insufficient || 0) + (gs.depth_fetch_errors || 0);
+      $('gs-executed').textContent = gs.trades_executed || 0;
+      $('gs-failed').textContent = gs.trades_failed || 0;
+      const agoMs = gs.last_discovery_ago_ms;
+      $('gs-discovery-ago').textContent = agoMs != null ? (agoMs < 60000 ? Math.round(agoMs/1000) + 's ago' : Math.round(agoMs/60000) + 'm ago') : '—';
+    }
+
     async function fetchAll() {
       try {
         const [health, trades, positions, watchlist, config, executions] = await Promise.all([
@@ -825,6 +912,7 @@
         ]);
         allData = { health, trades, positions, watchlist, config, executions };
         renderHealth(health);
+        renderScanner(health?.global_scanner);
         renderTrades(trades);
         renderPositions(positions);
         renderWatchlist(watchlist);

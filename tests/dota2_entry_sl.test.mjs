@@ -15,7 +15,7 @@ const cfg = {
     max_spread: 0.04,
     EPS: 1e-6,
     min_entry_price_dota2: 0.98,
-    max_entry_price_dota2: 0.999,
+    max_entry_price_dota2: 0.99,
   },
 };
 
@@ -25,7 +25,7 @@ describe("resolveEntryPriceLimits", () => {
   it("returns dota2-specific limits for slugPrefix=dota2", () => {
     const { minProb, maxEntry } = resolveEntryPriceLimits(cfg.filters, "dota2");
     assert.equal(minProb, 0.98);
-    assert.equal(maxEntry, 0.999);
+    assert.equal(maxEntry, 0.99);
   });
 
   it("returns default limits for slugPrefix=cs2 (no sport-specific config)", () => {
@@ -51,7 +51,7 @@ describe("resolveEntryPriceLimits", () => {
 
 describe("is_base_signal_candidate — dota2 entry range [0.98, 0.999]", () => {
   // PASS: inside dota2 range
-  it("dota2 ask=0.99 passes (inside 0.98-0.999)", () => {
+  it("dota2 ask=0.99 passes (inside 0.98-0.99)", () => {
     const r = is_base_signal_candidate({ probAsk: 0.99, spread: 0.02 }, cfg, "dota2");
     assert.equal(r.pass, true);
   });
@@ -61,8 +61,8 @@ describe("is_base_signal_candidate — dota2 entry range [0.98, 0.999]", () => {
     assert.equal(r.pass, true);
   });
 
-  it("dota2 ask=0.995 passes (inside range)", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.995, spread: 0.02 }, cfg, "dota2");
+  it("dota2 ask=0.985 passes (inside range)", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.985, spread: 0.02 }, cfg, "dota2");
     assert.equal(r.pass, true);
   });
 
@@ -79,13 +79,13 @@ describe("is_base_signal_candidate — dota2 entry range [0.98, 0.999]", () => {
     assert.equal(r.reason, "price_out_of_range");
   });
 
-  it("dota2 ask=1.00 FAILS (above max 0.999)", () => {
+  it("dota2 ask=1.00 FAILS (above max 0.99)", () => {
     const r = is_base_signal_candidate({ probAsk: 1.00, spread: 0.02 }, cfg, "dota2");
     assert.equal(r.pass, false);
     assert.equal(r.reason, "price_out_of_range");
   });
 
-  it("dota2 ask=0.9995 FAILS (above max 0.999)", () => {
+  it("dota2 ask=0.9995 FAILS (above max 0.99)", () => {
     const r = is_base_signal_candidate({ probAsk: 0.9995, spread: 0.02 }, cfg, "dota2");
     assert.equal(r.pass, false);
     assert.equal(r.reason, "price_out_of_range");
@@ -144,6 +144,6 @@ describe("Dota2 SL config values", () => {
   it("local.json has max_entry_price_dota2=0.999", async () => {
     const { readFileSync } = await import("node:fs");
     const cfg = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(cfg.filters.max_entry_price_dota2, 0.999);
+    assert.equal(cfg.filters.max_entry_price_dota2, 0.99);
   });
 });

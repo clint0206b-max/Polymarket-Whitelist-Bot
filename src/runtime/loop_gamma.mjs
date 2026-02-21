@@ -241,6 +241,12 @@ export async function loopGamma(state, cfg, now) {
       }
     }
 
+    // Category blacklist — skip crypto/soccer in gamma discovery too
+    const catBlacklist = cfg?.global_scanner?.category_blacklist || ["crypto", "soccer"];
+    if (catBlacklist.includes(league)) {
+      continue;
+    }
+
     health.gamma_markets_kept++;
     health.gamma_markets_kept_by_league[league] = (health.gamma_markets_kept_by_league[league] || 0) + 1;
 

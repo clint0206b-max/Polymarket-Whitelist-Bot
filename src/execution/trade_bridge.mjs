@@ -211,6 +211,33 @@ export class TradeBridge {
       return this.execState.trades[tradeId];
     }
 
+    // Cross-source duplicate check: prevent scanner + eval loop buying the same market
+    const existingBuyForSlug = Object.values(this.execState.trades).find(
+      t => t.slug === signal.slug
+        && String(t.side).toUpperCase() === "BUY"
+        && !t.closed
+        && (t.status === "filled" || t.status === "queued" || t.status === "sent" || t.status === "shadow")
+    );
+    if (existingBuyForSlug) {
+      console.log(`[TRADE_BRIDGE] SKIP duplicate buy for slug=${signal.slug} — already have trade (signal_id=${existingBuyForSlug.signal_id}, status=${existingBuyForSlug.status})`);
+      return { blocked: true, reason: "duplicate_slug" };
+    }
+
+    // Category blacklist — check by league field (authoritative) + slug regex fallback
+    const catBlacklist = this.cfg?.global_scanner?.category_blacklist || ["crypto", "soccer"];
+    const sl = String(signal.slug || "").toLowerCase();
+    const league = String(signal.league || "").toLowerCase();
+    if (catBlacklist.includes(league)) {
+      console.log(`[TRADE_BRIDGE] BLOCKED by league blacklist: ${signal.slug} (league=${league})`);
+      return { blocked: true, reason: `${league}_blacklist` };
+    }
+    if (catBlacklist.includes("crypto")) {
+      if (/\b(bitcoin|btc|ethereum|eth|solana|sol|xrp|crypto|up-or-down.*et)\b/.test(sl)) {
+        console.log(`[TRADE_BRIDGE] BLOCKED crypto: ${signal.slug}`);
+        return { blocked: true, reason: "crypto_blacklist" };
+      }
+    }
+
     // Allowlist check
     if (this.allowlist && !this.allowlist.includes(signal.slug)) {
       console.log(`[TRADE_BRIDGE] BLOCKED by allowlist: ${signal.slug}`);
@@ -352,7 +379,7 @@ export class TradeBridge {
         const slippage = result.avgFillPrice ? ((result.avgFillPrice - entryPrice) / entryPrice * 100).toFixed(2) : "?";
         console.log(`[FILLED_BUY] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4) || "?"} | slippage=${slippage}% | partial=${result.isPartial}`);
 
-        notifyTelegram(`🟢 BUY ${signal.slug}\n$${(result.spentUsd || budget).toFixed(2)} @ ${entryPrice} | ${result.filledShares} shares`).catch(() => {});
+        // notifyTelegram(`🟢 BUY ${signal.slug}\n$${(result.spentUsd || budget).toFixed(2)} @ ${entryPrice} | ${result.filledShares} shares`).catch(() => {});
 
         appendJsonl("state/journal/executions.jsonl", {
           type: "trade_executed",
@@ -559,7 +586,7 @@ export class TradeBridge {
           console.log(`[FILLED_SL_SELL] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4)} | total=${totalFilledSoFar}/${shares} | PnL=$${pnl.toFixed(2)} | attempt=${i + 1}${allFilled ? "" : " PARTIAL"}`);
 
           if (allFilled) {
-            notifyTelegram(`🔴 SELL ${signal.slug}\n-$${Math.abs(pnl).toFixed(2)} | stop_loss`).catch(() => {});
+            // notifyTelegram(`🔴 SELL ${signal.slug}\n-$${Math.abs(pnl).toFixed(2)} | stop_loss`).catch(() => {});
           }
 
           appendJsonl("state/journal/executions.jsonl", {
@@ -642,7 +669,7 @@ export class TradeBridge {
 
             const pnl = totalReceivedSoFar - (buyTrade.spentUsd || 0);
             console.log(`[FILLED_SL_LAST_RESORT] ${signal.slug} | ${result.filledShares} shares @ $${result.avgFillPrice?.toFixed(4)} | PnL=$${pnl.toFixed(2)}`);
-            notifyTelegram(`🆘 LAST RESORT SELL ${signal.slug}\n-$${Math.abs(pnl).toFixed(2)} | floor=0.01`).catch(() => {});
+            // notifyTelegram(`🆘 LAST RESORT SELL ${signal.slug}\n-$${Math.abs(pnl).toFixed(2)} | floor=0.01`).catch(() => {});
 
             appendJsonl("state/journal/executions.jsonl", {
               type: "trade_executed",
@@ -754,7 +781,7 @@ export class TradeBridge {
 
         const pnlEmoji = pnl >= 0 ? "🏆" : "🔴";
         const pnlSign = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
-        notifyTelegram(`${pnlEmoji} SELL ${signal.slug}\n${pnlSign} | ${signal.close_reason}`).catch(() => {});
+        // notifyTelegram(`${pnlEmoji} SELL ${signal.slug}\n${pnlSign} | ${signal.close_reason}`).catch(() => {});
 
         appendJsonl("state/journal/executions.jsonl", {
           type: "trade_executed",

@@ -1654,14 +1654,7 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         bumpBucket("health", `esports_series_guard_reason:${rs}`, 1);
       }
 
-      // --- Bo2 BLACKLIST: reject match_series markets from Bo2 events ---
-      // Bo2 series can draw — only the series market is problematic, individual games are fine.
-      const fmt = String(m.esports_ctx.derived?.series_format || "unknown");
-      if (fmt === "bo2" && String(m.market_kind || "") === "match_series" && m.status === "watching") {
-        bumpBucket("reject", "bo2_blacklisted", 1);
-        bumpBucket("health", "bo2_blacklisted", 1);
-        continue;
-      }
+      // Bo2 blacklist REMOVED 2026-02-21 — all market types allowed now
     }
 
     // Pending timeout MUST be evaluated independently (before Stage 1/2)
@@ -2115,23 +2108,8 @@ export async function loopEvalHttpOnly(state, cfg, now) {
           continue;
         }
         bumpBucket("health", "soccer_gate_passed", 1);
-      } else if ((league === "nba" || league === "cbb" || league === "cwbb") && effectiveGateMode === "blocking") {
-        const ctxAllowed = m.context_entry?.entry_allowed === true;
-        if (!ctxAllowed) {
-          const reason = m.context_entry?.entry_blocked_reason || "no_context";
-          bumpBucket("reject", `${league}_gate_blocked:${reason}`, 1);
-          bumpBucket("reject", `reject_by_league:${league}:context_gate_blocked`, 1);
-          setReject(m, `${league}_gate:${reason}`);
-          if (startedPending) recordPendingConfirmFail(`${league}_gate:${reason}`);
-          oppTracker.onGateReject(m, `${league}_gate:${reason}`,
-            { ask: bestAsk, bid: bestBid, spread: bestAsk - bestBid },
-            { entry_depth_usd_ask: m.liquidity?.entry_depth_usd_ask ?? null, exit_depth_usd_bid: m.liquidity?.exit_depth_usd_bid ?? null },
-            { period: m.context?.period ?? null, minutes_left: m.context?.minutes_left ?? null, margin: m.context?.margin ?? null, margin_for_yes: m.context_entry?.margin_for_yes ?? null, win_prob: m.context_entry?.win_prob ?? null, state: m.context?.state ?? null },
-            tNow);
-          continue;
-        }
-        bumpBucket("health", `${league}_gate_passed`, 1);
       }
+      // CBB/NBA/CWBB context gates REMOVED 2026-02-21 — price is the only gate now
     }
 
     // Stage 1 evaluated counter (only when quote complete and we actually run Stage 1)
@@ -2427,38 +2405,10 @@ export async function loopEvalHttpOnly(state, cfg, now) {
         if (m.context?.sport === "nba") bumpBucket("health", "signaled_and_context_nba_decided", 1);
       }
 
-      // Esports series guard — HARD GATE for match_series in BO3/BO5.
-      // Blocks entry unless the YES outcome team is ahead with enough maps won.
-      // BO3: leader needs ≥1 map. BO5: leader needs ≥2 maps. Tie/unknown = blocked.
+      // Esports series guard REMOVED 2026-02-21 — price is the only gate now
       let would_gate_apply = false;
       let would_gate_block = false;
       let would_gate_reason = "not_applicable";
-      if (m.league === "esports" && String(m.market_kind || "") === "match_series") {
-        const d = m.esports_ctx?.derived || null;
-        const fmt = String(d?.series_format || "unknown");
-
-        if (fmt === "bo3" || fmt === "bo5") {
-          would_gate_apply = true;
-          const gs = String(d?.guard_status || "unknown");
-          const gr = String(d?.guard_reason || "no_derived");
-          would_gate_block = (gs !== "allowed");
-          would_gate_reason = would_gate_block ? gr : "allowed";
-
-          bumpBucket("health", "esports_gate_apply", 1);
-          if (would_gate_block) bumpBucket("health", "esports_gate_block", 1);
-          else bumpBucket("health", "esports_gate_allow", 1);
-          bumpBucket("health", `esports_gate_reason:${would_gate_reason}`, 1);
-
-          // HARD GATE: skip signal if blocked
-          if (would_gate_block) {
-            bumpBucket("reject", "esports_series_gate_blocked", 1);
-            bumpBucket("reject", `esports_series_gate_reason:${would_gate_reason}`, 1);
-            m._series_gate_blocked = true;
-            m._series_gate_reason = would_gate_reason;
-            continue; // skip this candidate — do not generate signal
-          }
-        }
-      }
 
       // TP math dry-run (tag-only)
       // We compute it at candidate stage for rolling metrics, and also attach to the signal snapshot.

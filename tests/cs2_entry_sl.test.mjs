@@ -15,9 +15,9 @@ const cfg = {
     max_spread: 0.04,
     EPS: 1e-6,
     min_entry_price_dota2: 0.98,
-    max_entry_price_dota2: 0.999,
+    max_entry_price_dota2: 0.99,
     min_entry_price_cs2: 0.98,
-    max_entry_price_cs2: 0.999,
+    max_entry_price_cs2: 0.99,
     max_spread_cs2: 0.10,
   },
 };
@@ -28,13 +28,13 @@ describe("resolveEntryPriceLimits — CS2", () => {
   it("returns cs2-specific limits", () => {
     const { minProb, maxEntry } = resolveEntryPriceLimits(cfg.filters, "cs2");
     assert.equal(minProb, 0.98);
-    assert.equal(maxEntry, 0.999);
+    assert.equal(maxEntry, 0.99);
   });
 
   it("dota2 still uses dota2 limits", () => {
     const { minProb, maxEntry } = resolveEntryPriceLimits(cfg.filters, "dota2");
     assert.equal(minProb, 0.98);
-    assert.equal(maxEntry, 0.999);
+    assert.equal(maxEntry, 0.99);
   });
 
   it("lol uses defaults (no sport-specific)", () => {
@@ -77,8 +77,8 @@ describe("is_base_signal_candidate — CS2 entry [0.98, 0.999] + spread ≤ 0.10
     assert.equal(r.pass, true);
   });
 
-  it("cs2 ask=0.995 spread=0.05 passes (inside range)", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.995, spread: 0.05 }, cfg, "cs2");
+  it("cs2 ask=0.985 spread=0.05 passes (inside range)", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.985, spread: 0.05 }, cfg, "cs2");
     assert.equal(r.pass, true);
   });
 
@@ -94,7 +94,7 @@ describe("is_base_signal_candidate — CS2 entry [0.98, 0.999] + spread ≤ 0.10
     assert.equal(r.reason, "price_out_of_range");
   });
 
-  it("cs2 ask=1.00 FAILS (above max 0.999)", () => {
+  it("cs2 ask=1.00 FAILS (above max 0.99)", () => {
     const r = is_base_signal_candidate({ probAsk: 1.00, spread: 0.05 }, cfg, "cs2");
     assert.equal(r.pass, false);
     assert.equal(r.reason, "price_out_of_range");
@@ -135,7 +135,7 @@ describe("CS2 SL config values in local.json", () => {
   it("max_entry_price_cs2=0.999", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.filters.max_entry_price_cs2, 0.999);
+    assert.equal(c.filters.max_entry_price_cs2, 0.99);
   });
 
   it("max_spread_cs2=0.10", async () => {

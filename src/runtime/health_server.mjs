@@ -626,6 +626,11 @@ export function buildHealthResponse(state, startedMs, buildCommit) {
 
     trade_bridge: state?.runtime?.trade_bridge || { mode: "paper" },
     universe_funnel: buildUniverseFunnel(state),
+    
+    global_scanner: (() => {
+      const fn = state?.runtime?._globalScannerMetrics;
+      return typeof fn === "function" ? fn() : null;
+    })(),
   };
 }
 
