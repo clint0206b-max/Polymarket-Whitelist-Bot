@@ -1,8 +1,8 @@
 {
   "polling": {
     "gamma_discovery_seconds": 20,
-    "clob_eval_seconds": 4,
-    "pending_window_seconds": 2,
+    "clob_eval_seconds": 0.5,
+    "pending_window_seconds": 0,
     "pending_max_checks": 0
   },
   "gamma": {
@@ -10,39 +10,38 @@
       "esports",
       "nba",
       "ncaa-basketball",
-      "soccer"
-    ]
+      "soccer",
+      "mlb",
+      "nfl",
+      "nhl",
+      "mma",
+      "tennis",
+      "cricket"
+    ],
+    "max_events_per_fetch": 200
   },
   "filters": {
-    "min_prob": 0.93,
-    "max_entry_price": 0.97,
-    "max_spread": 0.04,
-    "min_entry_depth_usd_ask": 500,
-    "min_entry_price_dota2": 0.8,
-    "max_entry_price_dota2": 0.92,
-    "min_entry_price_cs2": 0.82,
-    "max_entry_price_cs2": 0.93,
-    "max_spread_cs2": 0.02,
-    "min_entry_price_lol": 0.8,
-    "max_entry_price_lol": 0.89,
-    "min_entry_price_val": 0.81,
-    "max_entry_price_val": 0.93,
-    "min_entry_price_cbb": 0.80,
-    "max_entry_price_cbb": 0.93,
-    "max_spread_cbb": 0.04,
-    "min_entry_price_nba": 0.8,
-    "max_entry_price_nba": 0.9,
-    "min_entry_price_cwbb": 0.8,
-    "max_entry_price_cwbb": 0.9,
-    "max_spread_cwbb": 0.02
-  },
-  "_deprecated_entry_rules": {
-    "_note": "DEAD CONFIG \u2014 was never read by pipeline. Moved to filters. Delete after 2026-03-01.",
-    "min_prob": 0.93,
-    "max_entry_price": 0.98,
-    "max_spread": 0.04,
-    "min_depth_entry_usd": 1000,
-    "min_depth_exit_usd": 2000
+    "min_prob": 0.98,
+    "max_entry_price": 0.999,
+    "max_spread": 0.10,
+    "min_entry_depth_usd_ask": 50,
+    "min_entry_price_dota2": 0.98,
+    "max_entry_price_dota2": 0.999,
+    "min_entry_price_cs2": 0.98,
+    "max_entry_price_cs2": 0.999,
+    "max_spread_cs2": 0.10,
+    "min_entry_price_lol": 0.98,
+    "max_entry_price_lol": 0.999,
+    "min_entry_price_val": 0.98,
+    "max_entry_price_val": 0.999,
+    "min_entry_price_cbb": 0.98,
+    "max_entry_price_cbb": 0.999,
+    "max_spread_cbb": 0.10,
+    "min_entry_price_nba": 0.98,
+    "max_entry_price_nba": 0.999,
+    "min_entry_price_cwbb": 0.98,
+    "max_entry_price_cwbb": 0.999,
+    "max_spread_cwbb": 0.10
   },
   "trading": {
     "mode": "live",
@@ -54,31 +53,25 @@
     "max_trades_per_day": 9999
   },
   "paper": {
-    "stop_loss_bid": 0.5,
-    "stop_loss_bid_esports": 0.5,
-    "stop_loss_bid_dota2": 0.5,
-    "stop_loss_bid_cs2": 0.74,
-    "stop_loss_bid_lol": 0.5,
-    "stop_loss_bid_val": 0.5,
-    "stop_loss_bid_nba": 0.5,
-    "stop_loss_bid_cbb": 0.68,
-    "stop_loss_bid_cwbb": 0.5,
-    "stop_loss_spread_max": 0.5,
+    "stop_loss_bid": 0.90,
+    "stop_loss_ask_buffer": 0.03,
+    "stop_loss_bid_esports": 0.90,
+    "stop_loss_bid_dota2": 0.90,
+    "stop_loss_bid_cs2": 0.90,
+    "stop_loss_bid_lol": 0.90,
+    "stop_loss_bid_val": 0.90,
+    "stop_loss_bid_nba": 0.90,
+    "stop_loss_bid_cbb": 0.90,
+    "stop_loss_bid_cwbb": 0.90,
+    "stop_loss_spread_max": 0.03,
     "stop_loss_emergency_bid": 0.15
   },
   "context": {
-    "enabled": true,
+    "enabled": false,
     "entry_rules": {
       "gate_mode_nba": "blocking",
       "gate_mode_cbb": "blocking",
-      "max_minutes_left_cbb": 10,
-      "min_win_prob_cbb": 0,
-      "max_minutes_left_nba": 10,
-      "min_win_prob_nba": 0,
-      "max_minutes_left_cwbb": 10,
-      "min_win_prob_cwbb": 0,
-      "gate_mode_cwbb": "blocking",
-      "min_margin": 3
+      "gate_mode_cwbb": "blocking"
     }
   },
   "purge": {
@@ -88,12 +81,7 @@
     "enabled": true
   },
   "sizing": {
-    "mode": "percent_of_equity",
-    "percent": 10,
-    "max_exposure_pct": 60,
-    "max_trade_usd": 18,
-    "fallback_fixed_usd": 10,
-    "balance_max_age_ms": 300000,
-    "net_deposits": 146.42
+    "mode": "fixed",
+    "fixed_usd": 10
   }
 }

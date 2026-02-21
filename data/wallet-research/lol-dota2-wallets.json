@@ -1,0 +1,56 @@
+{
+  "generated_at": "2026-02-20 18:55:22 UTC",
+  "status": "NO_SIGNIFICANT_MARKETS_FOUND",
+  "summary": "After extensive searching through multiple API endpoints and search patterns, no significant LoL or Dota2 esports markets with substantial trading volume were found on Polymarket.",
+  "search_attempts": [
+    {
+      "method": "slug_contains query",
+      "patterns_tested": ["lol-", "dota2-", "lol", "dota"],
+      "result": "No markets returned or wrong markets returned"
+    },
+    {
+      "method": "text search (_q parameter)",
+      "patterns_tested": [
+        "league-of-legends",
+        "lol",
+        "worlds",
+        "lec",
+        "lcs",
+        "dota",
+        "dota-2",
+        "the-international",
+        "T1",
+        "G2",
+        "Fnatic",
+        "GenG",
+        "DRX",
+        "Team Spirit",
+        "Team Liquid"
+      ],
+      "result": "Returned non-esports markets (mostly 2020 election markets where search terms appeared)"
+    },
+    {
+      "method": "events/series endpoint",
+      "patterns_tested": ["league-of-legends series"],
+      "result": "Returned data but no clear esports markets with significant volume"
+    }
+  ],
+  "conclusion": "Polymarket may not currently have (or may have recently removed) LoL and Dota2 esports markets with significant trading volume. Possible reasons:",
+  "possible_reasons": [
+    "Polymarket focuses primarily on politics, crypto, and mainstream sports rather than esports",
+    "Esports markets exist but have very low volume (<$100 total)",
+    "Markets use different categorization/tagging that doesn't match search patterns",
+    "Esports markets may be under a different API endpoint not explored",
+    "Historical esports markets may have been archived or removed from public APIs"
+  ],
+  "recommendation": "Consider expanding search to include:",
+  "alternative_approaches": [
+    "Check Counter-Strike (CS:GO/CS2) markets which were found in earlier API responses",
+    "Look for Valorant esports markets",
+    "Search for general 'esports' category markets",
+    "Check if Polymarket has a dedicated esports subdomain or separate platform",
+    "Review recent Polymarket blog/announcements for esports market offerings"
+  ],
+  "top_20_wallets": [],
+  "note": "Unable to provide wallet analysis without actual LoL/Dota2 market data with sufficient trading activity"
+}

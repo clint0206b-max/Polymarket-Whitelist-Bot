@@ -1,0 +1,97 @@
+{
+  "research_date": "2026-02-20",
+  "task": "Find wallets trading Valorant esports on Polymarket",
+  "status": "INCOMPLETE - Low volume markets, API access issues",
+  "findings": {
+    "valorant_markets_exist": true,
+    "source_url": "https://polymarket.com/sports/valorant/games",
+    "visible_markets": [
+      {
+        "match": "VCT EMEA Clash: Karmine Corp vs FUT Esports",
+        "volume_usd": 11500,
+        "date": "2026-02-20",
+        "type": "Game 2, Best of 3"
+      },
+      {
+        "match": "VCT Game Changers NA: Wadadaa vs Maui Wowie",
+        "volume_usd": 15300,
+        "date": "2026-02-20"
+      },
+      {
+        "match": "VCT Game Changers NA: 100 Thieves GC vs Teevee",
+        "volume_usd": 2100,
+        "date": "2026-02-21"
+      },
+      {
+        "match": "VCT Game Changers NA: FlyQuest RED vs Ghost Gaming GC",
+        "volume_usd": 300,
+        "date": "2026-02-21"
+      },
+      {
+        "match": "VCT Game Changers LATAM: Karmine Corp vs FUT Esports",
+        "volume_usd": 0,
+        "date": "2026-02-20"
+      },
+      {
+        "match": "VCL North America Playoffs: sleepers vs M80",
+        "volume_usd": 0,
+        "date": "2026-02-23"
+      }
+    ],
+    "total_volume_found": 29200,
+    "market_count_visible": 15
+  },
+  "challenges": {
+    "api_access": "Standard gamma-api.polymarket.com endpoints do not return Valorant/sports markets",
+    "low_volume": "Most Valorant markets have $0-$300 volume, only a few have $2K-$15K",
+    "condition_ids_not_accessible": "Could not retrieve condition IDs needed for trade data queries",
+    "comparison": "Typical Polymarket political markets have $100K-$10M+ volume"
+  },
+  "api_attempts": {
+    "gamma_api_markets": "No Valorant results in 2000 markets checked",
+    "gamma_api_events": "No Valorant results in 500 events checked",
+    "clob_api_markets": "No Valorant results in 1000 markets checked",
+    "search_endpoint": "Endpoint not functional",
+    "web_scraping": "Page is client-side rendered, condition IDs not in HTML"
+  },
+  "blackwall_analysis": {
+    "wallet": "0xac44cb78be973ec7d91b69678c4bdfa7009afbd7",
+    "total_trades_checked": 93,
+    "esports_trades": 0,
+    "valorant_trades": 0,
+    "conclusion": "Blackwall has not traded Valorant markets in recent history"
+  },
+  "other_esports_checked": {
+    "cs2": {
+      "url": "https://polymarket.com/sports/cs2/games",
+      "markets_found": 36,
+      "max_volume_seen": 9630,
+      "typical_volume": "0-5000",
+      "note": "Also low volume, highest market was NAVI Junior vs KUUSAMO at $9.6K"
+    },
+    "lol": {
+      "url": "https://polymarket.com/sports/lol/games",
+      "markets_found": 28,
+      "note": "Not checked in detail"
+    },
+    "dota2": {
+      "url": "https://polymarket.com/sports/dota2/games",
+      "markets_found": 8,
+      "note": "Not checked in detail"
+    }
+  },
+  "recommendations": [
+    "ALL esports markets on Polymarket currently have very low liquidity (<$10K typically)",
+    "Esports markets are poor targets for wallet analysis compared to political markets",
+    "Contact Polymarket support or check developer docs for sports API endpoints",
+    "Monitor major tournaments (VCT Champions, CS2 Majors, LoL Worlds) for potentially higher volume",
+    "Consider focusing on political/crypto markets instead where volume is 10-100x higher"
+  ],
+  "next_steps": [
+    "Check if other esports (CS2, LoL, Dota2) have markets with sufficient volume",
+    "Try browser automation to extract condition IDs from the sports page",
+    "Look for Polymarket GraphQL or alternative API endpoints for sports data",
+    "Monitor VCT Champions or Masters tournaments for higher-volume markets"
+  ],
+  "methodology_notes": "Attempted multiple API endpoints and search strategies. Confirmed markets exist via web interface but could not programmatically access trade data due to API limitations and low market volumes making traditional wallet analysis impractical."
+}

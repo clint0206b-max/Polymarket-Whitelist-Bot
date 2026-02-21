@@ -1,0 +1,128 @@
+[
+  {
+    "conditionId": "0xf2e631ea675c5b09caea0bf65cf7887e25907af2657c8c907f02d9afbff20d05",
+    "slug": "will-trump-win-the-2020-us-presidential-election",
+    "question": "Will Trump win the 2020 U.S. presidential election?",
+    "volume": 10802601.99,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x1411e65d309cfa0a748328b159ae593a4cbddbb76aecbf0086d24eef06aa6843",
+    "slug": "which-party-will-win-arizona-in-the-2020-presidential-election",
+    "question": "Which party will win Arizona in the 2020 Presidential Election?",
+    "volume": 1506034.75,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x080a58fb24fbea95a744adb41c1eb2d321be81cd571d17185ecbe0eda19cf21a",
+    "slug": "which-party-will-win-pennsylvania-in-the-2020-presidential-election",
+    "question": "Which party will win Pennsylvania in the 2020 presidential election?",
+    "volume": 1421876.34,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x10ee8590fc06e7ce83463337f6bd3b38cee702667bd291712fcda5081e5e2a8d",
+    "slug": "which-party-will-win-georgia-in-the-2020-presidential-election",
+    "question": "Which party will win Georgia in the 2020 presidential election?",
+    "volume": 1253550.17,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x969375bf68d9051086aeccbce277e0cb0f09cb0cf56351c39906ab292c2dd9bb",
+    "slug": "will-the-kansas-city-chiefs-win-superbowl-55",
+    "question": "Superbowl 55: Kansas City Chiefs vs Tampa Bay Buccaneers",
+    "volume": 649402.09,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0xa23e60a31b36c537605edf9eebb3e2be252046f1ffb19ade09f97d47429b5470",
+    "slug": "will-donald-trump-formally-concede-the-2020-us-election-before-december-1st-2020",
+    "question": "Will Donald Trump formally concede the 2020 US Election before December 1st, 2020?",
+    "volume": 454342.99,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0xe9b05f9f28541aa6e0ef301170590bc55f9d7099378f7c7674a83b42d799f4a4",
+    "slug": "will-any-electoral-certificates-be-formally-challenged-in-congress",
+    "question": "Will any Electoral College Certificates of Vote be formally challenged in Congress?",
+    "volume": 265340.93,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x9129b6cb16ec8f79fd92d0d3377c554bb17fd31589bfef607f5bba1de5218a28",
+    "slug": "will-the-associated-press-publish-a-tweet-calling-the-2020-us-presidential-election-before-november-6",
+    "question": "Will the Associated Press publish a tweet calling the 2020 US presidential election before November 6?",
+    "volume": 261432.2,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x8a5b6ae9b967ce2a154bfe07a9db6034bb3bc11f432a57c1ab8ae21c51ff1837",
+    "slug": "which-party-will-win-north-carolina-in-the-2020-presidential-election",
+    "question": "Which party will win North Carolina in the 2020 presidential election?",
+    "volume": 244840.59,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0xc64973cf7a20b3b114af9d918960f47cd1a70f2119819f7a434dfedc977560f0",
+    "slug": "which-party-will-win-florida-in-the-2020-presidential-election",
+    "question": "Which party will win Florida in the 2020 presidential election?",
+    "volume": 243053.25,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x829b85b2ad61476ce1a92364f1c1c61ad53487b9476d13397ef346beebda1200",
+    "slug": "which-party-will-win-the-u-s-senate-special-election-in-georgia-loeffler-r-vs-warnock-d",
+    "question": "Which party will win the U.S. Senate special election in Georgia? (Loeffler - R vs Warnock - D)",
+    "volume": 237532.29,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0xea1cd8e9df99aba5bec306a63074175da203509d7e4a749643da6fc8367e57df",
+    "slug": "which-party-will-win-the-u-s-senate-runoff-in-georgia-ossoff-d-vs-perdue-r",
+    "question": "Which party will win the U.S. Senate runoff in Georgia? (Ossoff - D vs. Perdue - R)",
+    "volume": 206128.54,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x3a28635bce8cf50695662a828248ed73b01e6c55e9ce54a967451281669aeb78",
+    "slug": "which-party-will-win-texas-in-the-2020-presidential-election",
+    "question": "Which party will win Texas in the 2020 presidential election?",
+    "volume": 194336.89,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x47f9555fa286a9cabb9de41d66ae5220a194a49dcc1084ded95af63c809f4c0b",
+    "slug": "will-donald-trump-tweet-announcing-that-he-won-the-election-before-november-5th-2020",
+    "question": "Will Donald Trump tweet announcing that he won the election before November 5th 2020?",
+    "volume": 127490.67,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0x780c0f4d66006c95e346b3fdb296707b234aba1a00e7acba6323d1c2f856b6f9",
+    "slug": "who-will-win-the-2020-league-of-legends-world-championship",
+    "question": "Who will win the 2020 League of Legends World Championship?",
+    "volume": 84205.45,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0xdc9bc87850a00c051c902f6d10355ec6412a08a56aa2e81b59beb3e9b80a11b3",
+    "slug": "will-538-outperform-the-economist-in-forecasting-the-2020-presidential-election",
+    "question": "Will 538 outperform The Economist in forecasting the 2020 Presidential Election?",
+    "volume": 81312.46,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0xb2eecb8d14e871c5b82a3b037fc5f8b703c218e41aa578c8e870244585b9db78",
+    "slug": "what-will-the-usd-price-of-filecoin-fil-be-on-november-17th-2020",
+    "question": "What will the USD price of Filecoin ($FIL) be on November 17th, 2020?",
+    "volume": 69947.1,
+    "game": "lol"
+  },
+  {
+    "conditionId": "0xe3b423dfad8c22ff75c9899c4e8176f628cf4ad4caa00481764d320e7415f7a9",
+    "slug": "will-joe-biden-get-coronavirus-before-the-election",
+    "question": "Will Joe Biden get Coronavirus before the election?",
+    "volume": 32257.45,
+    "game": "lol"
+  }
+]

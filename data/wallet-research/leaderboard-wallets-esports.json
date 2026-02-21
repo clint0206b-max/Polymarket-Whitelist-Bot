@@ -1,0 +1,230 @@
+{
+  "metadata": {
+    "analysis_date": "2026-02-20T18:57:05.470585",
+    "source": "Polymarket Sports Leaderboard Top 5",
+    "esports_definition": "Markets with CS2, LoL, Dota2, Valorant prefixes",
+    "wallets_analyzed": 5,
+    "wallets_with_esports": 2
+  },
+  "summary": {
+    "total_esports_traders": 2,
+    "traders": [
+      {
+        "name": "RN1",
+        "wallet": "0x2005d16a84ceefa912d4e380cd32e7ff827875ea",
+        "rank": 3,
+        "esports_focus": "PRIMARY_TRADER",
+        "note": "Pure CS2 specialist - 564/1000 trades are esports"
+      },
+      {
+        "name": "Anonymous",
+        "wallet": "0x006cc834cc092684f1b56626e23bedb3835c16ea",
+        "rank": 2,
+        "esports_focus": "MINIMAL",
+        "note": "Mainly traditional sports, occasional CS2 trades"
+      }
+    ]
+  },
+  "detailed_analysis": {
+    "RN1": {
+      "wallet": "0x2005d16a84ceefa912d4e380cd32e7ff827875ea",
+      "rank_on_leaderboard": 3,
+      "total_trades": 1000,
+      "esports_trades": 564,
+      "esports_percentage": 56.4,
+      "esports_breakdown": {
+        "cs2": 564,
+        "lol": 0,
+        "dota2": 0,
+        "valorant": 0
+      },
+      "trading_stats": {
+        "total_volume_usd": 221899.76,
+        "avg_trade_size_usd": 393.44,
+        "total_shares": 511152.94,
+        "avg_shares_per_trade": 906.3,
+        "largest_position_shares": 10069.0,
+        "smallest_position_shares": 5.0
+      },
+      "trading_behavior": {
+        "strategy": "BUY_AND_HOLD",
+        "buys": 564,
+        "sells": 0,
+        "holds_to_resolution": true,
+        "description": "Never sells - accumulates positions and holds until market resolves"
+      },
+      "price_analysis": {
+        "avg_entry_price": 0.49,
+        "min_entry": 0.01,
+        "max_entry": 0.97,
+        "high_confidence_trades": 172,
+        "low_confidence_trades": 228,
+        "high_confidence_pct": 30.5,
+        "low_confidence_pct": 40.4,
+        "strategy_note": "Takes positions across full probability spectrum - value hunting"
+      },
+      "market_coverage": {
+        "unique_markets": 21,
+        "top_markets": [
+          {
+            "slug": "cs2-mouz-navi-2026-02-20",
+            "trades": 122
+          },
+          {
+            "slug": "cs2-furia-mglz-2026-02-20",
+            "trades": 87
+          },
+          {
+            "slug": "cs2-mouz-navi-2026-02-20-game1",
+            "trades": 70
+          },
+          {
+            "slug": "cs2-fal2-prv-2026-02-20",
+            "trades": 70
+          },
+          {
+            "slug": "cs2-furia-mglz-2026-02-20-game",
+            "trades": 50
+          }
+        ]
+      },
+      "recent_activity": {
+        "last_trade_date": "2026-02-20",
+        "currently_active": true,
+        "recent_focus": "PGL Cluj-Napoca Playoffs (MOUZ, NAVI, FURIA, TheMongolz)"
+      },
+      "insights": [
+        "Professional CS2 esports trader - over $220k volume",
+        "Buy-and-hold strategy: never exits early, always holds to resolution",
+        "Heavy activity on major tournaments (PGL Cluj-Napoca)",
+        "Takes large positions (up to 10k shares)",
+        "Value-oriented: buys across full probability range",
+        "Very active: 21 different CS2 markets traded",
+        "RECOMMENDATION: PRIORITY WATCH - This is a serious esports whale"
+      ]
+    },
+    "Anonymous": {
+      "wallet": "0x006cc834cc092684f1b56626e23bedb3835c16ea",
+      "rank_on_leaderboard": 2,
+      "total_trades": 577,
+      "esports_trades": 8,
+      "esports_percentage": 1.4,
+      "esports_breakdown": {
+        "cs2": 8,
+        "lol": 0,
+        "dota2": 0,
+        "valorant": 0
+      },
+      "trading_stats": {
+        "total_volume_usd": 18.9,
+        "avg_trade_size_usd": 2.36,
+        "total_shares": 40.0,
+        "avg_shares_per_trade": 5.0,
+        "largest_position_shares": 5.0,
+        "smallest_position_shares": 5.0
+      },
+      "trading_behavior": {
+        "strategy": "ACTIVE_TRADER",
+        "buys": 6,
+        "sells": 2,
+        "holds_to_resolution": false,
+        "sell_ratio": 0.33,
+        "description": "Occasionally exits positions before resolution"
+      },
+      "price_analysis": {
+        "avg_entry_price": 0.467,
+        "avg_exit_price": 0.49,
+        "min_entry": 0.31,
+        "max_entry": 0.74,
+        "high_confidence_trades": 2,
+        "low_confidence_trades": 4,
+        "high_confidence_pct": 33.3,
+        "low_confidence_pct": 66.7,
+        "strategy_note": "Primarily takes underdog/value positions"
+      },
+      "market_coverage": {
+        "unique_markets": 2,
+        "top_markets": [
+          {
+            "slug": "cs2-aur1-hotu-2026-01-13",
+            "trades": 5
+          },
+          {
+            "slug": "cs2-paina-mag-2026-01-13",
+            "trades": 3
+          }
+        ]
+      },
+      "recent_activity": {
+        "last_trade_date": "2026-01-13",
+        "currently_active": false,
+        "recent_focus": "Minor CS2 matches (Aurora Gaming, HOTU, paiN, MAG)"
+      },
+      "insights": [
+        "Primarily a traditional sports trader (CBB + NBA focus)",
+        "CS2 trades are very small: only $19 total volume",
+        "Small fixed position size (5 shares per trade)",
+        "Brief experimentation in January 2026, then stopped",
+        "Only 2 markets traded, both lower-tier CS2 matches",
+        "RECOMMENDATION: NOT A TARGET - Esports is not their focus"
+      ]
+    }
+  },
+  "non_esports_wallets": [
+    {
+      "name": "kch123",
+      "wallet": "0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee",
+      "rank": 1,
+      "total_trades": 1000,
+      "sports_trades": 51,
+      "sports_breakdown": {
+        "nba": 18,
+        "cbb": 33
+      },
+      "esports_trades": 0,
+      "note": "Traditional sports only (NBA + college basketball)"
+    },
+    {
+      "name": "swisstony",
+      "wallet": "0x204f72f35326db932158cba6adff0b9a1da95e14",
+      "rank": 4,
+      "total_trades": 1000,
+      "sports_trades": 40,
+      "sports_breakdown": {
+        "nba": 30,
+        "cbb": 10
+      },
+      "esports_trades": 0,
+      "note": "Traditional sports only (NBA + college basketball)"
+    },
+    {
+      "name": "DrPufferfish",
+      "wallet": "0xdb27bf2ac5d428a9c63dbc914611036855a6c56e",
+      "rank": 5,
+      "total_trades": 794,
+      "sports_trades": 470,
+      "sports_breakdown": {
+        "nba": 470
+      },
+      "esports_trades": 0,
+      "note": "Pure NBA trader - heavy volume on NBA markets"
+    }
+  ],
+  "key_findings": [
+    "Only 2 out of 5 top sports leaderboard wallets trade esports (40%)",
+    "RN1 is a MAJOR discovery - pure CS2 specialist with $220k+ volume",
+    "RN1 uses buy-and-hold strategy (never sells early)",
+    "RN1 is currently active (trading today, Feb 20, 2026)",
+    "Anonymous experimented with CS2 but abandoned it (last trade Jan 13)",
+    "Traditional sports (NBA/CBB) dominate the sports leaderboard",
+    "CS2 is the only esports category with activity among these wallets",
+    "No LoL, Dota2, or Valorant trades detected"
+  ],
+  "recommendations": [
+    "ADD RN1 TO WATCHLIST - Priority target for esports market signals",
+    "Monitor RN1's positions on major CS2 tournaments",
+    "RN1's buy-and-hold strategy suggests high conviction trades",
+    "Track which teams RN1 backs - may indicate insider knowledge or strong analysis",
+    "Consider building CS2 market alerts based on RN1's entry points"
+  ]
+}

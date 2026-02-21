@@ -1,0 +1,287 @@
+{
+  "generated_at": "2026-02-20T21:55:23.814486Z",
+  "description": "Top 20 Polymarket wallets trading CS2 esports markets",
+  "markets_analyzed": 10,
+  "total_wallets_found": 213,
+  "markets": [
+    {
+      "condition_id": "0xa6d544024ed0b1de9e0cd6c0327a7c18a872e5875f40ceafb61937bccd43f248",
+      "slug": "cs2-ace1-bbp-2026-01-23",
+      "volume": 9999.995006
+    },
+    {
+      "condition_id": "0xfa428acba1b87d8e9811721caa2b3749a2aef3ad5c861063f025ad909d221997",
+      "slug": "cs2-am-ace1-2026-02-17",
+      "volume": 9996.630825
+    },
+    {
+      "condition_id": "0xad4f208ceb56d4eca9c66c97a649a6b07deda6677f162df5a3aa4734aa6cfa50",
+      "slug": "cs2-orm-ff-2025-12-18-game2",
+      "volume": 999.844
+    },
+    {
+      "condition_id": "0x7c0e42b9198d61e9f1cf81a009aba323ce159d1f50a5f30db8826a2529bcfc4a",
+      "slug": "cs2-hero-furia-2026-01-22-total-rounds-over-under-46pt5",
+      "volume": 99.9935
+    },
+    {
+      "condition_id": "0xb2336b83cb18be2212227d0c34ff35d6f58a7731fa8f32e0ee9fabe4fe477e5c",
+      "slug": "cs2-fal2-ecs-2026-01-15-ecs-to-win-1-maps",
+      "volume": 99.99
+    },
+    {
+      "condition_id": "0x4951158f14c6b4a2b4c02e54aedc0a2757c290ac75cc109006cb12277fcb4e04",
+      "slug": "cs2-fal2-ecs-2026-01-15-fal2-to-win-2-maps",
+      "volume": 99.99
+    },
+    {
+      "condition_id": "0xe3fecbe81327ba3360b51ea11afaac7bc7dd4b304f7a58680c8ee402b1d7e879",
+      "slug": "cs2-sin2-friendlycampers-2025-11-19-total-games-2pt5",
+      "volume": 99.99
+    },
+    {
+      "condition_id": "0x77476671b2a7693241b40f5ad2824fc7d4120631d60f42556b2c188742c3c01e",
+      "slug": "cs2-fut-og1-2026-01-13-round-handicap-away-2pt5",
+      "volume": 99.99
+    },
+    {
+      "condition_id": "0x4bf3dc0e2ed7808f8c851403b1a8956512d6c49835b1e02f4d2e3527da0fe301",
+      "slug": "cs2-tl1-nip-2026-01-15-tl1-to-win-1-maps",
+      "volume": 99.99
+    },
+    {
+      "condition_id": "0xa4eea916e02de0bb982d81c6ce434a1cd0a411a85499e09c4947811788612974",
+      "slug": "cs2-tl1-nip-2026-01-15-nip-to-win-2-maps",
+      "volume": 99.99
+    }
+  ],
+  "top_wallets": [
+    {
+      "wallet": "0xbaaed63e2287a0c79f3d68515387a06531fcbe70",
+      "total_volume": 1861.2269099999999,
+      "total_trades": 1,
+      "buys": 1,
+      "sells": 0,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23"
+      ]
+    },
+    {
+      "wallet": "0xdbdd45150249e229eb4ca8aa48a30dca21faa5de",
+      "total_volume": 1338.3418960000001,
+      "total_trades": 32,
+      "buys": 32,
+      "sells": 0,
+      "unique_markets": 2,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23",
+        "cs2-am-ace1-2026-02-17"
+      ]
+    },
+    {
+      "wallet": "0xa16a1302ca05463f30faebeb5c045767fde233a1",
+      "total_volume": 1282.34637,
+      "total_trades": 2,
+      "buys": 2,
+      "sells": 0,
+      "unique_markets": 2,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23",
+        "cs2-hero-furia-2026-01-22-total-rounds-over-under-46pt5"
+      ]
+    },
+    {
+      "wallet": "0x0afa7be11ff4e36567d8ada047853122e399eff3",
+      "total_volume": 1043.61534,
+      "total_trades": 1,
+      "buys": 1,
+      "sells": 0,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-am-ace1-2026-02-17"
+      ]
+    },
+    {
+      "wallet": "0xb693f5a5825cf5188fcae3411a799bbc6a34cfc9",
+      "total_volume": 999.909999,
+      "total_trades": 1,
+      "buys": 1,
+      "sells": 0,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-am-ace1-2026-02-17"
+      ]
+    },
+    {
+      "wallet": "0x4aaefd543cc6519c12748669f5e4b5daedcdd563",
+      "total_volume": 493.4457,
+      "total_trades": 1,
+      "buys": 0,
+      "sells": 1,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23"
+      ]
+    },
+    {
+      "wallet": "0x549840cf3dc15cea65c1296264f361007d7e126f",
+      "total_volume": 396.07631000000003,
+      "total_trades": 1,
+      "buys": 1,
+      "sells": 0,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-am-ace1-2026-02-17"
+      ]
+    },
+    {
+      "wallet": "0xf2ce7b12a3d385ccbdacb5d16bb1596820c65462",
+      "total_volume": 363.26637,
+      "total_trades": 1,
+      "buys": 1,
+      "sells": 0,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23"
+      ]
+    },
+    {
+      "wallet": "0xdc76219d69bc766978bbfcae8b020f8e94f3f087",
+      "total_volume": 355.94885,
+      "total_trades": 2,
+      "buys": 1,
+      "sells": 1,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23"
+      ]
+    },
+    {
+      "wallet": "0xc30c0116e9a5c17f1c03240a0b02a819fe646509",
+      "total_volume": 342.34731,
+      "total_trades": 1,
+      "buys": 1,
+      "sells": 0,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-orm-ff-2025-12-18-game2"
+      ]
+    },
+    {
+      "wallet": "0xc14db5cf1c8f8fe1190b2796d42466639b32f137",
+      "total_volume": 337.931889,
+      "total_trades": 2,
+      "buys": 1,
+      "sells": 1,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23"
+      ]
+    },
+    {
+      "wallet": "0x12a1aac676d766fc56bef4988e5d64b4389b4e4d",
+      "total_volume": 314.78490999999997,
+      "total_trades": 3,
+      "buys": 2,
+      "sells": 1,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23"
+      ]
+    },
+    {
+      "wallet": "0x11ee2a3a2023fa9a926227b44c41eeb5ba9985fe",
+      "total_volume": 309.0,
+      "total_trades": 1,
+      "buys": 1,
+      "sells": 0,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-am-ace1-2026-02-17"
+      ]
+    },
+    {
+      "wallet": "0xf898dc38744d9e173bcaadef0647ceb42ad8e720",
+      "total_volume": 290.0106,
+      "total_trades": 73,
+      "buys": 61,
+      "sells": 12,
+      "unique_markets": 2,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23",
+        "cs2-am-ace1-2026-02-17"
+      ]
+    },
+    {
+      "wallet": "0xfd5294de1d526489fede36ee0e43ae4779050c2f",
+      "total_volume": 263.835,
+      "total_trades": 4,
+      "buys": 4,
+      "sells": 0,
+      "unique_markets": 4,
+      "markets": [
+        "cs2-fut-og1-2026-01-13-round-handicap-away-2pt5",
+        "cs2-hero-furia-2026-01-22-total-rounds-over-under-46pt5",
+        "cs2-tl1-nip-2026-01-15-nip-to-win-2-maps",
+        "cs2-tl1-nip-2026-01-15-tl1-to-win-1-maps"
+      ]
+    },
+    {
+      "wallet": "0xe6a5fdb6f4e749c4e841d0077bc9314f5878e95d",
+      "total_volume": 254.97057,
+      "total_trades": 3,
+      "buys": 0,
+      "sells": 3,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23"
+      ]
+    },
+    {
+      "wallet": "0x01f3d871e6f316a580f3a0ba0c235ca92abfd4ab",
+      "total_volume": 247.809942,
+      "total_trades": 1,
+      "buys": 1,
+      "sells": 0,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-orm-ff-2025-12-18-game2"
+      ]
+    },
+    {
+      "wallet": "0xf1fe9b3ca7f2f8929ba0d07821c9285f2ef13de9",
+      "total_volume": 231.6238,
+      "total_trades": 2,
+      "buys": 1,
+      "sells": 1,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23"
+      ]
+    },
+    {
+      "wallet": "0xfd144099a983b0cfdb88d0b89e0ca049fae22267",
+      "total_volume": 213.86,
+      "total_trades": 6,
+      "buys": 5,
+      "sells": 1,
+      "unique_markets": 2,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23",
+        "cs2-am-ace1-2026-02-17"
+      ]
+    },
+    {
+      "wallet": "0x0ed17ee445fcc6feabedf12e016810012037efcb",
+      "total_volume": 200.13999900000002,
+      "total_trades": 1,
+      "buys": 1,
+      "sells": 0,
+      "unique_markets": 1,
+      "markets": [
+        "cs2-ace1-bbp-2026-01-23"
+      ]
+    }
+  ]
+}

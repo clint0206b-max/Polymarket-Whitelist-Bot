@@ -5,66 +5,72 @@ import { is_base_signal_candidate, resolveEntryPriceLimits, resolveMaxSpread } f
 const cfg = {
   filters: {
     min_prob: 0.93, max_entry_price: 0.97, max_spread: 0.04, EPS: 1e-6,
-    min_entry_price_dota2: 0.86, max_entry_price_dota2: 0.92,
-    min_entry_price_cs2: 0.87, max_entry_price_cs2: 0.93, max_spread_cs2: 0.02,
-    min_entry_price_lol: 0.87, max_entry_price_lol: 0.89,
+    min_entry_price_dota2: 0.98, max_entry_price_dota2: 0.999,
+    min_entry_price_cs2: 0.98, max_entry_price_cs2: 0.999, max_spread_cs2: 0.10,
+    min_entry_price_lol: 0.98, max_entry_price_lol: 0.999,
   },
 };
 
 describe("resolveEntryPriceLimits — LoL", () => {
-  it("returns lol-specific limits (0.87-0.89)", () => {
+  it("returns lol-specific limits (0.98-0.999)", () => {
     const { minProb, maxEntry } = resolveEntryPriceLimits(cfg.filters, "lol");
-    assert.equal(minProb, 0.87);
-    assert.equal(maxEntry, 0.89);
+    assert.equal(minProb, 0.98);
+    assert.equal(maxEntry, 0.999);
   });
   it("lol uses default spread (0.04)", () => {
     assert.equal(resolveMaxSpread(cfg.filters, "lol"), 0.04);
   });
 });
 
-describe("is_base_signal_candidate — LoL entry [0.87, 0.89]", () => {
-  it("lol ask=0.88 spread=0.02 passes", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.88, spread: 0.02 }, cfg, "lol");
+describe("is_base_signal_candidate — LoL entry [0.98, 0.999]", () => {
+  it("lol ask=0.99 spread=0.02 passes", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.99, spread: 0.02 }, cfg, "lol");
     assert.equal(r.pass, true);
   });
-  it("lol ask=0.87 passes (lower boundary)", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.87, spread: 0.02 }, cfg, "lol");
+  it("lol ask=0.985 passes (inside range)", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.985, spread: 0.02 }, cfg, "lol");
     assert.equal(r.pass, true);
   });
-  it("lol ask=0.89 passes (upper boundary)", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.89, spread: 0.02 }, cfg, "lol");
+  it("lol ask=0.995 passes (inside range)", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.995, spread: 0.02 }, cfg, "lol");
     assert.equal(r.pass, true);
   });
-  it("lol ask=0.86 FAILS (below min)", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.86, spread: 0.02 }, cfg, "lol");
+  it("lol ask=0.975 FAILS (below min)", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.975, spread: 0.02 }, cfg, "lol");
     assert.equal(r.pass, false);
     assert.equal(r.reason, "price_out_of_range");
   });
-  it("lol ask=0.90 FAILS (above max 0.89)", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.90, spread: 0.02 }, cfg, "lol");
+  it("lol ask=0.97 FAILS (below min 0.98)", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.97, spread: 0.02 }, cfg, "lol");
     assert.equal(r.pass, false);
     assert.equal(r.reason, "price_out_of_range");
   });
-  it("lol ask=0.95 FAILS (would pass default but not lol)", () => {
-    const r = is_base_signal_candidate({ probAsk: 0.95, spread: 0.02 }, cfg, "lol");
+  it("lol ask=1.00 FAILS (above max 0.999)", () => {
+    const r = is_base_signal_candidate({ probAsk: 1.00, spread: 0.02 }, cfg, "lol");
     assert.equal(r.pass, false);
+    assert.equal(r.reason, "price_out_of_range");
+  });
+  it("lol ask=0.9995 FAILS (above max 0.999)", () => {
+    const r = is_base_signal_candidate({ probAsk: 0.9995, spread: 0.02 }, cfg, "lol");
+    assert.equal(r.pass, false);
+    assert.equal(r.reason, "price_out_of_range");
   });
 });
 
 describe("LoL SL config values", () => {
-  it("stop_loss_bid_lol=0.50", async () => {
+  it("stop_loss_bid_lol=0.90", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.paper.stop_loss_bid_lol, 0.5);
+    assert.equal(c.paper.stop_loss_bid_lol, 0.90);
   });
-  it("min_entry_price_lol=0.80", async () => {
+  it("min_entry_price_lol=0.98", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.filters.min_entry_price_lol, 0.80);
+    assert.equal(c.filters.min_entry_price_lol, 0.98);
   });
-  it("max_entry_price_lol=0.89", async () => {
+  it("max_entry_price_lol=0.999", async () => {
     const { readFileSync } = await import("node:fs");
     const c = JSON.parse(readFileSync("src/config/local.json", "utf8"));
-    assert.equal(c.filters.max_entry_price_lol, 0.89);
+    assert.equal(c.filters.max_entry_price_lol, 0.999);
   });
 });
