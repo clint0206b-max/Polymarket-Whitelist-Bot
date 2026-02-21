@@ -497,6 +497,60 @@ const state = readJsonWithFallback(STATE_PATH) || baseState();
 writeJsonAtomic(STATE_PATH, state);
 ```
 
+### Runbook: Cleaning Markets/Positions from State
+
+When Andres asks to remove a category of markets (e.g. temperature, soccer) or specific positions, follow this checklist IN ORDER. Don't re-analyze architecture — just execute.
+
+**4 files to clean (all in `state/`):**
+
+1. **`watchlist.json`** — Remove entries from `state.watchlist` by key (conditionId).
+   - Keys are conditionIds, NOT slugs. Use `m.slug` or `m.league` to identify targets.
+   - Also clean `.bak` file (same operation).
+
+2. **`execution_state.json`** — Mark matching buy trades as `closed: true`.
+   - Trades keyed by `trade_id` (format: `buy:signalId|slug` or `sell:signalId|slug`).
+   - Set `closed: true, close_reason: "manual_cleanup"` on matching BUY trades.
+
+3. **`journal/open_index.json`** — Move entries from `open` to `closed`.
+   - Keyed by `signal_id`. Match via `slug` field.
+   - Move to `closed` map with `close_reason: "manual_cleanup"`.
+
+4. **`journal/signals.jsonl`** — Append `signal_close` for every unclosed `signal_open`.
+   - grep for `signal_open` entries with matching slugs that have NO corresponding `signal_close`.
+   - Append one `signal_close` line per unclosed open (same `signal_id`, `reason: "manual_cleanup"`).
+   - **This prevents the bot from re-injecting markets on restart** (reconcileIndex reads this file).
+
+**After cleaning state, restart bot:**
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist
+sleep 2
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.polymarket.watchlist-v1.plist
+```
+
+**Verify with health API:**
+```bash
+curl -s http://localhost:3210/api/health | python3 -c "
+import sys,json; d=json.load(sys.stdin)
+print('Leagues:', list(d.get('league_summary',{}).keys()))
+print('Watchlist:', d.get('watchlist',{}))
+print('Open positions:', d.get('trade_bridge',{}).get('open_positions',0))
+"
+```
+
+**If markets keep coming back after restart:**
+- **Resolution tracker** re-injects markets with on-chain balance > 0. Check with `getConditionalBalance(tokenId)`.
+- **Dust shares** (< 0.01) on-chain can trigger this. Add slug to `_terminal_purged_slugs` Set in watchlist.json AND add a blacklist guard in `loop_eval_http_only.mjs` (like the temperature/soccer guards).
+- **Journal reconciliation** (`reconcileIndex`) re-opens entries if `signals.jsonl` has unmatched `signal_open`. Always close signals.jsonl FIRST.
+- **Scanner** (`global_ws_scanner.mjs`) can re-discover markets. Add category/regex filter there too.
+
+**To also sell positions:**
+- Use `executeSell(clobClient, tokenId, shares, floor)` from `src/core/trade_bridge.mjs`.
+- `floor` = minimum price. CLOB fills at best available bid regardless.
+- If order fails (empty book), retry with lower floor. Last resort: `floor=0.01`.
+- Verify real fill prices via CLOB trade history, NOT `parseFillResult` (which reports floor as avgFillPrice).
+
+**Key gotcha:** Watchlist keys are conditionIds, NOT slugs. A slug-only cleanup will miss entries. Always delete by the actual key.
+
 ### Market Price Logger (Backtesting)
 
 **File:** `src/journal/market_price_logger.mjs`
