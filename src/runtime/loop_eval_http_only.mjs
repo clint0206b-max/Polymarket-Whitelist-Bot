@@ -1631,11 +1631,13 @@ export async function loopEvalHttpOnly(state, cfg, now) {
       const _title = String(m.question || m.title || "").toLowerCase();
       const _isTemp = /\b(temperature|temperatures|temp-in-|fahrenheit|celsius|weather)\b/.test(_slug)
         || /\b(temperature|temperatures|weather)\b/.test(_title);
-      if (_isTemp && m.status === "watching") {
+      if (_isTemp) {
         bumpBucket("reject", "temperature_blacklisted", 1);
         bumpBucket("health", "temperature_blacklisted", 1);
-        console.log(`[REJECT_TEMPERATURE] ${m.slug}`);
+        console.log(`[REJECT_TEMPERATURE] ${m.slug} (status=${m.status})`);
+        // Delete by both slug and conditionId key
         delete state.watchlist[m.slug];
+        if (m.conditionId) delete state.watchlist[m.conditionId];
         continue;
       }
     }
